@@ -1,0 +1,24 @@
+# Private local library and review notes
+/data/
+*.log
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.env.*
+
+# Media and generated review exports
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.wav
+*.mp3
+*.drp
+*-review-comments.json
+
+# Editor / OS state
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
