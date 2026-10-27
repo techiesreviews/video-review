@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "video-review",
+  "main": "cloud/worker.js",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./web",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*", "/mcp"]
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "SESSIONS", "class_name": "ReviewSession" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ReviewSession"] }],
+  "routes": [{ "pattern": "video.techies.tools", "custom_domain": true }],
+  "observability": { "enabled": true }
+}

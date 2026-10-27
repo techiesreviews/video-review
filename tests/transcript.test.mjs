@@ -1,0 +1,65 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {normalizeTranscript,activeWordIndex,wordSelection,searchLibrary} from '../web/transcript-core.js';
+import {applyChange,describe,rebaseComments} from '../web/review-core.js';
+import {normalizeDraftEdits,makeRemoval,skipRemoved,previewDuration,exportCut} from '../web/cut-core.js';
+
+test('HappyScribe word objects preserve text and actual word timings',()=>{
+  const data=[{words:[{text:' café',data_start:1.12,data_end:1.4,type:'word'},{text:'dashboard',data_start:1.5,data_end:2}]}];
+  const t=normalizeTranscript(data,3000);assert.deepEqual(t.words.map(w=>[w.text,w.startMs,w.endMs]),[['café',1120,1400],['dashboard',1500,2000]]);
+});
+test('paragraph timestamps are never invented into word timings',()=>{
+  assert.throws(()=>normalizeTranscript([{text:'two words',start:0,end:2,words:[]}],3000));
+  assert.throws(()=>normalizeTranscript({text:'two words'},3000));
+});
+test('timings from another cut and duplicate word IDs are rejected',()=>{
+  assert.throws(()=>normalizeTranscript([['word',1,6]],3000),/longer/);
+  assert.throws(()=>normalizeTranscript({words:[{id:'W1',text:'a',startMs:0,endMs:100},{id:'W1',text:'b',startMs:200,endMs:300}]},1000),/unique/);
+  assert.throws(()=>normalizeTranscript([['a',2,1]],3000),/invalid/);
+});
+test('word highlight stops in real gaps and at the exclusive end',()=>{
+  const words=normalizeTranscript([['a',0,1],['b',2,3]],3000).words;
+  assert.equal(activeWordIndex(words,500),0);assert.equal(activeWordIndex(words,1000),-1);assert.equal(activeWordIndex(words,2500),1);assert.equal(activeWordIndex(words,3000),-1);
+});
+test('backward phrase selection preserves first/last source word IDs',()=>{
+  const words=normalizeTranscript({words:[{id:'W5',text:'keep',startMs:100,endMs:300},{id:'W9',text:'breaths',startMs:500,endMs:900}]},1000).words;
+  assert.deepEqual(wordSelection(words,1,0),{startMs:100,endMs:900,quote:'keep breaths',firstWordId:'W5',lastWordId:'W9'});
+});
+test('text requests keep source anchors even when later keep ranges change',()=>{
+  const video={id:'v1',durationMs:2000,fps:30,keepRanges:[[300,360]]},state={videos:[video],comments:[]};
+  const c=applyChange(state,{action:'add',videoId:'v1',startMs:100,endMs:900,text:'Let the word finish',editRequest:{type:'extend_after',firstWordId:'W5',lastWordId:'W9',quote:'keep breaths'}});
+  assert.equal(c.status,'open');assert.equal(c.editRequest.type,'extend_after');
+  const anchors=structuredClone(describe(video,c).sourceSpans);video.keepRanges=[[900,960]];
+  assert.deepEqual(describe(video,c).sourceSpans,anchors);assert.equal(state.comments.length,1);
+});
+test('arbitrary or malformed transcript actions are not saved',()=>{
+  const state={videos:[{id:'v',durationMs:1000,fps:30,keepRanges:[[0,30]]}],comments:[]};
+  assert.throws(()=>applyChange(state,{action:'add',videoId:'v',startMs:0,text:'x',editRequest:{type:'execute-code'}}));assert.equal(state.comments.length,0);
+});
+test('library search finds titles and spoken phrases with their playback time',()=>{
+  const videos=[{id:'a',title:'Security episode',label:'Opening'},{id:'b',title:'Other',label:'Demo'}];
+  const transcripts={a:{words:[{text:'There',startMs:100},{text:'was',startMs:200},{text:'a',startMs:300},{text:'backup.',startMs:400}]}};
+  assert.equal(searchLibrary(videos,transcripts,'security')[0].id,'a');
+  assert.equal(searchLibrary(videos,transcripts,'a backup')[0].atMs,300);
+  assert.equal(searchLibrary(videos,transcripts,'missing').length,0);
+});
+test('preview removals merge overlaps, skip media and export original source frames',()=>{
+  const edits=[{id:'a',startMs:200,endMs:800,wordIds:['b']},{id:'b',startMs:500,endMs:1000,wordIds:['c']}];
+  assert.equal(previewDuration(2000,edits),1200);assert.equal(skipRemoved(600,edits),1000);assert.equal(skipRemoved(1000,edits),1000);
+  const cut=exportCut({draftEdits:edits,revision:'r'},{id:'v',fps:30,durationMs:2000,keepRanges:[[300,360]]});
+  assert.deepEqual(cut.keepRanges,[[300,306],[330,360]]);assert.equal(cut.durationMs,1200);
+  assert.throws(()=>normalizeDraftEdits([{id:'x',startMs:0,endMs:3000,wordIds:[]}],2000));
+});
+test('shortening a pause preserves both adjacent words and breath margins',()=>{
+  const t=normalizeTranscript([['before',0,.4],['after',1.5,2]],2000);
+  const edit=makeRemoval(t,{kind:'pause',startMs:400,endMs:1500,quote:'pause'},2000,30);
+  assert.deepEqual(edit.wordIds,[]);assert.ok(edit.startMs>=580);assert.ok(edit.endMs<=1320);
+  assert.deepEqual(normalizeTranscript({...t,draftEdits:[edit]},2000).draftEdits[0].wordIds,[]);
+});
+test('comments follow retained source material after recuts and removed comments land at joins',()=>{
+  const video={id:'v',fps:30,durationMs:4000,keepRanges:[[0,120]]},comments=[{videoId:'v',startMs:3000,endMs:3500},{videoId:'v',startMs:1200,endMs:1800}];
+  rebaseComments(video,comments,[[0,30],[60,120]],3000);
+  assert.equal(comments[0].startMs,2000);assert.equal(comments[0].endMs,2500);
+  assert.equal(comments[1].startMs,1000);assert.equal(comments[1].endMs,null);
+  assert.equal(comments[0].sourceSpans[0].sourceStartFrame,90);
+});

@@ -1,0 +1,22 @@
+{
+  "name": "video-review-workflow",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Local Windows tools for long-form editing alongside Video Review",
+  "scripts": {
+    "studio:remotion": "remotion studio plates/remotion/src/index.ts",
+    "studio:hyperframes": "hyperframes preview plates/hyperframes",
+    "check:browser": "node scripts/video/check-browser.mjs"
+  },
+  "overrides": {
+    "zod": "4.6.7"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.539",
+    "hyperframes": "0.8.207",
+    "playwright": "1.64.1",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "remotion": "4.0.539"
+  }
+}

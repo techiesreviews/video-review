@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Video Review · Techies</title><link rel="stylesheet" href="/style.css"></head>
+<body>
+<header>
+  <a class="brandmark" href="/" aria-label="Video Review home">tr</a>
+  <div class="title-block"><h1 id="videoTitle">Video Review</h1><div class="subtitle"><div class="menu-wrap library-wrap"><button id="libraryBtn" type="button" aria-haspopup="dialog" aria-expanded="false"><span id="libraryLabel">Choose a video</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></button><div id="libraryMenu" class="menu library-menu" role="dialog" aria-label="Video library" hidden><input id="librarySearch" type="search" aria-label="Search videos and transcripts" placeholder="Search titles, transcripts…"><div id="libraryResults" class="library-results"></div><div class="library-footer"><button id="libraryAdd" type="button">＋ Add video</button><button id="libraryRemoved" type="button" class="link">Removed videos</button></div></div></div><select id="videoSelect" class="internal-video-select" aria-label="Video version" aria-hidden="true" tabindex="-1"></select><span id="saveState" role="status"></span></div></div>
+  <div class="header-actions">
+    <button id="addVideo" class="ghost" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Add video</button>
+    <div class="menu-wrap"><button id="agentBtn" class="primary" hidden aria-haspopup="true"><span class="dot" aria-hidden="true"></span><span id="agentLabel">Connect agent</span></button>
+      <div id="agentMenu" class="menu" hidden><p id="agentInfo"></p><button id="agentCopy" type="button">Copy connection prompt</button><button id="agentDisconnect" type="button" class="danger">Disconnect agents</button></div></div>
+    <div class="menu-wrap"><button id="moreBtn" class="ghost icon-only" aria-label="More" aria-haspopup="true"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
+      <div id="moreMenu" class="menu" hidden><button id="exportBtn" type="button">Export comments for this version</button><button id="backupBtn" type="button" data-browser>Download backup of all reviews</button><button id="importBtn" type="button" data-browser>Import backup…</button><button id="removeVideo" type="button" class="danger" data-browser>Remove this video from the list</button></div></div>
+  </div>
+</header>
+<main>
+  <section class="stage">
+    <div class="player" id="player">
+      <div class="screen"><video id="video" preload="metadata" playsinline></video><div id="loading" class="loading">Loading your video…</div><div id="gate" class="gate" hidden><strong id="gateTitle"></strong><p id="gateText"></p><button id="gateBtn" class="primary" type="button"></button></div><button id="bigPlay" class="big-play" aria-label="Play"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></button></div>
+      <div class="controls">
+        <div class="track"><div id="pins" class="pins"></div><input id="seek" type="range" min="0" max="100" value="0" step="0.001" aria-label="Seek video"></div>
+        <div class="control-row">
+          <button id="play" class="ctl" aria-label="Play"><svg viewBox="0 0 24 24" aria-hidden="true"><path id="playIcon" d="M8 5v14l11-7z"/></svg></button>
+          <button id="prevFrame" class="ctl" title="Previous frame (←)" aria-label="Previous frame"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
+          <button id="nextFrame" class="ctl" title="Next frame (→)" aria-label="Next frame"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
+          <span class="time"><span id="currentTime">0:00.000</span><span class="dim"> / <span id="duration">0:00</span></span><small id="frameInfo"></small></span>
+          <span class="spacer"></span>
+          <button id="speed" class="ctl text" title="Playback speed" aria-label="Playback speed">1×</button>
+          <button id="mute" class="ctl text" aria-label="Mute">Sound</button>
+          <button id="fullscreen" class="ctl" aria-label="Full screen"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </div>
+    <div class="below-player" id="transcriptPanel" aria-label="Transcript">
+      <span id="transcriptSummary" class="sr-only" role="status"></span>
+      <div class="transcript-tools"><label class="transcript-search"><input id="transcriptSearch" type="search" aria-label="Find in transcript" placeholder="Find a word or phrase…"></label><label class="follow-words"><input id="followTranscript" type="checkbox" checked>Follow playback</label><button id="importTranscript" class="ghost small" type="button">Import transcript</button></div>
+      <div id="transcriptText" class="transcript-text" aria-label="Timed transcript" tabindex="0"><p class="transcript-empty">Your transcript will appear here. Import the existing word-timed JSON; no new transcription is needed.</p></div>
+      <div id="cutPreviewBar" class="cut-preview-bar" hidden><span id="cutPreviewStatus" role="status"></span><button id="undoTranscriptCut" type="button">Undo cut</button><button id="showRemovedWords" type="button" aria-pressed="false">Show removed</button><button id="exportTranscriptCut" type="button">Export cut list</button></div>
+      <div id="transcriptSelection" class="transcript-selection" hidden>
+        <div class="selection-detail"><span id="selectionTime"></span><p id="selectionQuote"></p><button id="clearTranscriptSelection" class="link" type="button">Clear selection</button></div>
+        <div class="transcript-actions" role="group" aria-label="Transcript review actions">
+          <button type="button" data-transcript-action="pause" hidden>Shorten pause</button>
+          <button type="button" id="playTranscriptSelection">Play selection</button><button type="button" data-transcript-action="remove">Remove from cut</button><button type="button" data-transcript-action="clipped">Word clipped</button><button type="button" data-transcript-action="extend_before">More before</button><button type="button" data-transcript-action="extend_after">More after</button><button type="button" data-transcript-action="mistake">Mistake / retake</button>
+        </div>
+        <form id="transcriptNoteForm" class="transcript-note-row"><textarea id="transcriptNote" rows="1" aria-label="Note about selected words" placeholder="Add a note about these words…"></textarea><button id="saveTranscriptNote" type="submit" disabled>Add note</button></form>
+      </div>
+    </div>
+  </section>
+  <aside class="sidebar">
+    <form id="composer" class="composer" autocomplete="off">
+      <div class="composer-input"><span class="avatar">Y</span><textarea id="noteText" rows="1" placeholder="Leave a comment…" aria-label="Comment"></textarea></div>
+      <div class="composer-tools">
+        <button type="button" id="stamp" class="stamp" title="Set an exact time or range">0:00.000</button>
+        <button type="button" id="clearRange" class="link" hidden>Clear range</button>
+        <span class="spacer"></span>
+        <button type="submit" id="saveNote" class="primary" disabled>Comment at 0:00</button>
+      </div>
+      <div id="rangeEditor" class="range-editor" hidden>
+        <label>Start<input id="noteStart" aria-label="Comment start"></label>
+        <label>End<input id="noteEnd" placeholder="optional" aria-label="Comment end"></label>
+        <p>h:mm:ss.mmm, m:ss.mmm or seconds</p>
+      </div>
+      <p id="error" role="alert"></p>
+    </form>
+    <div class="list-head"><h2><span id="count">0</span> <span id="countLabel">Comments</span></h2><div class="filters"><button type="button" data-filter="open" class="active">Open</button><button type="button" data-filter="done">Resolved</button></div></div>
+    <div id="comments" class="comments"></div>
+  </aside>
+</main>
+<div id="toast" class="toast" role="status"><span id="toastText"></span><button id="toastAction" type="button" hidden>Undo</button></div>
+<dialog id="addDialog" class="dialog"><form method="dialog" id="addForm">
+  <h2>Add a video</h2><p class="dialog-note">It plays from your computer and is never uploaded.</p>
+  <p id="addFile" class="file-chip"></p>
+  <label>Title<input id="addTitle" required maxlength="120"></label>
+  <label>Frame rate<select id="addFps"><option>23.976</option><option>24</option><option>25</option><option>29.97</option><option selected>30</option><option>48</option><option>50</option><option>59.94</option><option>60</option></select><small id="addFpsNote"></small></label>
+  <div class="dialog-actions"><button value="cancel" class="link" formnovalidate>Cancel</button><button value="add" class="primary" id="addConfirm">Add video</button></div>
+</form></dialog>
+<div id="dropHint" class="drop-hint" hidden>Drop a video to review it</div>
+<dialog id="localVideoDialog" class="dialog"><form method="dialog" id="localVideoForm"><h2>Add a video</h2><p class="dialog-note">Reference a file on this PC. The recording stays where it is.</p><label>Full file path<input id="localVideoPath" required placeholder="D:\Recordings\video.mp4"></label><label>Title (optional)<input id="localVideoTitle" maxlength="120"></label><p id="localVideoError" role="alert"></p><div class="dialog-actions"><button value="cancel" class="link" formnovalidate>Cancel</button><button value="add" class="primary" id="localVideoConfirm">Add video</button></div></form></dialog>
+<script type="module" src="/app.js"></script></body></html>

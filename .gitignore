@@ -22,3 +22,30 @@ __pycache__/
 Thumbs.db
 .idea/
 .vscode/
+
+# Wrangler local state
+.wrangler/
+node_modules/
+
+# Long-form workflow: private recordings, source captures and derived edits
+/input/*
+!/input/README.md
+/acut/*
+!/acut/README.md
+/sources/*/
+/renders/*
+!/renders/README.md
+/brand/captures/
+/brand/logo.*
+*.webm
+*.flac
+*.m4a
+*.aif
+*.aiff
+*.dpx
+*.exr
+/plates/**/out/
+/plates/**/dist/
+/plates/**/.hyperframes/
+/plates/**/renders/
+/plates/**/.cache/

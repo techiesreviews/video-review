@@ -1,15 +1,14 @@
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
-import argparse, json, mimetypes, threading, re, uuid, os
+import argparse, json, mimetypes, re, os, sys
+from urllib.parse import urlsplit,parse_qs
+sys.path.insert(0,str(Path(__file__).resolve().parent))
+import review_store as store
 
 ROOT=Path(__file__).resolve().parent
-MANIFEST=ROOT/'data/manifest.json'
-REVIEWS=ROOT/'data/comments.json'
-LOCK=threading.Lock()
+WEB=ROOT/'web'
+DATA=ROOT/'data'
 PORT=8879
-
-def read(path, default):
-    return json.loads(path.read_text(encoding='utf-8')) if path.exists() else default
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args): pass
@@ -19,14 +18,21 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         route=self.path.split('?',1)[0]
         if route=='/api/videos':
-            return self.send_json([{k:v for k,v in x.items() if k!='path'} for x in read(MANIFEST,[])])
-        if route=='/api/comments':return self.send_json(read(REVIEWS,{'comments':[]}))
+            return self.send_json([{**{k:v for k,v in x.items() if k!='path'},'fileVersion':store.file_version(x['path'])} for x in store.videos(DATA)])
+        if route=='/api/comments':return self.send_json({'comments':store.comments(DATA)})
+        if route=='/api/local':return self.send_json({'local':True})
+        if route=='/api/library/search':return self.send_json(store.search_library(DATA,parse_qs(urlsplit(self.path).query).get('q',[''])[0]))
+        if route=='/api/library/removed':return self.send_json([{k:v for k,v in item.items() if k!='path'} for item in store.read(DATA/'library-archive.json',[])])
+        if route.startswith('/api/transcript/'):
+            try:return self.send_json(store.get_transcript(DATA,route[len('/api/transcript/'):]))
+            except ValueError as error:return self.send_json({'error':str(error)},404)
+        if route=='/api/view-request':return self.send_json(store.read(DATA/'view-request.json',{}))
         if route.startswith('/media/'):
-            key=route[7:];item=next((x for x in read(MANIFEST,[]) if x['id']==key),None)
+            key=route[7:];item=next((x for x in store.videos(DATA) if x['id']==key),None)
             if not item:return self.send_error(404)
             path=Path(item['path'])
-        elif route in ['/','/index.html','/app.js','/style.css']:
-            path=ROOT/('index.html' if route=='/' else route[1:])
+        elif route in ['/','/index.html','/app.js','/backend.js','/review-core.js','/transcript-core.js','/transcript-panel.js','/cut-core.js','/library-panel.js','/style.css']:
+            path=WEB/('index.html' if route=='/' else route[1:])
         else:return self.send_error(404)
         if not path.is_file():return self.send_error(404)
         size=path.stat().st_size;start=0;end=size-1;status=200
@@ -39,7 +45,7 @@ class Handler(BaseHTTPRequestHandler):
             elif hi:start=max(0,size-int(hi))
             if start> end or start>=size:return self.send_error(416)
             status=206
-        self.send_response(status);self.send_header('Content-Type',mimetypes.guess_type(str(path))[0] or 'application/octet-stream');self.send_header('Content-Length',str(end-start+1));self.send_header('Accept-Ranges','bytes');self.send_header('Cache-Control','no-cache')
+        self.send_response(status);self.send_header('Content-Type','text/javascript; charset=utf-8' if path.suffix=='.js' else mimetypes.guess_type(str(path))[0] or 'application/octet-stream');self.send_header('Content-Length',str(end-start+1));self.send_header('Accept-Ranges','bytes');self.send_header('Cache-Control','no-cache')
         if status==206:self.send_header('Content-Range',f'bytes {start}-{end}/{size}')
         self.end_headers()
         try:
@@ -51,45 +57,34 @@ class Handler(BaseHTTPRequestHandler):
                     self.wfile.write(chunk);remaining-=len(chunk)
         except (BrokenPipeError,ConnectionResetError,ConnectionAbortedError):pass
     def do_POST(self):
-        if self.path!='/api/comments':return self.send_error(404)
+        if self.path not in ['/api/comments','/api/view','/api/library'] and not self.path.startswith('/api/transcript/'):return self.send_error(404)
         if self.headers.get('Origin') not in [f'http://127.0.0.1:{PORT}',f'http://localhost:{PORT}']:return self.send_error(403)
         if self.headers.get('Content-Type','').split(';')[0]!='application/json':return self.send_error(415)
         try:
             size=int(self.headers.get('Content-Length','0'))
-            if size<=0 or size>65536:raise ValueError('Invalid request size')
-            cmd=json.loads(self.rfile.read(size));action=cmd.get('action')
-            with LOCK:
-                data=read(REVIEWS,{'comments':[]});comments=data['comments']
-                if action=='add':
-                    video=next((x for x in read(MANIFEST,[]) if x['id']==cmd['videoId']),None)
-                    if not video:raise ValueError('Unknown video version')
-                    start=cmd['startMs'];end=cmd.get('endMs');text=cmd['text'].strip()
-                    if isinstance(start,bool) or not isinstance(start,int) or start<0 or start>video['durationMs']:raise ValueError('Timestamp outside video')
-                    if end is not None and (isinstance(end,bool) or not isinstance(end,int) or end<=start or end>video['durationMs']):raise ValueError('Range end must follow start')
-                    if not text or len(text)>10000:raise ValueError('Please enter a comment (up to 10,000 characters)')
-                    comments.append({'id':str(uuid.uuid4()),'videoId':video['id'],'startMs':start,'endMs':end,'text':text,'category':cmd.get('category','edit'),'status':'open','createdAt':cmd['createdAt']})
-                elif action=='update':
-                    c=next((x for x in comments if x['id']==cmd['id']),None)
-                    if not c:raise ValueError('Comment not found')
-                    if 'status' in cmd:
-                        if cmd['status'] not in ['open','done']:raise ValueError('Invalid status')
-                        c['status']=cmd['status']
-                    if 'text' in cmd:
-                        if not cmd['text'].strip() or len(cmd['text'])>10000:raise ValueError('Invalid comment')
-                        c['text']=cmd['text'].strip()
-                else:raise ValueError('Unsupported action')
-                temp=REVIEWS.with_suffix('.tmp');temp.write_text(json.dumps(data,indent=2,ensure_ascii=False),encoding='utf-8');os.replace(temp,REVIEWS)
+            limit=8*1024*1024 if self.path.startswith('/api/transcript/') else 65536
+            if size<=0 or size>limit:raise ValueError('Invalid request size')
+            cmd=json.loads(self.rfile.read(size))
+            if self.path=='/api/library':
+                if cmd.get('action')=='remove':store.archive_video(DATA,cmd['videoId'])
+                elif cmd.get('action')=='restore':store.restore_video(DATA,cmd['videoId'])
+                elif cmd.get('action')=='add':
+                    item=store.add_local_video(DATA,cmd.get('path',''),cmd.get('title',''))
+                    return self.send_json({key:value for key,value in item.items() if key!='path'})
+                else:raise ValueError('Unknown library action')
+                return self.send_json({'ok':True})
+            if self.path.startswith('/api/transcript/'):
+                return self.send_json(store.save_transcript(DATA,self.path[len('/api/transcript/'):],cmd))
+            if self.path=='/api/view':store.set_view(DATA,cmd);return self.send_json({'ok':True})
+            # The browser always speaks as the reviewer; only the MCP server writes as the AI.
+            if cmd.get('action') in ['add','reply']:cmd['author']='you'
+            data,_=store.apply(DATA,cmd)
             self.send_json(data)
         except (ValueError,KeyError,TypeError,json.JSONDecodeError) as e:self.send_json({'error':str(e)},400)
 
 def create_server(port=8879, data_dir=None):
-    global MANIFEST, REVIEWS, PORT
-    directory=Path(data_dir or os.environ.get('VIDEO_REVIEW_DATA_DIR', ROOT/'data')).expanduser().resolve()
-    directory.mkdir(parents=True,exist_ok=True)
-    MANIFEST=directory/'manifest.json'
-    REVIEWS=directory/'comments.json'
-    for path,initial in [(MANIFEST,[]),(REVIEWS,{'comments':[]})]:
-        if not path.exists():path.write_text(json.dumps(initial,indent=2),encoding='utf-8')
+    global DATA, PORT
+    DATA=store.data_dir(data_dir)
     httpd=ThreadingHTTPServer(('127.0.0.1',port),Handler)
     PORT=httpd.server_port
     return httpd
