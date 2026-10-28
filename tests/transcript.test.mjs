@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {normalizeTranscript,activeWordIndex,wordSelection,searchLibrary,originalOmissions} from '../web/transcript-core.js';
+import {zoomWaveformWindow} from '../web/waveform-core.js';
 import {applyChange,describe,rebaseComments} from '../web/review-core.js';
 import {normalizeDraftEdits,makeRemoval,removalBounds,skipRemoved,previewDuration,exportCut} from '../web/cut-core.js';
 import {audioPeaks,waveformWindow,adjustBoundary} from '../web/waveform-core.js';
@@ -85,6 +86,14 @@ test('manual waveform boundaries keep a frame, preserve the chosen edge, and sur
   assert.deepEqual(normalizeDraftEdits([{id:'manual',...edit}],3000)[0].wordIds,[]);
 });
 
+test('waveform zoom keeps the playhead fixed and clamps at recording bounds',()=>{
+  const zoom=zoomWaveformWindow(10000,{startMs:0,endMs:10000},3000,-200);
+  assert.ok(zoom.endMs-zoom.startMs<10000);assert.ok(Math.abs((3000-zoom.startMs)/(zoom.endMs-zoom.startMs)-.3)<.00001);
+  const fit=zoomWaveformWindow(10000,zoom,3000,300);assert.deepEqual(fit,{startMs:0,endMs:10000});
+  let min=zoom;for(let i=0;i<30;i++)min=zoomWaveformWindow(10000,min,3000,-300);assert.ok(Math.abs(min.endMs-min.startMs-250)<.001);
+  assert.equal(zoomWaveformWindow(10000,{startMs:0,endMs:10000},0,-200).startMs,0);
+  assert.equal(zoomWaveformWindow(10000,{startMs:0,endMs:10000},10000,-200).endMs,10000);
+});
 test('original transcript is preserved separately and finds speech already removed in Resolve',()=>{
   const video={id:'v',fps:30,durationMs:2000,keepRanges:[[300,360]]};
   const t=normalizeTranscript({words:[{id:'kept',text:'keep',startMs:100,endMs:400,sourceStartMs:10100,sourceEndMs:10400}],original:{durationMs:14000,sourceId:'raw',words:[{id:'before',text:'before',startMs:100,endMs:500},{id:'kept',text:'keep',startMs:10100,endMs:10400},{id:'after',text:'after',startMs:13000,endMs:13500}]}},2000);

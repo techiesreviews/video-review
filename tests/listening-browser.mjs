@@ -39,7 +39,25 @@ try{
  assert.notEqual(await page.locator('#currentTime').innerText(),'0:00.000','Hidden-video audio playback advances the visible clock.');
  const transport=await page.locator('.player').boundingBox(),stage=await page.locator('.stage').boundingBox();assert.ok(Math.abs(transport.y+transport.height-stage.y-stage.height)<3,'Transport sits at the bottom of the stage.');
  await page.locator('#buildWaveform').click();await page.waitForFunction(()=>document.querySelector('#buildWaveform').hidden,{timeout:20000});
+ // Ctrl + wheel zooms about the playhead, rather than the cursor or browser page.
+ await page.locator('#clearTranscriptSelection').click();
+ await page.locator('video').evaluate(v=>{v.currentTime=12;});
+ await page.waitForFunction(()=>document.querySelector('#waveformCanvas').getAttribute('aria-valuenow')==='12');
+ const windowState=()=>page.locator('#waveformCanvas').evaluate(n=>({start:Number(n.dataset.startMs),end:Number(n.dataset.endMs),at:Number(n.getAttribute('aria-valuenow'))*1000,width:innerWidth}));
+ const full=await windowState(),wave=await page.locator('#waveformCanvas').boundingBox();
+ await page.mouse.move(wave.x+wave.width*.85,wave.y+wave.height/2);await page.keyboard.down('Control');await page.mouse.wheel(0,-240);await page.keyboard.up('Control');
+ await page.waitForFunction(()=>Number(document.querySelector('#waveformCanvas').dataset.startMs)>0);
+ const closer=await windowState();assert.ok(closer.end-closer.start<full.end-full.start);
+ assert.ok(Math.abs((closer.at-closer.start)/(closer.end-closer.start)-.5)<.001,'Zoom anchors to the playhead, not the mouse position.');
+ assert.equal(closer.at,full.at);assert.equal(closer.width,full.width);assert.equal(await page.locator('#waveformOverviewWrap').isVisible(),true);
+ await page.mouse.wheel(0,-120);await page.waitForTimeout(80);assert.deepEqual(await windowState(),closer,'Ordinary scrolling does not zoom the waveform.');
+ await page.keyboard.down('Control');await page.mouse.wheel(0,120);await page.keyboard.up('Control');
+ await page.waitForFunction(s=>Number(document.querySelector('#waveformCanvas').dataset.endMs)-Number(document.querySelector('#waveformCanvas').dataset.startMs)>s,closer.end-closer.start);
+ await page.locator('#waveformZoom').selectOption('fit');assert.equal((await windowState()).end,24000);
  await centred(21);await page.waitForSelector('#waveformStart:not([hidden])');
+ const boundaries=[await page.locator('#waveformIn').inputValue(),await page.locator('#waveformOut').inputValue()];
+ await page.locator('#waveformCanvas').dispatchEvent('wheel',{ctrlKey:true,deltaY:-120});
+ assert.deepEqual([await page.locator('#waveformIn').inputValue(),await page.locator('#waveformOut').inputValue()],boundaries,'Zoom must not change cut boundaries.');
  const originalEnd=Number(await page.locator('#waveformOut').inputValue());
  await page.locator('#waveformEnd').focus();await page.keyboard.press('ArrowRight');
  const extended=Number(await page.locator('#waveformOut').inputValue());assert.ok(extended>originalEnd&&extended-originalEnd<.04);

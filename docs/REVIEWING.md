@@ -34,6 +34,10 @@ selection it spans the whole video; selecting a passage opens a close-up and a s
 Click the overview to jump elsewhere. Turning Waveform off brings the ordinary seek bar back. Comment
 markers remain available on the active playback surface.
 
+Hold **Ctrl** and scroll over the waveform to zoom in or out around the playhead. Scrolling up zooms in;
+scrolling down zooms out. This changes only the view, never the cut or playback position. **View → Fit video**
+returns to the full recording. The overview stays available while zoomed in.
+
 1. Press **Build waveform** to decode the loaded video's audio locally in the browser. No upload, paid service,
    or new transcription is involved. Use an MP4 review copy if the browser cannot decode the original format.
 2. Select a word, phrase or pause. The waveform shows the proposed removal, including the normal breath margins

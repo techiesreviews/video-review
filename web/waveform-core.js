@@ -15,6 +15,14 @@ export function waveformWindow(durationMs,atMs,range=null,spanMs=8000){
   const centre=range?(range.startMs+range.endMs)/2:atMs;
   const start=Math.max(0,Math.min(durationMs-size,centre-size/2));return {startMs:start,endMs:start+size};
 }
+// Keep the playhead at the same horizontal position while changing the visible span.
+export function zoomWaveformWindow(durationMs,view,atMs,delta){
+  const oldSize=view.endMs-view.startMs,anchor=Math.max(view.startMs,Math.min(view.endMs,atMs));
+  const fraction=(anchor-view.startMs)/oldSize;
+  const size=Math.min(durationMs,Math.max(Math.min(250,durationMs),oldSize*Math.exp(Math.max(-300,Math.min(300,delta))*.0025)));
+  const start=Math.max(0,Math.min(durationMs-size,anchor-fraction*size));
+  return {startMs:start,endMs:start+size};
+}
 export function adjustBoundary(range,edge,value,durationMs,fps=30){
   const step=1000/fps,limit=Math.floor(durationMs/step+.00001)*step;
   const snap=n=>Math.round(n/step)*step;
