@@ -24,6 +24,8 @@
           <button id="nextFrame" class="ctl" title="Next frame (→)" aria-label="Next frame"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
           <span class="time"><span id="currentTime">0:00.000</span><span class="dim"> / <span id="duration">0:00</span></span><small id="frameInfo"></small></span>
           <span class="spacer"></span>
+          <button id="toggleTranscriptView" class="ctl text" type="button" aria-pressed="true">Show video</button>
+          <button id="waveformToggle" class="ctl text" type="button" aria-pressed="true">Waveform</button>
           <button id="speed" class="ctl text" title="Playback speed" aria-label="Playback speed">1×</button>
           <button id="mute" class="ctl text" aria-label="Mute">Sound</button>
           <button id="fullscreen" class="ctl" aria-label="Full screen"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
@@ -32,8 +34,13 @@
     </div>
     <div class="below-player" id="transcriptPanel" aria-label="Transcript">
       <span id="transcriptSummary" class="sr-only" role="status"></span>
-      <div class="transcript-tools"><label class="transcript-search"><input id="transcriptSearch" type="search" aria-label="Find in transcript" placeholder="Find a word or phrase…"></label><label class="follow-words"><input id="followTranscript" type="checkbox" checked>Follow playback</label><button id="importTranscript" class="ghost small" type="button">Import transcript</button></div>
+      <div class="transcript-tools"><label class="transcript-search"><input id="transcriptSearch" type="search" aria-label="Find in transcript" placeholder="Find a word or phrase…"></label><label class="follow-words"><input id="followTranscript" type="checkbox" checked>Follow playback</label><label class="pause-threshold">Pauses ≥ <select id="pauseThreshold" aria-label="Show pauses longer than"><option value="250">0.25 s</option><option value="450" selected>0.45 s</option><option value="650">0.65 s</option><option value="1000">1 s</option></select></label><button id="importTranscript" class="ghost small" type="button">Import transcript</button></div>
       <div id="transcriptText" class="transcript-text" aria-label="Timed transcript" tabindex="0"><p class="transcript-empty">Your transcript will appear here. Import the existing word-timed JSON; no new transcription is needed.</p></div>
+      <section id="waveformPanel" class="waveform-panel" aria-label="Audio waveform editor">
+        <div class="waveform-toolbar"><span id="waveformStatus" role="status">Open a video to see its waveform.</span><button id="buildWaveform" type="button">Build waveform</button><label>View <select id="waveformZoom" aria-label="Waveform visible time"><option value="4" selected>4 s</option><option value="8">8 s</option><option value="16">16 s</option><option value="32">32 s</option></select></label></div>
+        <div id="waveformWrap" class="waveform-wrap"><canvas id="waveformCanvas" aria-label="Audio waveform; select words to adjust a cut, or click to seek"></canvas><button id="waveformStart" class="waveform-handle" type="button" role="slider" aria-label="Cut start" hidden></button><button id="waveformEnd" class="waveform-handle end" type="button" role="slider" aria-label="Cut end" hidden></button></div>
+        <div id="waveformRange" class="waveform-range" hidden><label>Cut from <input id="waveformIn" type="number" min="0" step="0.001" aria-label="Cut start in seconds"></label><label>to <input id="waveformOut" type="number" min="0" step="0.001" aria-label="Cut end in seconds"></label><span id="waveformCutLength"></span><button id="auditionWaveformCut" type="button">Hear cut</button></div>
+      </section>
       <div id="cutPreviewBar" class="cut-preview-bar" hidden><span id="cutPreviewStatus" role="status"></span><button id="undoTranscriptCut" type="button">Undo cut</button><button id="showRemovedWords" type="button" aria-pressed="false">Show removed</button><button id="exportTranscriptCut" type="button">Export cut list</button></div>
       <div id="transcriptSelection" class="transcript-selection" hidden>
         <div class="selection-detail"><span id="selectionTime"></span><p id="selectionQuote"></p><button id="clearTranscriptSelection" class="link" type="button">Clear selection</button></div>

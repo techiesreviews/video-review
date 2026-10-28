@@ -21,3 +21,24 @@ the old browser copy. If the browser cannot reopen the file, choose the new copy
 
 Download review backups regularly. They include notes and transcripts, not video bytes. Disconnect agents
 revokes the session's tokens. Never commit connection tokens, footage, transcripts or private review backups.
+
+## Listen and edit through the words
+
+The app starts with the picture hidden, larger transcript text, and playback controls pinned below the words.
+Use **Show video** to bring the picture back. The view is remembered after refresh. **Follow playback** keeps
+the current word or long-pause marker vertically centred; switch it off to browse freely. Selecting words
+pauses playback. The **Pauses ≥** setting chooses which approximate word-timing gaps to show.
+
+1. Press **Build waveform** to decode the loaded video's audio locally in the browser. No upload, paid service,
+   or new transcription is involved. Use an MP4 review copy if the browser cannot decode the original format.
+2. Select a word, phrase or pause. The waveform shows the proposed removal, including the normal breath margins
+   for a pause. Change **View** to zoom the time window.
+3. Drag the purple start or orange end handle, or enter the two times below the waveform. Arrow keys on a
+   handle move one video frame; Shift+Arrow moves five. These adjustments replace the automatic margins.
+4. **Hear cut** plays the surrounding audio and skips the proposed removal, without saving that audition.
+5. **Remove from cut** or **Shorten pause** saves the preview decision and its review request immediately.
+   Undo restores it. Export the cut list to apply those decisions to the same editable Resolve timeline.
+
+Waveform heights are scaled for readability; this is not a loudness meter. Pauses are measured between
+approximate transcript word times, so listen to the waveform boundaries before accepting a cut. This editor
+does not destructively rewrite media or automatically change a Resolve project.

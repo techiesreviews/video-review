@@ -14,17 +14,20 @@ export function removedRanges(edits=[]){
 }
 export function skipRemoved(ms,edits=[]){const range=removedRanges(edits).find(([a,b])=>ms>=a&&ms<b);return range?range[1]:ms;}
 export function previewDuration(durationMs,edits=[]){return durationMs-removedRanges(edits).reduce((n,[a,b])=>n+b-a,0);}
-export function makeRemoval(transcript,selection,durationMs,fps=30){
+export function removalBounds(transcript,selection,durationMs,fps=30){
   const words=transcript.words,wordIds=selection.kind==='pause'?[]:words.filter(w=>w.startMs<selection.endMs&&w.endMs>selection.startMs).map(w=>w.id);
   let start=selection.startMs,end=selection.endMs;
-  if(selection.kind!=='pause'){
+  if(!selection.precise&&selection.kind!=='pause'){
     const first=words.findIndex(w=>w.id===wordIds[0]),last=words.findIndex(w=>w.id===wordIds.at(-1)),before=words[first-1],after=words[last+1];
     if(first>=0&&before)start=Math.max(before.endMs,start-Math.min(120,Math.max(0,start-before.endMs)/2));
     if(last>=0&&after)end=Math.min(after.startMs,end+Math.min(120,Math.max(0,after.startMs-end)/2));
-  }else{const room=Math.min(180,(end-start)/3);start+=room;end-=room;}
-  start=Math.max(0,Math.ceil(start*fps/1000)*1000/fps);end=Math.min(durationMs,Math.floor(end*fps/1000)*1000/fps);
+  }else if(!selection.precise){const room=Math.min(180,(end-start)/3);start+=room;end-=room;}
+  start=Math.max(0,(selection.precise?Math.round:Math.ceil)(start*fps/1000)*1000/fps);end=Math.min(durationMs,(selection.precise?Math.round:Math.floor)(end*fps/1000)*1000/fps);
   if(end-start<1000/fps)throw Error('This selection is too short for a safe frame-aligned cut.');
-  const edit={id:crypto.randomUUID(),startMs:Math.round(start),endMs:Math.round(end),wordIds,kind:selection.kind==='pause'?'pause':'words',quote:selection.quote};
+  return {startMs:Math.round(start),endMs:Math.round(end),wordIds,kind:selection.kind==='pause'?'pause':'words',quote:selection.quote};
+}
+export function makeRemoval(transcript,selection,durationMs,fps=30){
+  const edit={id:crypto.randomUUID(),...removalBounds(transcript,selection,durationMs,fps)};
   if(previewDuration(durationMs,[...(transcript.draftEdits||[]),edit])<1000/fps)throw Error('Keep at least one frame in the video.');return edit;
 }
 export function exportCut(transcript,video){

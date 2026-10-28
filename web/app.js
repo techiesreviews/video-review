@@ -18,7 +18,7 @@ function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className
 function download(name,data){const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=el('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 
 let previewStop=null;
-const transcriptPanel=createTranscriptPanel({seek:ms=>{if(video.readyState>=1)seek(ms);else pendingSeek=ms;},pause:()=>video.pause(),playContext:(start,end)=>{seek(start);previewStop=end;video.play().catch(error=>showToastError(error.message));},showError:showToastError,
+const transcriptPanel=createTranscriptPanel({media:video,seek:ms=>{if(video.readyState>=1)seek(ms);else pendingSeek=ms;},pause:()=>video.pause(),playContext:(start,end)=>{seek(start);previewStop=end;video.play().catch(error=>showToastError(error.message));},showError:showToastError,
   request:async selection=>{if(!active)return;video.pause();const videoId=active.id,createdAt=new Date().toISOString();setSaveState('Saving…');const list=await backend.apply({action:'add',videoId,startMs:selection.startMs,endMs:selection.endMs,text:selection.text,editRequest:selection.editRequest,createdAt});setNotes(list);if(filter!=='open')setFilter('open');setSaveState(savedLabel());return list.findLast(n=>n.videoId===videoId&&n.createdAt===createdAt&&n.text===selection.text);},
   updateRequest:async(id,text)=>{const list=await backend.apply({action:'update',id,text});setNotes(list);setSaveState(savedLabel());return list.find(n=>n.id===id);},
   cancelRequest:async id=>{setNotes(await backend.apply({action:'reply',id,author:'you',text:'Undid this preview removal; keep the passage.',status:'done'}));}});
@@ -30,13 +30,22 @@ const libraryPanel=createLibraryPanel({getBackend:()=>backend,showError:showToas
 
 // Playback
 function clamp(ms){return Math.max(0,Math.min(active.durationMs,ms));}
-function currentMs(){return explicitTime??Math.round((video.paused?video.currentTime:presented)*1000);}
+function currentMs(){return explicitTime??Math.round((video.paused||document.body.classList.contains('transcript-only')?video.currentTime:presented)*1000);}
 function renderTime(){if(!active)return;const ms=currentMs();$('#currentTime').textContent=precise(ms);$('#frameInfo').textContent=`frame ${frameOf(ms)}`;$('#seek').value=ms/1000;$('#playIcon').setAttribute('d',video.paused?PLAY:PAUSE);$('#play').setAttribute('aria-label',video.paused?'Play':'Pause');renderStamp();highlightActive(ms);transcriptPanel.tick(ms,!video.paused);}
 function enforcePreview(){if(video.paused)return;const ms=video.currentTime*1000,next=transcriptPanel.skip(ms);if(next>ms+.5){if(next>=video.duration*1000-1){video.pause();video.currentTime=video.duration;}else video.currentTime=next/1000;}if(previewStop!==null&&video.currentTime*1000>=previewStop){video.pause();previewStop=null;}}
 function frameCallback(now,metadata){enforcePreview();presented=metadata.mediaTime;if(!video.paused)explicitTime=null;renderTime();video.requestVideoFrameCallback(frameCallback);}
 if(video.requestVideoFrameCallback)video.requestVideoFrameCallback(frameCallback);
 video.addEventListener('timeupdate',()=>{enforcePreview();if(!video.requestVideoFrameCallback)presented=video.currentTime;renderTime();});
 video.addEventListener('play',()=>{explicitTime=null;$('#bigPlay').hidden=true;renderTime();});video.addEventListener('pause',renderTime);
+// A hidden video may stop delivering video-frame callbacks while its audio keeps playing.
+let readingClock=null;
+function startReadingClock(){if(readingClock!==null||video.paused)return;const tick=()=>{readingClock=null;if(video.paused)return;if(document.body.classList.contains('transcript-only')){enforcePreview();renderTime();}readingClock=requestAnimationFrame(tick);};readingClock=requestAnimationFrame(tick);}
+video.addEventListener('play',startReadingClock);
+video.addEventListener('pause',()=>{if(readingClock!==null)cancelAnimationFrame(readingClock);readingClock=null;});
+function setTranscriptView(on){document.body.classList.toggle('transcript-only',on);$('#toggleTranscriptView').textContent=on?'Show video':'Hide video';$('#toggleTranscriptView').setAttribute('aria-pressed',String(on));try{localStorage.setItem('techies-review-transcript-only',String(on));}catch{}requestAnimationFrame(()=>transcriptPanel.reflow());startReadingClock();}
+let initialTranscriptView=true;try{initialTranscriptView=localStorage.getItem('techies-review-transcript-only')!=='false';}catch{}
+setTranscriptView(initialTranscriptView);
+$('#toggleTranscriptView').onclick=()=>setTranscriptView(!document.body.classList.contains('transcript-only'));
 video.addEventListener('loadedmetadata',()=>{$('#loading').style.display='none';if(!syncDuration())return;renderTime();if(announceReload){announceReload=false;toast(`Loaded the new render of ${active.title}.`);}if(pendingSeek!==null){const ms=pendingSeek;pendingSeek=null;seek(ms);}});
 video.addEventListener('pause',()=>reportView());video.addEventListener('seeked',()=>reportView());
 // A file replaced on disk stops playing; reloadIfChanged then picks up the new render.

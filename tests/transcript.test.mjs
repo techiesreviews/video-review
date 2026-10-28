@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {normalizeTranscript,activeWordIndex,wordSelection,searchLibrary} from '../web/transcript-core.js';
 import {applyChange,describe,rebaseComments} from '../web/review-core.js';
-import {normalizeDraftEdits,makeRemoval,skipRemoved,previewDuration,exportCut} from '../web/cut-core.js';
+import {normalizeDraftEdits,makeRemoval,removalBounds,skipRemoved,previewDuration,exportCut} from '../web/cut-core.js';
+import {audioPeaks,waveformWindow,adjustBoundary} from '../web/waveform-core.js';
 
 test('HappyScribe word objects preserve text and actual word timings',()=>{
   const data=[{words:[{text:' café',data_start:1.12,data_end:1.4,type:'word'},{text:'dashboard',data_start:1.5,data_end:2}]}];
@@ -62,4 +63,24 @@ test('comments follow retained source material after recuts and removed comments
   assert.equal(comments[0].startMs,2000);assert.equal(comments[0].endMs,2500);
   assert.equal(comments[1].startMs,1000);assert.equal(comments[1].endMs,null);
   assert.equal(comments[0].sourceSpans[0].sourceStartFrame,90);
+});
+
+test('waveform preserves channel peaks and uses the decoded audio clock',()=>{
+  const p=audioPeaks([Float32Array.from([0,.5,0,0,-.8,0,0,0]),Float32Array.from([0,-.5,0,0,0,0,0,0])],1000,4);
+  assert.equal(p.bucketMs,4);assert.equal(p.durationMs,8);assert.equal(p.peaks[0],.5);assert.ok(Math.abs(p.peaks[1]-.8)<.00001);
+});
+test('waveform windows include both cut handles and stay inside the file',()=>{
+  assert.deepEqual(waveformWindow(10000,1000,null,4000),{startMs:0,endMs:4000});
+  const view=waveformWindow(10000,9000,{startMs:7000,endMs:9500},4000);
+  assert.ok(view.startMs<=7000&&view.endMs>=9500&&view.endMs<=10000);
+});
+test('manual waveform boundaries keep a frame, preserve the chosen edge, and survive serialization',()=>{
+  const range=adjustBoundary({startMs:500,endMs:1500},'start',1000,3000,30);
+  assert.deepEqual(range,{startMs:1000,endMs:1500});
+  assert.equal(adjustBoundary(range,'start',2500,3000,30).startMs,1467);
+  const transcript=normalizeTranscript([['before',0,.4],['after',1.5,2]],3000);
+  const manual=adjustBoundary({startMs:500,endMs:1500},'end',1433,3000,30);
+  const edit=removalBounds(transcript,{...manual,kind:'pause',precise:true,quote:'gap'},3000,30);
+  assert.equal(edit.startMs,500);assert.equal(edit.endMs,1433);
+  assert.deepEqual(normalizeDraftEdits([{id:'manual',...edit}],3000)[0].wordIds,[]);
 });

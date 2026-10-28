@@ -8,6 +8,10 @@ The library searches video titles and transcript phrases. Removing an entry arch
 the recording. Comments, transcripts and recordings stay private; this repository contains the app code.
 The optional production workflow and per-video assets on the creator's workstation are separate from this public app.
 
+**Listening view:** hide the picture, follow larger words in the centre of the transcript, and show pause lengths.
+Build a local audio waveform, adjust cut handles by dragging or one frame at a time, and audition the join before
+saving a reversible removal. Use **Show video** to switch back. [How it works](docs/REVIEWING.md#listen-and-edit-through-the-words).
+
 Leave precise, timestamped comments on a video edit, like Loom, and let an AI agent work through them with you. Pause anywhere, type, press Enter; the comment is pinned to that exact frame. The agent reads your comments with frame numbers and original-source mapping, replies in the thread, asks when something is unclear, resolves what it fixed and announces new cuts.
 
 There are two ways to run it. They share the same interface.

@@ -31,7 +31,7 @@ class Handler(BaseHTTPRequestHandler):
             key=route[7:];item=next((x for x in store.videos(DATA) if x['id']==key),None)
             if not item:return self.send_error(404)
             path=Path(item['path'])
-        elif route in ['/','/index.html','/app.js','/backend.js','/review-core.js','/transcript-core.js','/transcript-panel.js','/cut-core.js','/library-panel.js','/style.css']:
+        elif route in ['/','/index.html','/app.js','/backend.js','/review-core.js','/transcript-core.js','/transcript-panel.js','/cut-core.js','/waveform-core.js','/waveform-panel.js','/library-panel.js','/style.css']:
             path=WEB/('index.html' if route=='/' else route[1:])
         else:return self.send_error(404)
         if not path.is_file():return self.send_error(404)
