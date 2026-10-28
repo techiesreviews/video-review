@@ -69,7 +69,7 @@ export function createWaveform({media,seek,pause,onRange,onAudition}){
       if(Math.abs(audio.duration*1000-duration)>Math.max(300,duration*.001))throw Error('Audio duration does not match this review copy.');
       const result=audioPeaks(Array.from({length:audio.numberOfChannels},(_,i)=>audio.getChannelData(i)),audio.sampleRate);
       peaks=result.peaks;peakMax=.00001;for(const value of peaks)peakMax=Math.max(peakMax,value);bucketMs=result.bucketMs;source=url;
-      status('Select words or a pause, then drag the cut handles.');$('#buildWaveform').hidden=true;draw();
+      status('');$('#buildWaveform').hidden=true;draw();
     }catch(error){if(token===generation&&error.name!=='AbortError')status(error.name==='EncodingError'?'This browser could not read the audio. Try an MP4 review copy.':error.message);}
     finally{if(token===generation){loading=false;$('#buildWaveform').disabled=false;}}
   }
@@ -96,9 +96,9 @@ export function createWaveform({media,seek,pause,onRange,onAudition}){
   overview.onpointerdown=e=>{if(e.button!==0||e.target.closest('.pin'))return;pause();const rect=overview.getBoundingClientRect();range=null;zoomView=null;onRange(null);seek(Math.max(0,Math.min(duration,(e.clientX-rect.left)/rect.width*duration)));draw();};
   for(const node of [canvas,overview])node.onkeydown=e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();seek(e.key==='Home'?0:e.key==='End'?duration:Math.max(0,Math.min(duration,at+(e.key==='ArrowRight'?1:-1)*(e.shiftKey?5:1)*1000/fps)));}};
   new ResizeObserver(draw).observe(wrap);
-  media.addEventListener('emptied',()=>{generation++;request?.abort();loading=false;peaks=null;source=null;$('#buildWaveform').hidden=false;$('#buildWaveform').disabled=false;status('Build a waveform from the loaded audio.');draw();});
+  media.addEventListener('emptied',()=>{generation++;request?.abort();loading=false;peaks=null;source=null;$('#buildWaveform').hidden=false;$('#buildWaveform').disabled=false;status('');draw();});
   return {
-    load(video){generation++;request?.abort();duration=video?.durationMs||0;fps=video?.fps||30;at=0;range=null;zoomView=null;removed=[];peaks=null;source=null;loading=false;$('#buildWaveform').hidden=false;$('#buildWaveform').disabled=!video;status(video?'Build a waveform from the loaded audio.':'Open a video to see its waveform.');this.setRange(null);draw();},
+    load(video){generation++;request?.abort();duration=video?.durationMs||0;fps=video?.fps||30;at=0;range=null;zoomView=null;removed=[];peaks=null;source=null;loading=false;$('#buildWaveform').hidden=false;$('#buildWaveform').disabled=!video;status('');this.setRange(null);draw();},
     setRange(next){if(next&&!drag&&zoomView&&zoomView.endMs-zoomView.startMs>=duration-1)zoomView=null;range=next;if(range&&zoomView&&!drag&&(range.startMs<view.startMs||range.endMs>view.endMs))zoomView=waveformWindow(duration,(range.startMs+range.endMs)/2,range,view.endMs-view.startMs);$('#waveformRange').hidden=!range;if(range){$('#waveformIn').value=(range.startMs/1000).toFixed(3);$('#waveformOut').value=(range.endMs/1000).toFixed(3);$('#waveformCutLength').textContent=((range.endMs-range.startMs)/1000).toFixed(3)+' s to remove';}$('#auditionWaveformCut').disabled=!range;draw();},
     setCuts(edits){removed=edits.map(e=>[e.startMs,e.endMs]);draw();},
     tick(ms){const next=Math.floor(ms/40);if(next===Math.floor(at/40))return;at=ms;if(zoomView&&!drag&&(at<view.startMs||at>view.endMs))zoomView=waveformWindow(duration,at,null,view.endMs-view.startMs);draw();},

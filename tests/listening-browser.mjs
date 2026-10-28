@@ -39,6 +39,7 @@ try{
  assert.notEqual(await page.locator('#currentTime').innerText(),'0:00.000','Hidden-video audio playback advances the visible clock.');
  const transport=await page.locator('.player').boundingBox(),stage=await page.locator('.stage').boundingBox();assert.ok(Math.abs(transport.y+transport.height-stage.y-stage.height)<3,'Transport sits at the bottom of the stage.');
  await page.locator('#buildWaveform').click();await page.waitForFunction(()=>document.querySelector('#buildWaveform').hidden,{timeout:20000});
+ assert.equal(await page.locator('#waveformStatus').textContent(),'','No persistent waveform help text.');
  // Ctrl + wheel zooms about the playhead, rather than the cursor or browser page.
  await page.locator('#clearTranscriptSelection').click();
  await page.locator('video').evaluate(v=>{v.currentTime=12;});
