@@ -101,7 +101,7 @@ def check_author(author):
     return author
 
 def check_edit_request(request,video,start,end):
-    if not isinstance(request,dict) or request.get('type') not in ['remove','clipped','extend_before','extend_after','mistake','pause','comment']:
+    if not isinstance(request,dict) or request.get('type') not in ['remove','restore','clipped','extend_before','extend_after','mistake','pause','comment']:
         raise ValueError('Invalid transcript edit request')
     result={'type':request['type']}
     for key in ['quote','firstWordId','lastWordId','cutId','transcriptRevision']:
@@ -109,6 +109,15 @@ def check_edit_request(request,video,start,end):
             if not isinstance(request[key],str) or len(request[key])>(3000 if key=='quote' else 120):raise ValueError('Invalid transcript selection')
             result[key]=request[key]
     result['sourceSpans']=source_spans(video,start,end)
+    if request['type']=='restore':
+        import math
+        a,b,d=(request.get(k) for k in ['sourceStartMs','sourceEndMs','sourceDurationMs'])
+        if any(isinstance(t,bool) or not isinstance(t,(int,float)) or not math.isfinite(t) for t in [a,b,d]) or not 0<=a<b<=d<=86400000:raise ValueError('Invalid original-recording restore range')
+        result.update(sourceStartMs=round(a),sourceEndMs=round(b),sourceDurationMs=round(d))
+        if 'sourceId' in request:
+            if not isinstance(request['sourceId'],str) or len(request['sourceId'])>120:raise ValueError('Invalid original source ID')
+            result['sourceId']=request['sourceId']
+        result['sourceSpans']=[{'sourceStartFrame':round(a*video['fps']/1000,3),'sourceEndFrame':round(b*video['fps']/1000,3),'sourceStartMs':round(a,3),'sourceEndMs':round(b,3)}]
     return result
 
 def transcript_path(directory,video_id):
@@ -207,6 +216,18 @@ def save_transcript(directory,video_id,data):
         cuts.append({'id':str(cut.get('id','join'))[:100],'atMs':round(at),'risk':bool(cut.get('risk'))})
     result={'schemaVersion':1,'revision':str(data.get('revision','imported'))[:120],
             'label':str(data.get('label','Word-timed transcript'))[:120],'words':words,'cuts':cuts}
+    if data.get('original') is not None:
+        o=data['original']
+        if not isinstance(o,dict) or isinstance(o.get('durationMs'),bool) or not isinstance(o.get('durationMs'),(int,float)) or not math.isfinite(o['durationMs']) or not 0<o['durationMs']<=86400000 or not isinstance(o.get('words'),list) or not 0<len(o['words'])<=50000:raise ValueError('Invalid original transcript')
+        raw=[];raw_ids=set();previous=-1
+        for w in o['words']:
+            if not isinstance(w,dict):raise ValueError('Invalid original word')
+            a,b=w.get('startMs'),w.get('endMs');wid,text=w.get('id'),w.get('text')
+            if not isinstance(wid,str) or not wid or len(wid)>120 or wid in raw_ids or not isinstance(text,str) or not text.strip() or len(text)>500:raise ValueError('Invalid original word')
+            if any(isinstance(t,bool) or not isinstance(t,(int,float)) or not math.isfinite(t) for t in [a,b]) or not 0<=a<=b<=o['durationMs']+50 or a<previous:raise ValueError('Invalid original word timing')
+            raw.append({'id':wid,'text':text.strip(),'startMs':round(a),'endMs':round(b)});raw_ids.add(wid);previous=a
+        if any(w['id'] not in raw_ids for w in words):raise ValueError('Original and review word IDs do not match')
+        result['original']={'durationMs':round(o['durationMs']),'label':str(o.get('label','Original recording'))[:120],'sourceId':str(o.get('sourceId',''))[:120],'words':raw}
     edits=data.get('draftEdits',[])
     if not isinstance(edits,list) or len(edits)>5000:raise ValueError('Invalid preview cuts')
     result['draftEdits']=[];edit_ids=set()
@@ -249,6 +270,7 @@ def apply(directory,cmd):
             comment={'id':str(uuid.uuid4()),'videoId':video['id'],'startMs':start,'endMs':end,'text':check_text(cmd.get('text')),'category':cmd.get('category','edit'),'status':'open','author':check_author(cmd.get('author','you')),'createdAt':cmd.get('createdAt') or now(),'replies':[]}
             comment['sourceSpans']=source_spans(video,start,end)
             if cmd.get('editRequest') is not None:comment['editRequest']=check_edit_request(cmd['editRequest'],video,start,end)
+            if comment.get('editRequest',{}).get('type')=='restore':comment['sourceSpans']=comment['editRequest']['sourceSpans']
             items.append(comment);result=comment
         elif action=='update':
             c=get(cmd['id'])

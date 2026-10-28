@@ -11,7 +11,7 @@ const media=join(temp,'listening.mp4'),durationMs=24000;
 const encoded=spawnSync('ffmpeg',['-v','error','-y','-f','lavfi','-i','color=c=0x1b1f3b:s=640x360:r=30:d=24','-f','lavfi','-i','sine=frequency=330:sample_rate=48000:duration=24','-af',"volume='if(lt(mod(t,1.5),0.95),0.5,0)':eval=frame",'-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p','-c:a','aac','-b:a','64k','-shortest',media],{windowsHide:true,encoding:'utf8'});
 assert.equal(encoded.status,0,encoded.stderr);
 const words=[];for(let group=0;group<16;group++)for(let n=0;n<4;n++){const startMs=Math.round(group*1500+100+n*220);words.push({id:'word-'+words.length,text:['Here','is','sentence','number'][n]+(n===3?group+'.':''),startMs,endMs:startMs+180});}
-const transcript={words,cuts:[],revision:'synthetic-listening'};
+const transcript={words,cuts:[],revision:'synthetic-listening',original:{durationMs:36000,sourceId:'synthetic-raw',words:[{id:'raw-before',text:'Earlier',startMs:100,endMs:300},...words.map(w=>({...w,startMs:w.startMs+10000,endMs:w.endMs+10000})),{id:'raw-after',text:'Ending',startMs:35100,endMs:35300}]}};
 await writeFile(join(temp,'manifest.json'),JSON.stringify([{id:'listening',title:'Listening test',label:'Synthetic',path:media,fps:30,durationMs,keepRanges:[[300,1020]]}]));
 await writeFile(join(temp,'comments.json'),JSON.stringify({comments:[]}));await mkdir(join(temp,'transcripts'));
 await writeFile(join(temp,'transcripts/listening.json'),JSON.stringify(transcript));
@@ -23,6 +23,10 @@ try{
  await page.goto('http://127.0.0.1:8893');await page.waitForSelector('.transcript-word');await page.waitForFunction(()=>document.querySelector('video').readyState>=2);
  assert.equal(await page.locator('body').evaluate(n=>n.classList.contains('transcript-only')),true);
  assert.equal(await page.locator('video').isVisible(),false);
+ assert.equal(await page.locator('#seek').isVisible(),false,'Waveform replaces the old seek bar.');
+ assert.equal(await page.locator('#waveformPanel').evaluate(n=>Boolean(n.closest('.controls'))),true);
+ await page.locator('#waveformToggle').click();assert.equal(await page.locator('#seek').isVisible(),true);
+ await page.locator('#waveformToggle').click();
  assert.ok(await page.locator('#transcriptText').evaluate(n=>parseFloat(getComputedStyle(n).fontSize))>=28);
  async function centred(index){
   await page.locator('.transcript-word').nth(index).click();
@@ -52,8 +56,28 @@ try{
  await page.locator('[data-transcript-action="pause"]').click();await page.waitForFunction(()=>!document.querySelector('#cutPreviewBar').hidden);
  saved=JSON.parse(await readFile(join(temp,'transcripts/listening.json'),'utf8')).draftEdits;assert.deepEqual(saved[0].wordIds,[],'A manually adjusted pause leaves adjacent transcript words intact.');
  await page.locator('#undoTranscriptCut').click();
+ // Restore an earlier preview cut without undoing the later one.
+ await centred(12);await page.locator('[data-transcript-action="remove"]').click();await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===1);
+ await centred(28);await page.locator('[data-transcript-action="remove"]').click();await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===2);
+ let edits=JSON.parse(await readFile(join(temp,'transcripts/listening.json'),'utf8')).draftEdits;assert.equal(edits.length,2);
+ const firstEdit=edits[0].id,lastEdit=edits[1].id;
+ await page.locator('#showRemovedWords').click();await page.waitForSelector('.source-removal');
+ assert.equal(await page.locator('.source-word').count(),2,'Original view includes words already missing from the rendered cut.');
+ await page.locator(`.restore-cut[data-edit-id="${firstEdit}"]`).click();
+ await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===1);
+ edits=JSON.parse(await readFile(join(temp,'transcripts/listening.json'),'utf8')).draftEdits;assert.equal(edits.length,1);assert.equal(edits[0].id,lastEdit);
+ assert.equal(await page.locator('.transcript-word').nth(12).evaluate(n=>n.classList.contains('removed-word')),false);
+ await page.locator('.source-word').filter({hasText:'Ending'}).click();
+ await mkdir('data/test-artifacts',{recursive:true});await page.screenshot({path:'data/test-artifacts/original-transcript-desktop.png'});
+ await page.locator('#restoreOriginalSelection').click();
+ await page.waitForFunction(()=>[...document.querySelectorAll('.comment .text')].some(n=>n.textContent.includes('Restore from the original recording')));
+ const notes=JSON.parse(await readFile(join(temp,'comments.json'),'utf8')).comments,restore=notes.find(c=>c.editRequest?.type==='restore');
+ assert.equal(restore.editRequest.firstWordId,'raw-after');assert.equal(restore.sourceSpans[0].sourceStartMs,35100);assert.equal(restore.startMs,24000,'Restore request is pinned to the review join, with separate original-clock anchors.');
+ await page.locator('#clearTranscriptSelection').click();await page.locator('#undoTranscriptCut').click();
+ await page.locator('#showRemovedWords').click();
  await page.locator('#toggleTranscriptView').click();assert.equal(await page.locator('video').isVisible(),true);
  await page.reload();await page.waitForSelector('.transcript-word');assert.equal(await page.locator('body').evaluate(n=>n.classList.contains('transcript-only')),false);
+ await page.locator('#showRemovedWords').click();assert.equal(await page.locator('.source-word').count(),2,'Full original transcript survives reload.');await page.locator('#showRemovedWords').click();
  await page.locator('#toggleTranscriptView').click();await page.setViewportSize({width:390,height:844});await centred(30);
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'Listening mode has no horizontal overflow on mobile.');
  await mkdir('data/test-artifacts',{recursive:true});await page.screenshot({path:'data/test-artifacts/listening-mobile.png',fullPage:true});

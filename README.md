@@ -11,6 +11,9 @@ The optional production workflow and per-video assets on the creator's workstati
 **Listening view:** hide the picture, follow larger words in the centre of the transcript, and show pause lengths.
 Build a local audio waveform, adjust cut handles by dragging or one frame at a time, and audition the join before
 saving a reversible removal. Use **Show video** to switch back. [How it works](docs/REVIEWING.md#listen-and-edit-through-the-words).
+The waveform replaces the seek bar while enabled. **Original transcript** exposes preview deletions with
+individual Restore buttons; attached source words also reveal earlier Resolve removals and support precise
+restoration requests without mixing the source and review clocks.
 
 Leave precise, timestamped comments on a video edit, like Loom, and let an AI agent work through them with you. Pause anywhere, type, press Enter; the comment is pinned to that exact frame. The agent reads your comments with frame numbers and original-source mapping, replies in the thread, asks when something is unclear, resolves what it fixed and announces new cuts.
 

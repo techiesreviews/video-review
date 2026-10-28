@@ -64,13 +64,20 @@ const uuid=()=>crypto.randomUUID();
 
 export function checkEditRequest(request,video,startMs,endMs){
   if(request==null)return null;
-  if(!request||typeof request!=='object'||!['remove','clipped','extend_before','extend_after','mistake','pause','comment'].includes(request.type))throw Error('Invalid transcript edit request');
+  if(!request||typeof request!=='object'||!['remove','restore','clipped','extend_before','extend_after','mistake','pause','comment'].includes(request.type))throw Error('Invalid transcript edit request');
   const result={type:request.type};
   for(const key of ['quote','firstWordId','lastWordId','cutId','transcriptRevision'])if(request[key]!=null){
     if(typeof request[key]!=='string'||request[key].length>(key==='quote'?3000:120))throw Error('Invalid transcript selection');
     result[key]=request[key];
   }
   result.sourceSpans=sourceSpans(video,startMs,endMs);
+  if(request.type==='restore'){
+    const {sourceStartMs:a,sourceEndMs:b,sourceDurationMs:d}=request;
+    if(![a,b,d].every(Number.isFinite)||a<0||b<=a||b>d||d>86400000)throw Error('Invalid original-recording restore range');
+    result.sourceStartMs=Math.round(a);result.sourceEndMs=Math.round(b);result.sourceDurationMs=Math.round(d);
+    if(request.sourceId!=null){if(typeof request.sourceId!=='string'||request.sourceId.length>120)throw Error('Invalid original source ID');result.sourceId=request.sourceId;}
+    result.sourceSpans=[{sourceStartFrame:round3(a*video.fps/1000),sourceEndFrame:round3(b*video.fps/1000),sourceStartMs:round3(a),sourceEndMs:round3(b)}];
+  }
   return result;
 }
 
@@ -87,6 +94,7 @@ export function applyChange(state,cmd,now=new Date().toISOString()){
       const c={id:uuid(),videoId:video.id,startMs:start,endMs:end,text:checkText(cmd.text),category:cmd.category||'edit',status:'open',author:checkAuthor(cmd.author||'you'),createdAt:cmd.createdAt||now,replies:[]};
       c.sourceSpans=sourceSpans(video,start,end);
       if(cmd.editRequest!=null)c.editRequest=checkEditRequest(cmd.editRequest,video,start,end);
+      if(c.editRequest?.type==='restore')c.sourceSpans=c.editRequest.sourceSpans;
       items.push(c);return c;
     }
     case 'update':{

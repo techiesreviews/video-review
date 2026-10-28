@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {normalizeTranscript,activeWordIndex,wordSelection,searchLibrary} from '../web/transcript-core.js';
+import {normalizeTranscript,activeWordIndex,wordSelection,searchLibrary,originalOmissions} from '../web/transcript-core.js';
 import {applyChange,describe,rebaseComments} from '../web/review-core.js';
 import {normalizeDraftEdits,makeRemoval,removalBounds,skipRemoved,previewDuration,exportCut} from '../web/cut-core.js';
 import {audioPeaks,waveformWindow,adjustBoundary} from '../web/waveform-core.js';
@@ -83,4 +83,18 @@ test('manual waveform boundaries keep a frame, preserve the chosen edge, and sur
   const edit=removalBounds(transcript,{...manual,kind:'pause',precise:true,quote:'gap'},3000,30);
   assert.equal(edit.startMs,500);assert.equal(edit.endMs,1433);
   assert.deepEqual(normalizeDraftEdits([{id:'manual',...edit}],3000)[0].wordIds,[]);
+});
+
+test('original transcript is preserved separately and finds speech already removed in Resolve',()=>{
+  const video={id:'v',fps:30,durationMs:2000,keepRanges:[[300,360]]};
+  const t=normalizeTranscript({words:[{id:'kept',text:'keep',startMs:100,endMs:400,sourceStartMs:10100,sourceEndMs:10400}],original:{durationMs:14000,sourceId:'raw',words:[{id:'before',text:'before',startMs:100,endMs:500},{id:'kept',text:'keep',startMs:10100,endMs:10400},{id:'after',text:'after',startMs:13000,endMs:13500}]}},2000);
+  const omitted=originalOmissions(t,video);assert.equal(omitted.length,2);assert.equal(omitted[0].words[0].id,'before');assert.equal(omitted[0].atMs,0);assert.equal(omitted[1].words[0].id,'after');assert.equal(omitted[1].atMs,2000);
+  assert.equal(normalizeTranscript(t,2000).original.words.length,3);
+  assert.throws(()=>normalizeTranscript({...t,original:{...t.original,words:[{id:'other',text:'bad',startMs:0,endMs:10}]}},2000),/word IDs/);
+});
+test('source restore requests retain original-clock anchors beyond the reviewed video',()=>{
+  const video={id:'v',fps:30,durationMs:2000,keepRanges:[[300,360]]},state={videos:[video],comments:[]};
+  const c=applyChange(state,{action:'add',videoId:'v',startMs:2000,text:'Restore the ending',editRequest:{type:'restore',sourceStartMs:13000,sourceEndMs:13500,sourceDurationMs:14000,firstWordId:'after'}});
+  assert.equal(c.sourceSpans[0].sourceStartFrame,390);assert.equal(c.sourceSpans[0].sourceEndFrame,405);assert.equal(describe(video,c).editRequest.type,'restore');
+  assert.throws(()=>applyChange(state,{action:'add',videoId:'v',startMs:0,text:'Invalid',editRequest:{type:'restore',sourceStartMs:13000,sourceEndMs:15000,sourceDurationMs:14000}}),/restore range/);
 });

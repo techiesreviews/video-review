@@ -211,3 +211,24 @@ video{display:block;width:100%;height:100%;object-fit:contain;background:#000;cu
  .transcript-only .ctl.text{padding:0 7px}.pause-threshold{font-size:11px}
 }
 @media(prefers-reduced-motion:reduce){.transcript-word,.transcript-pause{scroll-behavior:auto}}
+.waveform-enabled .player .track{display:none}
+.controls .waveform-panel{border:0;background:transparent;padding:0 0 6px;color:#c9c3d8}
+.controls .waveform-toolbar,.controls .waveform-range{color:#bfb8d0}
+.controls .waveform-toolbar button,.controls .waveform-range button{color:#c6beff}
+.controls .waveform-toolbar select,.controls .waveform-range input{background:#25222f;border-color:#4a425a;color:#ece8f5}
+.controls .waveform-wrap{background:#1b1923}
+.waveform-overview{position:relative;height:24px;margin-top:5px;background:#1b1923;border-radius:4px;overflow:hidden}
+.waveform-overview[hidden]{display:none}.waveform-overview canvas{display:block;width:100%;height:24px;cursor:crosshair;touch-action:none}
+.restore-cut{display:inline-flex;align-items:center;gap:4px;border:1px solid #d2cceb;border-radius:5px;padding:3px 6px;margin:0 5px;background:#f3f0ff;color:#6254b2;font:600 11px/1.4 'DM Sans',sans-serif;vertical-align:middle;white-space:nowrap}
+.restore-cut:hover{background:#e9e2ff;border-color:var(--accent)}.restore-cut:disabled{color:var(--faint)}
+#showRemovedWords[aria-pressed="true"]{background:var(--accent-soft);border-color:#c8bff5;color:var(--accent)}
+.original-transcript .transcript-word.removed-word.spoken{background:#a34535;color:#fff}
+.original-transcript-notice{font-size:11px;line-height:1.45;color:var(--muted);margin:0;padding:0 20px 10px;flex-shrink:0}
+.source-removal{display:block;margin:18px 0;padding:12px 14px;background:#fff6f0;border-left:3px solid #c68365;border-radius:0 8px 8px 0;font-size:16px;line-height:1.9}
+.source-removal-head{display:block;font:10px/1.6 var(--mono);color:#8b5840;margin-bottom:6px}
+.source-removal-words{display:block;color:#8a6459}.source-word{border-radius:3px;padding:1px;cursor:pointer;text-decoration:line-through;user-select:none}
+.source-word:hover,.source-word.selected{background:#ead6cb;color:#643b2b}.source-removal .source-restore{margin:8px 0 0;background:white}
+.source-word.found{background:#fff0b3}
+.source-selection .transcript-actions>[data-transcript-action],.source-selection #playTranscriptSelection,.source-selection #transcriptNoteForm{display:none}
+.restore-cut{min-height:28px}.transcript-only .source-removal{font-size:22px;line-height:1.8}
+@media(max-width:650px){.transcript-only .source-removal{font-size:20px}.original-transcript-notice{padding-left:12px;padding-right:12px}}

@@ -29,6 +29,11 @@ Use **Show video** to bring the picture back. The view is remembered after refre
 the current word or long-pause marker vertically centred; switch it off to browse freely. Selecting words
 pauses playback. The **Pauses ≥** setting chooses which approximate word-timing gaps to show.
 
+When **Waveform** is enabled, it replaces the ordinary seek bar in the bottom playback controls. With no
+selection it spans the whole video; selecting a passage opens a close-up and a small full-video overview.
+Click the overview to jump elsewhere. Turning Waveform off brings the ordinary seek bar back. Comment
+markers remain available on the active playback surface.
+
 1. Press **Build waveform** to decode the loaded video's audio locally in the browser. No upload, paid service,
    or new transcription is involved. Use an MP4 review copy if the browser cannot decode the original format.
 2. Select a word, phrase or pause. The waveform shows the proposed removal, including the normal breath margins
@@ -42,3 +47,23 @@ pauses playback. The **Pauses ≥** setting chooses which approximate word-timin
 Waveform heights are scaled for readability; this is not a loudness meter. Pauses are measured between
 approximate transcript word times, so listen to the waveform boundaries before accepting a cut. This editor
 does not destructively rewrite media or automatically change a Resolve project.
+
+## See the original words and restore a passage
+
+**Original transcript** is always available above the words. It shows review removals with strike-through text,
+including their original pause lengths. Click **Restore** beside any individual removal; other cuts remain.
+You can listen to these removed parts because they still exist in the loaded review file. **Edited transcript**
+returns to preview playback with those removals skipped.
+
+The attached transcript may also contain an `original` section with the full source recording's word timings,
+duration and source identity. Its word IDs must match those in the derived review transcript. This section is
+private review data and survives saving, backups and refresh; it is not a new transcription.
+
+With that source attached, Original transcript also shows blocks labeled **Removed in Resolve**, including
+missing speech and trimmed pauses. These blocks use the original recording's clock. **Restore in Resolve**
+creates a timestamped restoration request with that source range. Click a missing word, then Shift-click another,
+to request only that phrase. Search includes these original words while this view is open.
+
+Already rendered-out material is absent from the current MP4: showing its text cannot play it or immediately
+reinsert its sound. The agent restores it in the same Resolve timeline from the source recording, checks the
+new joins, and replaces the review render. Review-clock positions and original-clock source anchors stay separate.

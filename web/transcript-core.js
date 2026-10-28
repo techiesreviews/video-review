@@ -33,8 +33,34 @@ export function normalizeTranscript(data, durationMs=Infinity, videoFps=null) {
     if(Math.abs(frames/fps*1000-durationMs)>1000/fps)throw Error('The transcript source mapping belongs to a different cut.');
     mapping.keepRanges=ranges.map(r=>[...r]);mapping.fps=fps;
   }
-  return {schemaVersion:1,revision:String(data?.revision??'imported').slice(0,120),...mapping,
+  let original=null;
+  if(data?.original!=null){
+    const o=data.original;if(!o||!Number.isFinite(o.durationMs)||o.durationMs<=0||o.durationMs>86400000)throw Error('Invalid original recording duration.');
+    const source=normalizeTranscript({words:o.words},o.durationMs).words,sourceIds=new Set(source.map(w=>w.id));
+    if(words.some(w=>!sourceIds.has(w.id)))throw Error('The original transcript must share the review transcript’s word IDs.');
+    original={durationMs:Math.round(o.durationMs),label:String(o.label||'Original recording').slice(0,120),sourceId:String(o.sourceId||'').slice(0,120),words:source};
+  }
+  return {schemaVersion:1,revision:String(data?.revision??'imported').slice(0,120),...mapping,...(original?{original}:{}),
     label:String(data?.label??'Word-timed transcript').slice(0,120),words,cuts,draftEdits:normalizeDraftEdits(data?.draftEdits||[],durationMs)};
+}
+
+// Removed source ranges use the recording clock; preview cuts use the review clock.
+export function originalOmissions(transcript,video){
+  if(!transcript?.original||!video?.keepRanges?.length)return [];
+  const original=transcript.original,keptIds=new Set(transcript.words.map(w=>w.id)),ranges=[];
+  for(const [a,b] of [...video.keepRanges].sort((x,y)=>x[0]-y[0])){const start=a/video.fps*1000,end=b/video.fps*1000,last=ranges.at(-1);if(last&&start<=last[1])last[1]=Math.max(last[1],end);else ranges.push([start,end]);}
+  let at=0;const gaps=[];for(const [a,b] of ranges){if(a-at>=100)gaps.push([at,a]);at=Math.max(at,b);}if(original.durationMs-at>=100)gaps.push([at,original.durationMs]);
+  const rawById=new Map(original.words.map(w=>[w.id,w]));
+  const used=new Set();return gaps.map(([startMs,endMs],index)=>{
+    const words=original.words.filter(w=>!keptIds.has(w.id)&&!used.has(w.id)&&w.startMs<endMs&&w.endMs>startMs);words.forEach(w=>used.add(w.id));
+    const next=transcript.words.find(w=>(w.sourceStartMs??rawById.get(w.id)?.startMs??Infinity)>=endMs-.5);
+    return {id:'source-gap-'+index,sourceStartMs:Math.round(startMs),sourceEndMs:Math.round(endMs),words,beforeWordId:next?.id??null,atMs:sourceToReview(startMs,video)};
+  });
+}
+export function sourceToReview(sourceMs,video){
+  const frame=sourceMs*video.fps/1000;let cursor=0,best={distance:Infinity,at:0};
+  for(const [a,b] of video.keepRanges||[]){const clamped=Math.max(a,Math.min(b,frame)),distance=Math.abs(frame-clamped);if(distance<best.distance)best={distance,at:cursor+clamped-a};if(frame>=a&&frame<b)return Math.round((cursor+frame-a)*1000/video.fps);cursor+=b-a;}
+  return Math.min(video.durationMs,Math.round(best.at*1000/video.fps));
 }
 
 export function activeWordIndex(words,ms){

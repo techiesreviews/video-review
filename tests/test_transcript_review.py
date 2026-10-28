@@ -61,4 +61,15 @@ class TranscriptReviewTests(unittest.TestCase):
         self.assertEqual(changed['id'],c['id']);self.assertEqual(changed['startMs'],500)
         self.assertEqual(changed['sourceSpans'][0]['sourceStartFrame'],345)
 
+    def test_original_words_survive_storage_and_restore_requests_use_raw_clock(self):
+        original={'durationMs':14000,'sourceId':'raw','words':[{'id':'old','text':'deleted','startMs':13000,'endMs':13500},{'id':'W5','text':'kept','startMs':13600,'endMs':13900}]}
+        data={'words':[{'id':'W5','text':'kept','startMs':100,'endMs':600}],'original':original}
+        saved=store.save_transcript(self.data,'v',data)
+        self.assertEqual(saved['original']['words'][0]['id'],'old')
+        _,comment=store.apply(self.data,{'action':'add','videoId':'v','startMs':2000,'text':'Restore deleted','editRequest':{'type':'restore','sourceStartMs':13000,'sourceEndMs':13500,'sourceDurationMs':14000}})
+        self.assertEqual(comment['sourceSpans'][0]['sourceStartFrame'],390)
+        self.assertEqual(store.describe(self.video,comment)['editRequest']['type'],'restore')
+        data['original']['words'][1]['id']='wrong'
+        with self.assertRaises(ValueError):store.save_transcript(self.data,'v',data)
+
 if __name__=='__main__':unittest.main()
