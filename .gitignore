@@ -49,3 +49,6 @@ node_modules/
 /plates/**/.hyperframes/
 /plates/**/renders/
 /plates/**/.cache/
+
+# Agent Kit scratch space
+.scratch/
