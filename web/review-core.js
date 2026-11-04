@@ -48,6 +48,14 @@ export function thread(c){const replies=[...(c.replies||[])];if(c.resolution&&!r
 /** When the reviewer last said something on this comment: writing it, editing it or replying. */
 export function reviewerStamp(c){let stamp=(c.author||'you')==='you'?c.createdAt||'':'';if(c.editedAt>stamp)stamp=c.editedAt;for(const r of c.replies||[])if(r.author==='you'&&r.createdAt>stamp)stamp=r.createdAt;return stamp;}
 
+/** What the reviewer asked an agent to do, in one field: the comment's current text is the instruction. */
+function agentRequest(video,c){
+  const e=c.editRequest,hasEnd=c.endMs!==null&&c.endMs!==undefined;
+  return {type:'change',instruction:c.text,quote:e.quote??null,wordIds:e.wordIds||[],firstWordId:e.firstWordId??null,lastWordId:e.lastWordId??null,
+    startFrame:Math.round(c.startMs*video.fps/1000),endFrame:hasEnd?Math.round(c.endMs*video.fps/1000):null,
+    sourceSpans:c.sourceSpans??e.sourceSpans??sourceSpans(video,c.startMs,hasEnd?c.endMs:null),transcriptRevision:e.transcriptRevision??null,...(e.cutId?{cutId:e.cutId}:{})};
+}
+
 export function describe(video,c){
   const fps=video.fps,hasEnd=c.endMs!==null&&c.endMs!==undefined;
   return {id:c.id,videoId:c.videoId,status:c.status,author:c.author||'you',text:c.text,
@@ -55,6 +63,7 @@ export function describe(video,c){
     startFrame:Math.round(c.startMs*fps/1000),endFrame:hasEnd?Math.round(c.endMs*fps/1000):null,
     sourceSpans:c.sourceSpans??c.editRequest?.sourceSpans??sourceSpans(video,c.startMs,hasEnd?c.endMs:null),
     ...(c.editRequest?{editRequest:c.editRequest}:{}),
+    ...(c.editRequest?.type==='change'?{agentRequest:agentRequest(video,c)}:{}),
     replies:thread(c).map(r=>({author:r.author,text:r.text,createdAt:r.createdAt})),createdAt:c.createdAt};
 }
 
@@ -64,13 +73,18 @@ const uuid=()=>crypto.randomUUID();
 
 export function checkEditRequest(request,video,startMs,endMs){
   if(request==null)return null;
-  if(!request||typeof request!=='object'||!['remove','restore','clipped','extend_before','extend_after','mistake','pause','comment'].includes(request.type))throw Error('Invalid transcript edit request');
+  if(!request||typeof request!=='object'||!['remove','restore','clipped','extend_before','extend_after','mistake','pause','comment','change'].includes(request.type))throw Error('Invalid transcript edit request');
   const result={type:request.type};
   for(const key of ['quote','firstWordId','lastWordId','cutId','transcriptRevision'])if(request[key]!=null){
     if(typeof request[key]!=='string'||request[key].length>(key==='quote'?3000:120))throw Error('Invalid transcript selection');
     result[key]=request[key];
   }
   result.sourceSpans=sourceSpans(video,startMs,endMs);
+  if(request.type==='change'){
+    const ids=request.wordIds??[];
+    if(!Array.isArray(ids)||ids.length>2000||ids.some(id=>typeof id!=='string'||id.length>120))throw Error('Invalid word IDs: one request can cover up to 2,000 words.');
+    result.wordIds=[...ids];result.startFrame=Math.round(startMs*video.fps/1000);result.endFrame=endMs==null?null:Math.round(endMs*video.fps/1000);
+  }
   if(request.type==='restore'){
     const {sourceStartMs:a,sourceEndMs:b,sourceDurationMs:d}=request;
     if(![a,b,d].every(Number.isFinite)||a<0||b<=a||b>d||d>86400000)throw Error('Invalid original-recording restore range');

@@ -99,6 +99,16 @@ class ReviewServerTests:
         with self.request('/api/view-request') as r:
             assert json.load(r)=={}
 
+    def test_browser_saves_a_change_request_and_refuses_a_bad_one(self):
+        headers={'Content-Type':'application/json','Origin':self.origin}
+        note={'action':'add','videoId':'example-v1','startMs':1000,'endMs':2000,'text':'Tighten this','editRequest':{'type':'change','quote':'two words','firstWordId':'W1','lastWordId':'W2','wordIds':['W1','W2']}}
+        with self.request('/api/comments',note,headers) as r:saved=json.load(r)['comments'][-1]
+        assert saved['editRequest']['type']=='change' and saved['editRequest']['wordIds']==['W1','W2']
+        assert (saved['editRequest']['startFrame'],saved['editRequest']['endFrame'])==(30,60)
+        try:self.request('/api/comments',{**note,'editRequest':{'type':'change','wordIds':'W1'}},headers)
+        except HTTPError as error:assert error.code==400
+        else:raise AssertionError('A malformed change request was accepted')
+
     def test_invalid_range_is_rejected(self):
         note={'action':'add','videoId':'example-v1','startMs':2000,'endMs':1000,'text':'Example','createdAt':'now'}
         try:self.request('/api/comments',note,{'Content-Type':'application/json','Origin':self.origin})

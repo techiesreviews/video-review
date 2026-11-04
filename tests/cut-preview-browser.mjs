@@ -1,0 +1,177 @@
+// Browser check of the cut preview on a tiny made-up video: a steady tone, so joins can be measured, not heard.
+// It never opens a real review. Run: node tests/cut-preview-browser.mjs
+// CUT_PREVIEW_HEAVY=1 uses a busy 1080p picture, a worst case for seeking. CUT_PREVIEW_GOP=15 puts a keyframe every 15 frames.
+import {chromium} from 'playwright';
+import {spawn,spawnSync} from 'node:child_process';
+import {mkdtemp,writeFile,mkdir,readFile,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join,resolve,dirname,basename} from 'node:path';
+import assert from 'node:assert/strict';
+
+const root=resolve('.'),temp=await mkdtemp(join(tmpdir(),'video-cut-preview-')),port=8894,base=`http://127.0.0.1:${port}`;
+const python=process.env.VIDEO_REVIEW_PYTHON||join(process.env.LOCALAPPDATA,'Programs/Python/Python313/python.exe');
+const media=join(temp,'tone.mp4'),durationMs=8000,fps=30,FRAME=1000/fps;
+const encoded=spawnSync('ffmpeg',['-v','error','-y','-f','lavfi','-i',process.env.CUT_PREVIEW_HEAVY?`testsrc2=s=1920x1080:r=${fps}:d=8,noise=alls=25:allf=t`:`color=c=0x1b1f3b:s=320x180:r=${fps}:d=8`,'-f','lavfi','-i','sine=frequency=440.25:sample_rate=48000:duration=8','-af','volume=4','-c:v','libx264','-preset','ultrafast',...(process.env.CUT_PREVIEW_GOP?['-g',process.env.CUT_PREVIEW_GOP]:[]),'-pix_fmt','yuv420p','-c:a','aac','-b:a','128k','-shortest',media],{windowsHide:true,encoding:'utf8'});
+assert.equal(encoded.status,0,encoded.stderr);
+const words=[];for(let i=0;i<16;i++)words.push({id:'W'+i,text:'word'+i,startMs:i*500+50,endMs:i*500+450});
+const removed=[{id:'cut-a',startMs:2000,endMs:3000,wordIds:['W4','W5'],quote:'word4 word5',kind:'words'},{id:'cut-b',startMs:5000,endMs:6000,wordIds:['W10','W11'],quote:'word10 word11',kind:'words'}];
+await writeFile(join(temp,'manifest.json'),JSON.stringify([{id:'tone',title:'Cut preview test',label:'Synthetic',path:media,fps,durationMs,keepRanges:[[0,240]]}]));
+await writeFile(join(temp,'comments.json'),JSON.stringify({comments:[]}));await mkdir(join(temp,'transcripts'));
+await writeFile(join(temp,'transcripts/tone.json'),JSON.stringify({words,cuts:[],revision:'synthetic',draftEdits:removed}));
+
+// Watches the page from outside: every jump the player makes, every frame shown, and the sound before and after the fade,
+// recorded sample by sample on the audio thread so nothing is lost when the page is busy.
+function spy(){
+  const record=window.__spy={jumps:[],seeked:[],frames:[],taps:{},gain:null,context:null};
+  const stamp=()=>record.context?Math.round(record.context.currentTime*record.context.sampleRate):null;
+  const time=Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype,'currentTime');
+  Object.defineProperty(HTMLMediaElement.prototype,'currentTime',{get(){return time.get.call(this);},set(value){if(!this.paused)record.jumps.push({fromMs:time.get.call(this)*1000,toMs:value*1000,frame:stamp()});time.set.call(this,value);}});
+  const code=`class Tap extends AudioWorkletProcessor{constructor(){super();this.samples=new Float32Array(sampleRate*40);this.port.onmessage=()=>this.port.postMessage(this.samples);}process(inputs){const channel=inputs[0][0];if(channel&&currentFrame+128<this.samples.length)this.samples.set(channel,currentFrame);return true;}}registerProcessor('tap',Tap);`;
+  const connect=AudioNode.prototype.connect;
+  let ready=null;
+  function tap(node,name){
+    const context=node.context;record.context=context;
+    ready??=context.audioWorklet.addModule(URL.createObjectURL(new Blob([code],{type:'text/javascript'})));
+    ready.then(()=>{const probe=new AudioWorkletNode(context,'tap',{numberOfOutputs:0});connect.call(node,probe);record.taps[name]=probe;});
+  }
+  AudioNode.prototype.connect=function(target,...rest){const result=connect.call(this,target,...rest);if(this instanceof MediaElementAudioSourceNode)tap(this,'before');else if(this instanceof GainNode&&target instanceof AudioDestinationNode){record.gain=this;tap(this,'after');}return result;};
+  document.addEventListener('DOMContentLoaded',()=>{const video=document.querySelector('video');video.addEventListener('seeked',()=>record.seeked.push(stamp()));const frame=(now,meta)=>{if(!video.paused)record.frames.push(meta.mediaTime*1000);video.requestVideoFrameCallback(frame);};video.requestVideoFrameCallback(frame);});
+  record.read=async name=>new Promise(resolve=>{const probe=record.taps[name];probe.port.onmessage=e=>resolve(e.data);probe.port.postMessage('read');});
+  // For each jump: the biggest step between samples (a click), how long the sound drops out, and how much of the
+  // returning sound the fade holds back (a long hold would shave the start of the next word).
+  record.joins=async()=>{
+    const before=await record.read('before'),after=await record.read('after'),rate=record.context.sampleRate,span=Math.round(rate*.003);
+    const ms=frames=>+(frames/rate*1000).toFixed(1);
+    const level=(data,at)=>{let high=0;for(let j=at;j<at+span;j++)high=Math.max(high,Math.abs(data[j]));return high;};
+    const stepIn=(data,from,to)=>{let max=0;for(let i=from+1;i<to;i++)max=Math.max(max,Math.abs(data[i]-data[i-1]));return +max.toFixed(4);};
+    return record.jumps.map((jump,index)=>{
+      const seeked=record.seeked.find(frame=>frame>=jump.frame)??jump.frame,from=jump.frame-Math.round(rate*.05),to=seeked+Math.round(rate*.25);
+      let gapStart=-1,returned=-1,restored=-1;
+      for(let i=from;i<to;i+=24){const high=level(before,i);if(gapStart<0&&high<.05)gapStart=i;if(gapStart>=0&&returned<0&&high>.3)returned=i;}
+      if(returned>=0)for(let i=returned;i<to;i+=24)if(level(after,i)>.4){restored=i;break;}
+      return {index,seekWaitMs:ms(seeked-jump.frame),dropoutMs:gapStart>=0&&returned>=0?ms(returned-gapStart):0,heldBackMs:returned>=0&&restored>=0?ms(restored-returned):null,stepBefore:stepIn(before,from,to),stepAfter:stepIn(after,from,to)};
+    });
+  };
+  record.reset=()=>{record.jumps.length=0;record.seeked.length=0;record.frames.length=0;};
+}
+const inRemoval=ms=>removed.some(r=>ms>=r.startMs&&ms<r.endMs);
+
+const server=spawn(python,[join(root,'server.py'),'--port',String(port),'--data-dir',temp],{cwd:root,windowsHide:true,stdio:'ignore'});
+let browser;
+try{
+  for(let i=0;i<60;i++){try{if((await fetch(base+'/api/local')).ok)break;}catch{}await new Promise(r=>setTimeout(r,100));}
+  browser=await chromium.launch({headless:true,args:['--autoplay-policy=user-gesture-required']});
+  const context=await browser.newContext({viewport:{width:1440,height:1040}}),page=await context.newPage(),errors=[];page.on('pageerror',e=>{errors.push(e.message);console.error('Page error:',e.message);});
+  await page.addInitScript(spy);
+  await page.goto(base);await page.waitForSelector('.transcript-word');await page.waitForFunction(()=>document.querySelector('video').readyState>=2);
+  const text=id=>page.locator(id).innerText(),video=fn=>page.locator('video').evaluate(fn);
+
+  // Both clocks and the cut length are there from the start.
+  assert.equal(await text('#clockLabel'),'Source');assert.equal(await text('#altLabel'),'Cut');
+  assert.equal(await text('#duration'),'0:08');assert.equal(await text('#altDuration'),'0:06','Cut length is the file minus the removals.');
+  assert.equal(await page.locator('#joinFade').getAttribute('aria-pressed'),'true','The fade is on by default.');
+
+  async function playThrough(label){
+    await page.evaluate(()=>window.__spy.reset());await page.locator('#playCut').click();
+    await page.waitForFunction(()=>document.querySelector('video').paused===false);
+    await page.waitForFunction(()=>document.querySelector('video').ended,{timeout:20000});
+    const data=await page.evaluate(async()=>{const r=window.__spy;await new Promise(done=>setTimeout(done,400));return {jumps:r.jumps,frames:r.frames,joins:await r.joins(),gain:r.gain.gain.value};});
+    assert.equal(data.jumps.length,2,`${label}: one jump per removal.`);
+    const lateness=data.jumps.map(j=>{const removal=removed.find(r=>Math.abs(r.endMs-j.toMs)<1);assert.ok(removal,`${label}: jumped to ${j.toMs}, which is not the end of a removal.`);return +(j.fromMs-removal.startMs).toFixed(1);});
+    return {lateness,framesShownInRemoval:data.frames.filter(inRemoval),joins:data.joins,gain:data.gain};
+  }
+  const on=await playThrough('fade on');
+  await page.locator('#joinFade').click();assert.equal(await page.locator('#joinFade').getAttribute('aria-pressed'),'false');
+  const off=await playThrough('fade off');
+  await page.locator('#joinFade').click();
+  console.log(JSON.stringify({fadeOn:on,fadeOff:off}));
+  assert.ok(on.gain>.99,'The sound is fully back up after the last join.');
+  assert.ok(off.gain>.99,'With the fade off the sound is simply left alone.');
+  for(const [label,run] of [['fade on',on],['fade off',off]]){
+    for(const late of run.lateness)assert.ok(Math.abs(late)<=FRAME,`${label}: the jump was ${late} ms off the join; it must stay within one frame.`);
+    assert.ok(run.framesShownInRemoval.length<=4,`${label}: at most two removed frames show at each join, before the jump lands.`);
+  }
+  // The tone gains a quarter cycle across each 1 s removal, so a jump without a fade is a visible step.
+  const normalStep=.5*2*Math.PI*440.25/48000;
+  // A busy page can leave the fade a few milliseconds short, because it never holds the jump back. Allow that, not a full click.
+  const clickStep=normalStep*6;
+  for(const join of on.joins)assert.ok(join.stepAfter<=clickStep,`With the fade on, a join must not click: largest step ${join.stepAfter}, ordinary tone ${normalStep.toFixed(3)}.`);
+  assert.ok(off.joins.some(join=>join.stepAfter>clickStep),'The measurement can see a click when the fade is off; otherwise the check above proves nothing.');
+
+  // Space pauses and resumes without restarting, even with focus left on the button or on a word.
+  await page.locator('#playCut').click();await page.waitForFunction(()=>document.querySelector('video').currentTime>.3);
+  await page.keyboard.press(' ');await page.waitForFunction(()=>document.querySelector('video').paused);
+  const held=await video(v=>v.currentTime);assert.ok(held>.3,'Space pauses where it is, not back at the start.');
+  await page.keyboard.press(' ');await page.waitForFunction(t=>document.querySelector('video').currentTime>t+.1,held);
+  await page.keyboard.press(' ');await page.waitForFunction(()=>document.querySelector('video').paused);
+  await page.locator('.transcript-word').nth(2).click();assert.equal(await video(v=>v.paused),true);
+  await page.keyboard.press(' ');await page.waitForFunction(()=>!document.querySelector('video').paused);
+  await page.keyboard.press(' ');await page.waitForFunction(()=>document.querySelector('video').paused);
+  await page.keyboard.press('Enter');assert.equal(await page.locator('#transcriptSelection').isVisible(),true,'Enter still selects a focused word.');
+  await page.locator('#clearTranscriptSelection').click();
+
+  // Cut time: the seek bar and clocks run on the cut, and seeking maps back through the removals.
+  assert.equal(await page.locator('#seek').isVisible(),false,'In source time the waveform stands in for the seek bar.');
+  await page.locator('#timeMode').click();
+  assert.equal(await text('#timeMode'),'Cut time');assert.equal(await page.locator('#seek').isVisible(),true,'Cut time always has its seek bar.');
+  assert.equal(await text('#clockLabel'),'Cut');assert.equal(await text('#altLabel'),'Source');
+  assert.equal(await text('#duration'),'0:06');assert.equal(await page.locator('#seek').getAttribute('max'),'6');
+  const seekTo=seconds=>page.locator('#seek').evaluate((n,value)=>{n.value=value;n.dispatchEvent(new Event('input',{bubbles:true}));},seconds);
+  await seekTo(2.5);await page.waitForFunction(()=>Math.abs(document.querySelector('video').currentTime-3.5)<.001);
+  assert.equal(await text('#currentTime'),'0:02.500');assert.equal(await text('#altTime'),'0:03.500');
+  await seekTo(2);await page.waitForFunction(()=>Math.abs(document.querySelector('video').currentTime-3)<.001);
+  assert.equal(await text('#currentTime'),'0:02.000','A seek onto a join lands after it.');
+  await page.locator('#seek').focus();await page.keyboard.press('ArrowLeft');
+  await page.locator('body').click({position:{x:2,y:2}});await page.keyboard.press(',');
+  const stepped=await video(v=>v.currentTime);assert.ok(!inRemoval(stepped*1000),'Stepping a frame back over a join skips the removal.');
+  await page.reload();await page.waitForSelector('.transcript-word');await page.waitForFunction(()=>document.querySelector('video').readyState>=2);
+  assert.equal(await text('#timeMode'),'Cut time','The choice survives a refresh.');
+  await page.locator('#timeMode').click();assert.equal(await text('#timeMode'),'Source time');assert.equal(await text('#duration'),'0:08');
+  await page.locator('#timeMode').click();
+
+  // Ask agent on a selected word.
+  await page.locator('.transcript-word').nth(1).click();
+  await page.locator('.transcript-word').nth(2).click({modifiers:['Shift']});
+  await page.locator('#askAgent').click();await page.locator('#askAgentText').fill('Tighten this and keep the laugh');await page.locator('#sendAskAgent').click();
+  const askCard=page.locator('.comment',{hasText:'Tighten this and keep the laugh'});await askCard.waitFor();
+  assert.equal(await askCard.locator('.ask-badge').innerText(),'For agent');
+  assert.match(await askCard.locator('.ask-where').innerText(),/word1 word2/);
+  assert.match(await askCard.locator('.ts').innerText(),/^0:00 – 0:01$/,'The comment time follows the chosen clock.');
+  assert.equal(await page.locator('#askAgentForm').isVisible(),false);
+  let notes=JSON.parse(await readFile(join(temp,'comments.json'),'utf8')).comments,saved=notes.find(n=>n.text.startsWith('Tighten'));
+  assert.equal(saved.editRequest.type,'change');assert.deepEqual(saved.editRequest.wordIds,['W1','W2']);assert.equal(saved.editRequest.quote,'word1 word2');
+  assert.equal(saved.editRequest.startFrame,Math.round(saved.startMs*fps/1000));assert.equal(saved.editRequest.endFrame,Math.round(saved.endMs*fps/1000));
+  assert.ok(saved.endMs>saved.startMs);
+
+  // Ask agent on a frame, from the comment box.
+  await page.locator('#clearTranscriptSelection').click();
+  await page.locator('#seek').evaluate(n=>{n.value=1.25;n.dispatchEvent(new Event('input',{bubbles:true}));});
+  await page.locator('#noteText').fill('Hold on this frame');await page.locator('#askAgentNote').click();
+  await page.locator('.comment',{hasText:'Hold on this frame'}).waitFor();
+  notes=JSON.parse(await readFile(join(temp,'comments.json'),'utf8')).comments;saved=notes.find(n=>n.text==='Hold on this frame');
+  assert.equal(saved.editRequest.type,'change');assert.equal(saved.startMs,1250);assert.equal(saved.editRequest.startFrame,38);assert.equal(saved.editRequest.endFrame,null);
+  assert.deepEqual(saved.editRequest.wordIds,['W2'],'The frame picks up the word being spoken at that moment.');
+  assert.equal(await page.locator('.comment',{hasText:'Hold on this frame'}).locator('.ask-badge').count(),1);
+
+  // Ordinary comments stay ordinary.
+  await page.locator('#noteText').fill('Plain note');await page.locator('#saveNote').click();await page.locator('.comment',{hasText:'Plain note'}).waitFor();
+  notes=JSON.parse(await readFile(join(temp,'comments.json'),'utf8')).comments;assert.equal(notes.find(n=>n.text==='Plain note').editRequest,undefined);
+
+  // Everything removed: nothing to play, and the page says so.
+  await writeFile(join(temp,'transcripts/tone.json'),JSON.stringify({words,cuts:[],revision:'all-gone',draftEdits:[{id:'all',startMs:0,endMs:8000,wordIds:words.map(w=>w.id),quote:'all',kind:'words'}]}));
+  await page.reload();await page.waitForSelector('.transcript-word',{state:'attached'});await page.waitForFunction(()=>document.querySelector('#duration').textContent==='0:00');
+  await page.locator('#playCut').click();await page.waitForFunction(()=>document.querySelector('#toastText').textContent.includes('no cut to play'));
+  assert.equal(await video(v=>v.paused),true);
+  await writeFile(join(temp,'transcripts/tone.json'),JSON.stringify({words,cuts:[],revision:'synthetic',draftEdits:removed}));
+  await page.reload();await page.waitForSelector('.transcript-word');
+
+  // The new controls fit a phone without sideways scrolling.
+  await page.setViewportSize({width:390,height:844});await page.waitForTimeout(100);
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'No sideways scrolling on a phone.');
+  await mkdir('data/test-artifacts',{recursive:true});await page.screenshot({path:'data/test-artifacts/cut-preview-mobile.png',fullPage:true});
+  await page.setViewportSize({width:1440,height:1040});await page.locator('.transcript-word').nth(1).click();await page.locator('#askAgent').click();await page.screenshot({path:'data/test-artifacts/cut-preview-desktop.png'});
+  assert.deepEqual(errors,[]);
+  console.log('PASS: play whole cut, both clocks, Space, join fade on and off, cut-time seeking, ask agent on a word and a frame, all-removed cut, phone layout.');
+}finally{
+  await browser?.close();server.kill();await new Promise(r=>server.once('exit',r));assert.equal(dirname(temp),resolve(tmpdir()));assert.ok(basename(temp).startsWith('video-cut-preview-'));await rm(temp,{recursive:true,force:true});
+}
