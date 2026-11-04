@@ -180,6 +180,20 @@ class OpeningAndEndingTests(unittest.TestCase):
         self.assertEqual(check(WORDS, (24, 60), (117, 148))['ending']['flags'][0]['code'], 'tight-speech-edge')
 
 
+class WordlessEdgeTests(unittest.TestCase):
+    CLIPS = {'cut-inside-word', 'clips-word-start', 'clips-word-end'}
+
+    def clip_count(self, report):
+        entries = [report['opening'], report['ending'], *report['joins']]
+        return sum(flag['code'] in self.CLIPS for entry in entries for flag in entry['flags'])
+
+    def test_clip_after_a_wordless_first_section_is_counted_once(self):
+        self.assertEqual(self.clip_count(check([['next', 4.0, 4.4]], (0, 15), (123, 150))), 1)
+
+    def test_clip_before_a_wordless_last_section_is_counted_once(self):
+        self.assertEqual(self.clip_count(check([['hello', 1.0, 1.4]], (24, 39), (150, 165))), 1)
+
+
 class ReportTests(unittest.TestCase):
     def test_report_tells_the_reader_it_is_not_a_listening_check(self):
         text = join_check.render_markdown(check(WORDS, (24, 51), (117, 150)))
@@ -221,6 +235,23 @@ class ReportTests(unittest.TestCase):
             self.assertIn('already exists', second.stderr)
 
 
+class CommandFailureTests(unittest.TestCase):
+    def test_missing_file_and_bad_json_stop_with_a_plain_sentence(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            good = folder / 'cut.json'
+            good.write_text(json.dumps(cutlist(*CLEAN)), encoding='utf-8')
+            bad = folder / 'bad.json'
+            bad.write_text('{not json', encoding='utf-8')
+            for words in (folder / 'missing.json', bad):
+                with self.subTest(words=words):
+                    result = subprocess.run([sys.executable, str(SCRIPT), str(words), str(good), '--out-dir', str(folder / 'out')],
+                                            capture_output=True, text=True)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('Join check stopped', result.stderr)
+                    self.assertNotIn('Traceback', result.stderr)
+
+
 class InputTests(unittest.TestCase):
     def test_reads_every_project_word_format_on_the_source_clock(self):
         expected = [('So', 2.09, 2.25), ('last', 2.32, 2.48)]
@@ -232,14 +263,22 @@ class InputTests(unittest.TestCase):
         review = {'words': [{'text': 'So', 'startMs': 290, 'endMs': 450}], 'original': {'words': objects}}
         cut_clock = {'words': [{'text': 'So', 'startMs': 290, 'endMs': 450, 'sourceStartMs': 2090, 'sourceEndMs': 2250},
                                {'text': 'last', 'startMs': 520, 'endMs': 680, 'sourceStartMs': 2320, 'sourceEndMs': 2480}]}
-        for data in (happyscribe, arrays, objects, review, cut_clock):
+        for data in (happyscribe, arrays, review, cut_clock):
             with self.subTest(data=data):
                 words = cut_timeline.load_words(data)
                 self.assertEqual([(w.text, round(w.start, 3), round(w.end, 3)) for w in words], expected)
 
     def test_refuses_words_that_may_be_on_the_edited_clock(self):
-        with self.assertRaisesRegex(ValueError, 'clock'):
-            cut_timeline.load_words({'words': [{'text': 'So', 'startMs': 290, 'endMs': 450}]})
+        objects = [{'text': 'So', 'startMs': 290, 'endMs': 450}]
+        for data in ({'words': objects}, objects, {'transcript': objects}):
+            with self.subTest(data=data), self.assertRaisesRegex(ValueError, 'clock'):
+                cut_timeline.load_words(data)
+
+    def test_tiny_word_overlap_is_noise_and_a_real_one_is_refused(self):
+        words = cut_timeline.load_words([['a', 1.0, 2.0], ['b', 1.999, 3.0]])
+        self.assertEqual(words[1].start, words[0].end)
+        with self.assertRaisesRegex(ValueError, 'overlap'):
+            cut_timeline.load_words([['a', 1.0, 2.0], ['b', 1.5, 3.0]])
 
     def test_refuses_bad_word_times(self):
         for words in ([], [['a', 1, 0]], [['a', -1, 1]], [['a', 1, float('nan')]], [['a', 1, 2], ['b', 0.5, 1]],
@@ -262,17 +301,29 @@ class InputTests(unittest.TestCase):
             lambda d: d['segments'][0].update(sourceInFrame=24.5),
             lambda d: d['segments'][1].update(timelineStartFrame=5),
             lambda d: d['segments'][1].update(sourcePath='other.mkv'),
+            lambda d: d['segments'][1].update(timelineStartFrame=None),
+            lambda d: d['segments'][0].pop('timelineStartFrame'),
+            lambda d: d['segments'].append('not a segment'),
         ]
         for change in cases:
             with self.subTest(change=change), self.assertRaises(ValueError):
                 cut_timeline.load_cutlist(broken(change))
 
+    def test_refuses_a_cut_list_that_is_not_an_object(self):
+        with self.assertRaises(ValueError):
+            cut_timeline.load_cutlist([])
+
     def test_refuses_a_transcript_of_a_different_recording(self):
-        review = {'original': {'sourceId': 'aaa', 'words': [{'text': 'a', 'startMs': 0, 'endMs': 100}]}}
+        first, second = 'a' * 64, 'b' * 64
+        review = {'original': {'sourceId': first, 'words': [{'text': 'a', 'startMs': 0, 'endMs': 100}]}}
         with self.assertRaisesRegex(ValueError, 'different recording'):
-            cut_timeline.check_same_source(review, cutlist(*CLEAN, sourceSha256='bbb'))
-        cut_timeline.check_same_source(review, cutlist(*CLEAN, sourceSha256='aaa'))
+            cut_timeline.check_same_source(review, cutlist(*CLEAN, sourceSha256=second))
+        cut_timeline.check_same_source(review, cutlist(*CLEAN, sourceSha256=first))
         cut_timeline.check_same_source(WORDS, cutlist(*CLEAN))
+
+    def test_a_source_label_that_is_not_a_hash_is_not_compared(self):
+        review = {'original': {'sourceId': 'raw', 'words': [{'text': 'a', 'startMs': 0, 'endMs': 100}]}}
+        cut_timeline.check_same_source(review, cutlist(*CLEAN, sourceSha256='b' * 64))
 
     def test_reordered_sections_map_each_word_through_its_own_section(self):
         words = [['one', 1.0, 1.4], ['two', 4.0, 4.4]]

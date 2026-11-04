@@ -142,6 +142,34 @@ class MappingTests(unittest.TestCase):
         self.assertEqual(captions.word_srt(pieces([['whole', 0.4, 0.6]], split)).count('whole'), 1)
 
 
+class TimelineStartTests(unittest.TestCase):
+    def test_times_count_from_the_first_frame_when_the_timeline_starts_late(self):
+        late = {'fps': 30, 'segments': [dict(CUTLIST['segments'][0], timelineStartFrame=108000),
+                                        dict(CUTLIST['segments'][1], timelineStartFrame=108036)]}
+        timeline = cut_timeline.load_cutlist(late)
+        moved = cut_timeline.from_first_frame(pieces(cutlist=late), timeline)
+        self.assertEqual(captions.word_srt(moved), captions.word_srt(pieces()))
+        self.assertEqual(captions.phrase_srt(moved, timeline.duration), captions.phrase_srt(pieces(), timeline_end()))
+        self.assertTrue(captions.word_srt(moved).startswith('1\n00:00:00,200 -->'))
+
+
+class CommandFailureTests(unittest.TestCase):
+    def test_missing_file_and_bad_json_stop_with_a_plain_sentence(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            good = folder / 'cut.json'
+            good.write_text(json.dumps(CUTLIST), encoding='utf-8')
+            bad = folder / 'bad.json'
+            bad.write_text('{not json', encoding='utf-8')
+            for words in (folder / 'missing.json', bad):
+                with self.subTest(words=words):
+                    result = subprocess.run([sys.executable, str(SCRIPT), str(words), str(good), '--out-dir', str(folder / 'out')],
+                                            capture_output=True, text=True)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('Captions stopped', result.stderr)
+                    self.assertNotIn('Traceback', result.stderr)
+
+
 class CommandTests(unittest.TestCase):
     def test_writes_separate_caption_files_and_refuses_to_overwrite(self):
         with tempfile.TemporaryDirectory() as directory:
