@@ -247,7 +247,7 @@ async function init(){
     document.body.dataset.mode=backend.mode;
     if(backend.mode==='browser'){$('#addVideo').hidden=false;$('#agentBtn').hidden=false;}else document.querySelectorAll('[data-browser]').forEach(b=>b.hidden=true);
     await backend.load();syncVideos();notes=backend.comments();lastSnapshot=JSON.stringify(notes);
-    if(!videos.length){if(backend.mode==='local')throw Error('No videos configured. Add one to data/manifest.json.');showEmpty();}
+    if(!videos.length)showEmpty();
     else{const saved=localStorage.getItem('techies-review-video');selectVideo(videos.some(v=>v.id===saved)?saved:videos[0].id);}
     setSaveState(savedLabel());
   }catch(e){showError(e.message);$('#loading').textContent='Could not open the review library.';}

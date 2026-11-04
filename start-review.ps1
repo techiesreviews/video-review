@@ -1,38 +1,66 @@
 $ErrorActionPreference = 'Stop'
 $reviewRoot = $PSScriptRoot
 $reviewPort = if ($env:VIDEO_REVIEW_PORT) { [int]$env:VIDEO_REVIEW_PORT } else { 8879 }
-$reviewUrl = "http://127.0.0.1:$reviewPort"
+
+# 'mine' is this copy of the app, 'other' is another copy or program on the port, 'free' is nothing answering.
+function Get-PortState([int]$port) {
+    try {
+        $served = Invoke-WebRequest -Uri "http://127.0.0.1:$port/app.js" -UseBasicParsing -TimeoutSec 2
+    } catch {
+        if ($_.Exception.Response) { return 'other' }
+        try {
+            $client = New-Object System.Net.Sockets.TcpClient
+            $client.Connect('127.0.0.1', $port)
+            $client.Close()
+            return 'other'
+        } catch { return 'free' }
+    }
+    $hasher = [System.Security.Cryptography.SHA256]::Create()
+    $servedHash = [BitConverter]::ToString($hasher.ComputeHash($served.RawContentStream.ToArray()))
+    $localHash = [BitConverter]::ToString($hasher.ComputeHash([IO.File]::ReadAllBytes((Join-Path $reviewRoot 'web\app.js'))))
+    if ($servedHash -eq $localHash) { 'mine' } else { 'other' }
+}
+
+function Find-ReviewPython {
+    if ($env:VIDEO_REVIEW_PYTHON) { return @{ Path = $env:VIDEO_REVIEW_PYTHON; Prefix = @() } }
+    $launcher = Get-Command py.exe -ErrorAction SilentlyContinue
+    if ($launcher) { return @{ Path = $launcher.Source; Prefix = @('-3') } }
+    $command = Get-Command python.exe -ErrorAction SilentlyContinue
+    if ($command -and $command.Source -notmatch '\\Microsoft\\WindowsApps\\') { return @{ Path = $command.Source; Prefix = @() } }
+    $resolvePython = Join-Path $env:ProgramFiles 'Blackmagic Design\DaVinci Resolve\ResolvePython\ResolvePython.exe'
+    if (Test-Path -LiteralPath $resolvePython) { return @{ Path = $resolvePython; Prefix = @() } }
+    throw 'Python was not found. Install Python 3.11 or newer from python.org, then try again.'
+}
+
 try {
-    Invoke-WebRequest -Uri "$reviewUrl/api/videos" -UseBasicParsing -TimeoutSec 2 | Out-Null
-} catch {
-    $reviewPython = $env:VIDEO_REVIEW_PYTHON
-    $reviewPythonPrefix = @()
-    if (-not $reviewPython) {
-        $reviewLauncher = Get-Command py.exe -ErrorAction SilentlyContinue
-        $reviewCommand = Get-Command python.exe -ErrorAction SilentlyContinue
-        $resolvePython = Join-Path $env:ProgramFiles 'Blackmagic Design\DaVinci Resolve\ResolvePython\ResolvePython.exe'
-        if ($reviewLauncher) {
-            $reviewPython = $reviewLauncher.Source
-            $reviewPythonPrefix = @('-3')
-        } elseif ($reviewCommand -and $reviewCommand.Source -notmatch '\\Microsoft\\WindowsApps\\') {
-            $reviewPython = $reviewCommand.Source
-        } elseif (Test-Path -LiteralPath $resolvePython) {
-            $reviewPython = $resolvePython
-        } else {
-            throw 'Install Python 3.11+ or set VIDEO_REVIEW_PYTHON to its executable path.'
+    # Another copy on the port would show its older screens, so this copy takes the next free port instead.
+    $state = Get-PortState $reviewPort
+    while ($state -eq 'other') {
+        if ($reviewPort -ge 8899) { throw 'Ports 8879 to 8899 are all in use. Close other copies of Video Review, then try again.' }
+        Write-Host "Port $reviewPort is used by another program or another copy of Video Review. Trying the next one."
+        $reviewPort++
+        $state = Get-PortState $reviewPort
+    }
+    $reviewUrl = "http://127.0.0.1:$reviewPort"
+    if ($state -eq 'free') {
+        $python = Find-ReviewPython
+        $reviewLog = Join-Path $reviewRoot 'server-error.log'
+        $reviewArguments = $python.Prefix + @(('"' + (Join-Path $reviewRoot 'server.py') + '"'), '--port', $reviewPort)
+        $server = Start-Process -FilePath $python.Path -ArgumentList $reviewArguments -WorkingDirectory $reviewRoot -WindowStyle Hidden -RedirectStandardError $reviewLog -PassThru
+        $reviewReady = $false
+        for ($reviewAttempt = 0; $reviewAttempt -lt 40 -and -not $server.HasExited; $reviewAttempt++) {
+            Start-Sleep -Milliseconds 250
+            if ((Get-PortState $reviewPort) -eq 'mine') { $reviewReady = $true; break }
+        }
+        if (-not $reviewReady) {
+            $detail = if (Test-Path -LiteralPath $reviewLog) { (Get-Content -LiteralPath $reviewLog -Tail 3) -join ' ' } else { '' }
+            throw "The Video Review server did not start. $detail"
         }
     }
-    $reviewArguments = $reviewPythonPrefix + @(('"' + (Join-Path $reviewRoot 'server.py') + '"'), '--port', $reviewPort)
-    Start-Process -FilePath $reviewPython -ArgumentList $reviewArguments -WorkingDirectory $reviewRoot -WindowStyle Hidden
-    $reviewReady = $false
-    for ($reviewAttempt = 0; $reviewAttempt -lt 20; $reviewAttempt++) {
-        Start-Sleep -Milliseconds 250
-        try {
-            Invoke-WebRequest -Uri "$reviewUrl/api/videos" -UseBasicParsing -TimeoutSec 1 | Out-Null
-            $reviewReady = $true
-            break
-        } catch {}
-    }
-    if (-not $reviewReady) { throw 'Video Review did not start. Run python server.py to see the error.' }
+    Write-Host "Video Review: $reviewUrl"
+    if (-not $env:VIDEO_REVIEW_NO_BROWSER) { Start-Process $reviewUrl }
+} catch {
+    Write-Host ''
+    Write-Host "Problem: $($_.Exception.Message)"
+    exit 1
 }
-Start-Process $reviewUrl

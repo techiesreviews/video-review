@@ -44,6 +44,10 @@ The silence at a join depends on the file:
 | Busy 1080p, keyframe every 15 frames | 25–55 ms |
 | Busy 1080p, ordinary long keyframe gaps (a worst case) | 0.45–1 s |
 
+On an 80-second copy of a real recording in headless Chrome (2026-11-05), the playback clock moved again 16–39 ms after
+a jump with a keyframe every 15 frames, and 55–70 ms after a jump with one every 300 frames (three runs at two joins,
+picture hidden). This times the clock, not the silence, so it is not directly comparable with the table above.
+
 In a one-off check (three runs), at most 2.5 ms of the sound after the join point got through before the jump.
 Once the sound returns, the fade takes about 12.5 ms to bring it back up, so it should not shave more than the
 15 ms fade from the next word. Comparing that against a real word still needs your ears.
@@ -63,7 +67,7 @@ hides the picture, so this only shows with **Show video** on.
 ## Not verified
 
 - How joins sound on real speech, and whether 15 ms feels right. Only a synthetic tone was measured.
-- Seek times on an actual review file. No real footage was opened.
+- The actual silence at a join on real footage. Only the clock was timed there, and nobody has listened yet.
 - The hosted app in a browser. Its code for change requests has unit tests, but `wrangler` is not installed here, so the
   live relay did not run. Its videos play from the same origin, so the fade should work there; try it once.
 - Browsers other than Chromium.
