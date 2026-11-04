@@ -28,8 +28,12 @@
           <button id="play" class="ctl" aria-label="Play"><svg viewBox="0 0 24 24" aria-hidden="true"><path id="playIcon" d="M8 5v14l11-7z"/></svg></button>
           <button id="prevFrame" class="ctl" title="Previous frame (←)" aria-label="Previous frame"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
           <button id="nextFrame" class="ctl" title="Next frame (→)" aria-label="Next frame"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
-          <span class="time"><span id="currentTime">0:00.000</span><span class="dim"> / <span id="duration">0:00</span></span><small id="frameInfo"></small></span>
+          <button id="playCut" class="ctl text" type="button" title="Play from the start of the cut, skipping every removal">Play whole cut</button>
+          <span class="time"><span id="clockLabel" class="clock-label">Source</span><span id="currentTime">0:00.000</span><span class="dim"> / <span id="duration">0:00</span></span><small id="frameInfo"></small></span>
+          <span class="time alt-clock"><span id="altLabel" class="clock-label">Cut</span><span id="altTime">0:00.000</span><span class="dim"> / <span id="altDuration">0:00</span></span></span>
           <span class="spacer"></span>
+          <button id="timeMode" class="ctl text" type="button" aria-pressed="false" title="Choose which clock the seek bar and timecodes use. Source time is the review file's own clock.">Source time</button>
+          <button id="joinFade" class="ctl text" type="button" aria-pressed="true" title="Fade the sound for 15 ms at each join while previewing">Join fade</button>
           <button id="toggleTranscriptView" class="ctl text" type="button" aria-pressed="true">Show video</button>
           <button id="waveformToggle" class="ctl text" type="button" aria-pressed="true">Waveform</button>
           <button id="speed" class="ctl text" title="Playback speed" aria-label="Playback speed">1×</button>
@@ -49,8 +53,9 @@
         <div class="transcript-actions" role="group" aria-label="Transcript review actions">
           <button id="restoreOriginalSelection" type="button" hidden>Request restore in Resolve</button>
           <button type="button" data-transcript-action="pause" hidden>Shorten pause</button>
-          <button type="button" id="playTranscriptSelection">Play selection</button><button type="button" data-transcript-action="remove">Remove from cut</button><button type="button" data-transcript-action="clipped">Word clipped</button><button type="button" data-transcript-action="extend_before">More before</button><button type="button" data-transcript-action="extend_after">More after</button><button type="button" data-transcript-action="mistake">Mistake / retake</button>
+          <button type="button" id="playTranscriptSelection">Play selection</button><button type="button" data-transcript-action="remove">Remove from cut</button><button type="button" data-transcript-action="clipped">Word clipped</button><button type="button" data-transcript-action="extend_before">More before</button><button type="button" data-transcript-action="extend_after">More after</button><button type="button" data-transcript-action="mistake">Mistake / retake</button><button type="button" id="askAgent" aria-expanded="false">Ask agent</button>
         </div>
+        <form id="askAgentForm" class="transcript-note-row" hidden><textarea id="askAgentText" rows="1" maxlength="10000" aria-label="What should the agent change here?" placeholder="What should the agent change here?"></textarea><button id="sendAskAgent" type="submit" disabled>Send to agent</button></form>
         <form id="transcriptNoteForm" class="transcript-note-row"><textarea id="transcriptNote" rows="1" aria-label="Note about selected words" placeholder="Add a note about these words…"></textarea><button id="saveTranscriptNote" type="submit" disabled>Add note</button></form>
       </div>
     </div>
@@ -62,12 +67,13 @@
         <button type="button" id="stamp" class="stamp" title="Set an exact time or range">0:00.000</button>
         <button type="button" id="clearRange" class="link" hidden>Clear range</button>
         <span class="spacer"></span>
+        <button type="button" id="askAgentNote" class="ghost small" disabled>Ask agent</button>
         <button type="submit" id="saveNote" class="primary" disabled>Comment at 0:00</button>
       </div>
       <div id="rangeEditor" class="range-editor" hidden>
         <label>Start<input id="noteStart" aria-label="Comment start"></label>
         <label>End<input id="noteEnd" placeholder="optional" aria-label="Comment end"></label>
-        <p>h:mm:ss.mmm, m:ss.mmm or seconds</p>
+        <p>Source time: h:mm:ss.mmm, m:ss.mmm or seconds</p>
       </div>
       <p id="error" role="alert"></p>
     </form>

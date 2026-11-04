@@ -1,4 +1,4 @@
-import {normalizeTranscript,activeWordIndex,wordSelection,originalOmissions} from './transcript-core.js';
+import {normalizeTranscript,activeWordIndex,wordSelection,originalOmissions,wordsInSpan} from './transcript-core.js';
 import {makeRemoval,removalBounds,skipRemoved,previewDuration,exportCut,removedRanges} from './cut-core.js';
 import {createWaveform} from './waveform-panel.js';
 
@@ -7,7 +7,7 @@ const $=s=>document.querySelector(s);
 const stamp=ms=>`${Math.floor(ms/60000)}:${String(Math.floor(ms/1000)%60).padStart(2,'0')}.${String(ms%1000).padStart(3,'0')}`;
 function element(tag,cls,text){const node=document.createElement(tag);if(cls)node.className=cls;if(text!=null)node.textContent=text;return node;}
 
-export function createTranscriptPanel({media,seek,playContext,request,updateRequest,cancelRequest=async()=>{},showError,pause=()=>{}}){
+export function createTranscriptPanel({media,seek,playContext,request,updateRequest,cancelRequest=async()=>{},showError,pause=()=>{},onCutsChange=()=>{},notify=()=>{}}){
   let transcript=null,selected=null,anchor=null,wordNodes=[],highlighted=-1,videoId=null,loadToken=0,dragAnchor=null,dragEnd=null,dragMoved=false,suppressClick=false,noteId=null,noteTimer=null,pendingFocus=null;
   const body=$('#transcriptText');
   let backendRef=null,videoRef=null,showRemoved=false,busy=false,dragPoint=null,scrollFrame=null;
@@ -26,7 +26,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   function selectionState(){if(!selected)return;$('#selectionTime').textContent=`${stamp(selected.startMs)} – ${stamp(selected.endMs)}`;$('#selectionQuote').textContent=selected.quote;try{waveform.setRange(removalBounds(transcript,selected,videoRef.durationMs,videoRef.fps));}catch{waveform.setRange(null);}}
   function adjustSelection(range){if(!range){clear();return;}if(!selected)return;selected={...selected,...range,precise:true};selectionState();}
   function noteState(id=null,text=''){noteId=id;$('#transcriptNote').value=text;$('#saveTranscriptNote').textContent=id?'Save changes':'Add note';$('#saveTranscriptNote').disabled=!text.trim();}
-  function clear(){selected=null;anchor=null;sourceAnchor=null;auditionRange=null;noteState();for(const n of body.querySelectorAll('.selected'))n.classList.remove('selected');$('#transcriptPanel').classList.remove('source-selection');$('#restoreOriginalSelection').hidden=true;$('#restoreOriginalSelection').disabled=false;$('#transcriptSelection').hidden=true;$('[data-transcript-action="pause"]').hidden=true;waveform.setRange(null);}
+  function clear(){selected=null;anchor=null;sourceAnchor=null;auditionRange=null;noteState();for(const n of body.querySelectorAll('.selected'))n.classList.remove('selected');$('#transcriptPanel').classList.remove('source-selection');$('#restoreOriginalSelection').hidden=true;$('#restoreOriginalSelection').disabled=false;closeAsk();$('#transcriptSelection').hidden=true;$('[data-transcript-action="pause"]').hidden=true;waveform.setRange(null);}
   function choose(a,b=a){
     if(!transcript?.words.length)return;
     $('#transcriptPanel').classList.remove('source-selection');$('#restoreOriginalSelection').hidden=true;sourceAnchor=null;for(const n of body.querySelectorAll('.source-word.selected'))n.classList.remove('selected');
@@ -66,7 +66,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
       }
       const node=element('span','transcript-word',word.text);node.dataset.index=i;node.tabIndex=i===0?0:-1;node.setAttribute('role','button');node.setAttribute('aria-label',`${word.text}, ${stamp(word.startMs)}`);node.title=stamp(word.startMs);
       node.onclick=e=>{if(suppressClick)return;if(e.shiftKey&&anchor!=null){window.getSelection()?.removeAllRanges();choose(anchor,i);return;}if(window.getSelection()?.toString()&&body.contains(window.getSelection().anchorNode))return;anchor=i;choose(i);seek(word.startMs);};
-      node.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();if(e.shiftKey&&anchor!=null)choose(anchor,i);else{anchor=i;choose(i);seek(word.startMs);}}else if(['ArrowLeft','ArrowRight'].includes(e.key)){e.preventDefault();const next=Math.max(0,Math.min(wordNodes.length-1,i+(e.key==='ArrowLeft'?-1:1)));node.tabIndex=-1;wordNodes[next].tabIndex=0;wordNodes[next].focus();if(e.shiftKey){anchor??=i;choose(anchor,next);}}};
+      node.onkeydown=e=>{if(e.key==='Enter'||(e.key===' '&&e.shiftKey)){e.preventDefault();if(e.shiftKey&&anchor!=null)choose(anchor,i);else{anchor=i;choose(i);seek(word.startMs);}}else if(['ArrowLeft','ArrowRight'].includes(e.key)){e.preventDefault();const next=Math.max(0,Math.min(wordNodes.length-1,i+(e.key==='ArrowLeft'?-1:1)));node.tabIndex=-1;wordNodes[next].tabIndex=0;wordNodes[next].focus();if(e.shiftKey){anchor??=i;choose(anchor,next);}}};
       paragraph.append(node,document.createTextNode(' '));wordNodes.push(node);count++;
     }
     refreshCuts();search();reflow();
@@ -110,9 +110,9 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     notice.textContent=transcript?.original?'Original words include passages removed in Resolve. Request those back below; playback still uses this review copy.':'Includes cuts made in this review. Attach the full original word-timed transcript to also see earlier Resolve cuts.';
     waveform.setCuts(edits);
     $('#cutPreviewBar').hidden=!edits.length;$('#undoTranscriptCut').disabled=busy;
-    $('#cutPreviewStatus').textContent=edits.length?`${showRemoved?'Original review audio':'Preview cut'} · ${stamp(showRemoved?videoRef.durationMs:previewDuration(videoRef.durationMs,edits))} · ${((videoRef.durationMs-previewDuration(videoRef.durationMs,edits))/1000).toFixed(1)} s ${showRemoved?'marked for removal':'removed'} · source times shown`:'';
+    $('#cutPreviewStatus').textContent=edits.length?`${showRemoved?'Original review audio':'Preview cut'} · ${stamp(showRemoved?videoRef.durationMs:previewDuration(videoRef.durationMs,edits))} · ${((videoRef.durationMs-previewDuration(videoRef.durationMs,edits))/1000).toFixed(1)} s ${showRemoved?'marked for removal':'removed'} · transcript shows source times`:'';
     $('#showRemovedWords').textContent=showRemoved?'Edited transcript':'Original transcript';$('#showRemovedWords').setAttribute('aria-pressed',String(showRemoved));
-    search();
+    search();onCutsChange();
   }
   function sourceSelection(group,words=group.words){return {kind:'source',startMs:group.atMs,endMs:null,sourceStartMs:words.length?words[0].startMs:group.sourceStartMs,sourceEndMs:words.length?words.at(-1).endMs:group.sourceEndMs,firstWordId:words[0]?.id,lastWordId:words.at(-1)?.id,quote:words.length?words.map(w=>w.text).join(' '):'Removed pause',groupId:group.id};}
   async function requestSourceRestore(selection,button){
@@ -183,6 +183,20 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   $('#transcriptNoteForm').onsubmit=saveNote;
   $('#transcriptNote').onkeydown=event=>{if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();saveNote();}};
   $('#transcriptNote').oninput=()=>{const text=$('#transcriptNote').value.trim();$('#saveTranscriptNote').disabled=!text;clearTimeout(noteTimer);if(noteId&&text){const id=noteId;noteTimer=setTimeout(()=>updateRequest(id,text).catch(error=>showError(error.message)),450);}};
+  function closeAsk(){$('#askAgentForm').hidden=true;$('#askAgentText').value='';$('#sendAskAgent').disabled=true;$('#askAgent').setAttribute('aria-expanded','false');}
+  function selectionAsk(){
+    const words=selected.a!=null?transcript.words.slice(selected.a,selected.b+1).map(w=>w.id):[];
+    return {type:'change',quote:selected.quote.slice(0,3000),firstWordId:selected.firstWordId,lastWordId:selected.lastWordId,wordIds:words,cutId:selected.cutId,transcriptRevision:transcript.revision};
+  }
+  async function sendAsk(event){
+    event?.preventDefault();const text=$('#askAgentText').value.trim();if(!text||!selected)return;$('#sendAskAgent').disabled=true;
+    try{await request({...selected,endMs:selected.endMs==null?null:Math.min(selected.endMs,videoRef.durationMs),text,editRequest:selectionAsk()});closeAsk();notify('Saved for your agent. It appears in the comment list.');}
+    catch(error){showError(error.message);$('#sendAskAgent').disabled=false;}
+  }
+  $('#askAgent').onclick=()=>{const form=$('#askAgentForm'),opening=form.hidden;if(!opening){closeAsk();return;}pause();form.hidden=false;$('#askAgent').setAttribute('aria-expanded','true');$('#askAgentText').focus();reflow();};
+  $('#askAgentForm').onsubmit=sendAsk;
+  $('#askAgentText').oninput=()=>{$('#sendAskAgent').disabled=!$('#askAgentText').value.trim();};
+  $('#askAgentText').onkeydown=event=>{if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAsk();}if(event.key==='Escape')closeAsk();};
   function focusAt(ms,editRequest=null,comment=null){
     if(!transcript){pendingFocus={ms,editRequest,comment};return;}
     if(editRequest?.type==='restore'&&transcript.original){showRemoved=true;refreshCuts();const group=originalOmissions(transcript,videoRef).find(g=>g.sourceStartMs<=editRequest.sourceStartMs&&g.sourceEndMs>=editRequest.sourceEndMs);if(group){currentNode=null;centre([...body.querySelectorAll('.source-removal')].find(n=>n.dataset.sourceGap===group.id));}return;}
@@ -205,9 +219,10 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     const next=index>=0?wordNodes[index]:gap;
     if(next&&next!==currentNode){currentNode=next;if($('#followTranscript').checked&&dragAnchor==null)centre(currentNode);}
   }
+  function removals(){return [...(showRemoved?[]:transcript?.draftEdits||[]),...(auditionRange?[auditionRange]:[])];}
   return {
     async load(v,backend){
-      const token=++loadToken;backendRef=backend;videoRef=v;videoId=v?.id;transcript=null;showRemoved=false;pendingFocus=null;waveform.load(v);$('#cutPreviewBar').hidden=true;$('#transcriptSummary').textContent=v?'Loading transcript…':'Open a video to read its transcript.';render();
+      const token=++loadToken;backendRef=backend;videoRef=v;videoId=v?.id;transcript=null;showRemoved=false;pendingFocus=null;waveform.load(v);$('#cutPreviewBar').hidden=true;$('#transcriptSummary').textContent=v?'Loading transcript…':'Open a video to read its transcript.';render();onCutsChange();
       if(!v)return;
       try{const data=await backend.transcript(v);if(token!==loadToken)return;transcript=data?normalizeTranscript(data,v.durationMs):null;$('#transcriptSummary').textContent=transcript?`${transcript.words.length} words · ${transcript.label} · timings approximate`:'Use your existing HappyScribe word timings';render();if(pendingFocus){const focus=pendingFocus;pendingFocus=null;focusAt(focus.ms,focus.editRequest,focus.comment);}}
       catch(error){if(token===loadToken){$('#transcriptSummary').textContent='Could not load transcript';showError(error.message);}}
@@ -220,7 +235,11 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     reflow,
     reset:clear,
     focusAt,
-    skip(ms){return skipRemoved(ms,[...(showRemoved?[]:transcript?.draftEdits||[]),...(auditionRange?[auditionRange]:[])]);},
+    removals,
+    skip(ms){return skipRemoved(ms,removals());},
+    edits(){return transcript?.draftEdits||[];},
+    showCut(){auditionRange=null;if(showRemoved){showRemoved=false;refreshCuts();reflow();}},
+    changeContext(startMs,endMs){return {type:'change',...wordsInSpan(transcript?.words||[],startMs,endMs),...(transcript?{transcriptRevision:transcript.revision}:{})};},
     get selecting(){return dragAnchor!=null;},
   };
 }

@@ -146,6 +146,8 @@ These need Bash and Node as well as Python, but no `npm install`:
 
 ```sh
 bash scripts/agents/run-tests.sh
+node tests/listening-browser.mjs
+node tests/cut-preview-browser.mjs
 ```
 
-The tests cover local video range requests, comment persistence, timestamp validation, origin checks, the MCP tools, and the transcript, cut and waveform logic, using temporary data directories.
+The tests cover local video range requests, comment persistence, timestamp validation, origin checks, the MCP tools, and the transcript, cut and waveform logic, using temporary data directories. The two browser checks need ffmpeg and make their own small test video; what each suite checks is in the comments and assertion messages in its file.

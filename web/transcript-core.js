@@ -69,6 +69,12 @@ export function activeWordIndex(words,ms){
   return best>=0&&ms<words[best].endMs?best:-1;
 }
 
+/** The words a request is about: those overlapping a span, or the word being spoken at one frame. */
+export function wordsInSpan(words,startMs,endMs){
+  const hit=endMs==null?words.filter(w=>w.startMs<=startMs&&startMs<w.endMs):words.filter(w=>w.startMs<endMs&&w.endMs>startMs);
+  if(!hit.length)return {wordIds:[]};
+  return {quote:hit.map(w=>w.text).join(' ').slice(0,3000),firstWordId:hit[0].id,lastWordId:hit.at(-1).id,wordIds:hit.map(w=>w.id)};
+}
 export function wordSelection(words,a,b=a){
   const selected=words.slice(Math.min(a,b),Math.max(a,b)+1);
   if(!selected.length)throw Error('Select a word or phrase first.');

@@ -14,6 +14,36 @@ export function removedRanges(edits=[]){
 }
 export function skipRemoved(ms,edits=[]){const range=removedRanges(edits).find(([a,b])=>ms>=a&&ms<b);return range?range[1]:ms;}
 export function previewDuration(durationMs,edits=[]){return durationMs-removedRanges(edits).reduce((n,[a,b])=>n+b-a,0);}
+export const JOIN_FADE_MS=15;
+/** The review-file ranges left after the removals, in playback order. */
+export function keptRanges(durationMs,edits=[]){
+  const kept=[];let at=0;
+  for(const [a,b] of removedRanges(edits)){if(a>=durationMs)break;if(a>at)kept.push([at,a]);at=Math.max(at,b);}
+  if(at<durationMs)kept.push([at,durationMs]);return kept;
+}
+export function cutLength(durationMs,edits=[]){return keptRanges(durationMs,edits).reduce((n,[a,b])=>n+b-a,0);}
+/** Review-file time to cut time. A position inside a removal maps to its join. */
+export function fileToCut(ms,durationMs,edits=[]){
+  let cut=0;if(!(ms>0))return 0;
+  for(const [a,b] of keptRanges(durationMs,edits)){if(ms<a)return cut;if(ms<b)return cut+ms-a;cut+=b-a;}
+  return cut;
+}
+/** Cut time to review-file time. A join belongs to the material after it, so this only lands on a removal at the very end of the cut. */
+export function cutToFile(ms,durationMs,edits=[]){
+  const kept=keptRanges(durationMs,edits);if(!kept.length)return 0;if(!(ms>0))return kept[0][0];
+  let cut=0;for(const [a,b] of kept){if(ms<cut+b-a)return a+ms-cut;cut+=b-a;}
+  return kept.at(-1)[1];
+}
+/** The next jump within the look-ahead: when to make it and when to start its fade, in real milliseconds from now. */
+export function jumpPlan(ms,edits=[],{fadeMs=JOIN_FADE_MS,rate=1,horizonMs=70}={}){
+  for(const [a,b] of removedRanges(edits)){
+    if(ms>=b)continue;
+    if(ms>=a)return {startMs:a,toMs:b,jumpInMs:0,fadeInMs:0};
+    const jumpInMs=(a-ms)/rate;if(jumpInMs>horizonMs)return null;
+    return {startMs:a,toMs:b,jumpInMs,fadeInMs:Math.max(0,jumpInMs-fadeMs)};
+  }
+  return null;
+}
 export function removalBounds(transcript,selection,durationMs,fps=30){
   const words=transcript.words,wordIds=selection.kind==='pause'?[]:words.filter(w=>w.startMs<selection.endMs&&w.endMs>selection.startMs).map(w=>w.id);
   let start=selection.startMs,end=selection.endMs;
