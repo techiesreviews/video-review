@@ -181,7 +181,7 @@ def load_cutlist(data):
     splits = 0
     previous_end = None
     for segment in sorted(segments, key=lambda item: item['timelineStartFrame']):
-        identity = segment.get('id', '?')
+        identity = str(segment.get('id', '?'))
         source_in = _whole_frame(segment, 'sourceInFrame')
         source_out = _whole_frame(segment, 'sourceOutFrame')
         start = _whole_frame(segment, 'timelineStartFrame')

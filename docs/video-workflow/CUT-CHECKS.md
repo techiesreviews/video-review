@@ -8,7 +8,7 @@ recording's clock. `[text, start, end]` arrays are read as original-recording se
 raw export. A review transcript with `original.words` or `sourceStartMs` also works; word objects with only
 `startMs` and `endMs` are refused, because they may be on the edited clock. When a transcript's `sourceId` is a
 SHA-256 value, it must match the cut list's `sourceSha256`. The cut list needs `fps` and `segments` with `sourceInFrame`,
-`sourceOutFrame`, `timelineStartFrame` and `durationFrames`.
+`sourceOutFrame` and `timelineStartFrame`; a segment's `durationFrames` is checked when it is there.
 
 What each script checks: the comments and assertions in `tests/test_join_check.py` and
 `tests/test_build_captions.py`.

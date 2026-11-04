@@ -6,6 +6,7 @@ Writes <name>.phrases.srt/.vtt, <name>.words.srt/.vtt (one cue per word) and <na
 into the video, no media is touched and no existing file is overwritten.
 """
 import argparse
+from dataclasses import replace
 import json
 from pathlib import Path
 import re
@@ -36,6 +37,18 @@ def wrap(texts):
     splits = [(' '.join(texts[:index]), ' '.join(texts[index:])) for index in range(1, len(texts))]
     fitting = [pair for pair in splits if max(map(len, pair)) <= LINE_CHARS]
     return list(min(fitting, key=lambda pair: max(map(len, pair)))) if fitting else lines
+
+
+def one_per_word(pieces):
+    """Show a word kept on both sides of a cut once, from its first kept start to its last kept end."""
+    merged = []
+    for piece in pieces:
+        if merged and merged[-1].word == piece.word:
+            merged[-1] = replace(merged[-1], timeline_end=piece.timeline_end,
+                                 clipped_end=merged[-1].clipped_end + piece.clipped_end)
+        else:
+            merged.append(piece)
+    return merged
 
 
 def phrases(pieces):
@@ -154,7 +167,7 @@ def main():
         cut_timeline.check_same_source(transcript, cutlist)
         timeline = cut_timeline.load_cutlist(cutlist)
         pieces = cut_timeline.retained_words(cut_timeline.load_words(transcript), timeline)
-        pieces = cut_timeline.from_first_frame(pieces, timeline)
+        pieces = one_per_word(cut_timeline.from_first_frame(pieces, timeline))
     except (OSError, ValueError) as error:
         sys.exit(f'Captions stopped: {error}')
     if not pieces:
@@ -169,10 +182,13 @@ def main():
     for name in files:
         if (args.out_dir / name).exists():
             sys.exit(f'{args.out_dir / name} already exists. Choose a new folder; older captions stay as they are.')
-    args.out_dir.mkdir(parents=True, exist_ok=True)
-    for name, text in files.items():
-        with (args.out_dir / name).open('x', encoding='utf-8', newline='\n') as output:
-            output.write(text)
+    try:
+        args.out_dir.mkdir(parents=True, exist_ok=True)
+        for name, text in files.items():
+            with (args.out_dir / name).open('x', encoding='utf-8', newline='\n') as output:
+                output.write(text)
+    except OSError as error:
+        sys.exit(f'Captions stopped: {error}')
     partial = sum(piece.is_partial for piece in pieces)
     print(f'{len(pieces)} words in {len(phrases(pieces))} phrases on the edited timeline. '
           f'First word at {stamp(to_ms(pieces[0].timeline_start), ",")}. {partial} words are only partly kept. '
