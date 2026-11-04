@@ -148,22 +148,23 @@ def main():
     args = parser.parse_args()
     if Path(args.name).name != args.name:
         sys.exit('--name is a file name, not a path.')
-    transcript = json.loads(args.words.read_text(encoding='utf-8-sig'))
-    cutlist = json.loads(args.cutlist.read_text(encoding='utf-8-sig'))
     try:
+        transcript = json.loads(args.words.read_text(encoding='utf-8-sig'))
+        cutlist = json.loads(args.cutlist.read_text(encoding='utf-8-sig'))
         cut_timeline.check_same_source(transcript, cutlist)
         timeline = cut_timeline.load_cutlist(cutlist)
         pieces = cut_timeline.retained_words(cut_timeline.load_words(transcript), timeline)
-    except ValueError as error:
+        pieces = cut_timeline.from_first_frame(pieces, timeline)
+    except (OSError, ValueError) as error:
         sys.exit(f'Captions stopped: {error}')
     if not pieces:
         sys.exit('Captions stopped: no transcript words fall inside the cut list. Check the clock and the recording.')
     files = {
-        f'{args.name}.phrases.srt': phrase_srt(pieces, timeline.end),
-        f'{args.name}.phrases.vtt': phrase_vtt(pieces, timeline.end),
+        f'{args.name}.phrases.srt': phrase_srt(pieces, timeline.duration),
+        f'{args.name}.phrases.vtt': phrase_vtt(pieces, timeline.duration),
         f'{args.name}.words.srt': word_srt(pieces),
         f'{args.name}.words.vtt': word_vtt(pieces),
-        f'{args.name}.timed-words.vtt': timed_vtt(pieces, timeline.end),
+        f'{args.name}.timed-words.vtt': timed_vtt(pieces, timeline.duration),
     }
     for name in files:
         if (args.out_dir / name).exists():

@@ -4,8 +4,10 @@ Two scripts read a word-timed transcript and a cut list. They read only those tw
 media, call no paid service, and never overwrite: point `--out-dir` at a new folder each time.
 
 Use the raw HappyScribe export as the transcript when you have it. Word times must be on the original
-recording's clock. A review transcript with `original.words` or `sourceStartMs` also works; words that only
-have edited-timeline times are refused. The cut list needs `fps` and `segments` with `sourceInFrame`,
+recording's clock. `[text, start, end]` arrays are read as original-recording seconds, so only use them from a
+raw export. A review transcript with `original.words` or `sourceStartMs` also works; word objects with only
+`startMs` and `endMs` are refused, because they may be on the edited clock. When a transcript's `sourceId` is a
+SHA-256 value, it must match the cut list's `sourceSha256`. The cut list needs `fps` and `segments` with `sourceInFrame`,
 `sourceOutFrame`, `timelineStartFrame` and `durationFrames`.
 
 What each script checks: the comments and assertions in `tests/test_join_check.py` and
@@ -37,8 +39,7 @@ a gap is a question, not an order. The limits for a clipped edge and an orphan w
 values, listed at the end of each report.
 
 The script never counts as listening. Word times are approximate and a sound missing from the transcript cannot
-show up, so no flag does not mean clean. The normal-speed audition in the RUNBOOK's "A-cut quality gate" still
-applies.
+show up, so no flag does not mean clean. You still need to listen to the whole cut at normal speed.
 
 ## Captions for the edited timeline
 

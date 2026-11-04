@@ -3,11 +3,15 @@
 Shared by join-check.py and build-captions.py. Word times here are always seconds on the original
 recording's clock. Nothing in this file reads or writes media.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
+import re
 
 # Transcript times carry about this much noise, so a cut this close to a word edge is not called a clip.
 WORD_EDGE_TOLERANCE = 0.010
+SHA256 = re.compile(r'[0-9a-fA-F]{64}')
+EDITED_CLOCK = ('These words have no source times and may be on the edited clock. '
+                'Use a transcript with original.words or sourceStartMs.')
 
 
 @dataclass(frozen=True)
@@ -59,8 +63,16 @@ class Timeline:
     continuous_splits: int
 
     @property
+    def start(self):
+        return self.runs[0].timeline_start
+
+    @property
     def end(self):
         return self.runs[-1].timeline_end
+
+    @property
+    def duration(self):
+        return self.end - self.start
 
 
 @dataclass(frozen=True)
@@ -88,25 +100,31 @@ def _from_object(item):
     return _from_seconds(item.get('text'), item['startMs'] / 1000, item['endMs'] / 1000)
 
 
+def _from_source_object(item):
+    """A word object outside original.words counts as source time only when it says so."""
+    if 'sourceStartMs' not in item:
+        raise ValueError(EDITED_CLOCK)
+    return _from_object(item)
+
+
 def _raw_words(data):
     if isinstance(data, dict):
         original = data.get('original')
         if isinstance(original, dict) and isinstance(original.get('words'), list):
             return [_from_object(item) for item in original['words']]
         if isinstance(data.get('words'), list):
-            if data['words'] and all('sourceStartMs' in item for item in data['words']):
-                return [_from_object(item) for item in data['words']]
-            raise ValueError('These words have no source times and may be on the edited clock. '
-                             'Use a transcript with original.words or sourceStartMs.')
+            if not data['words']:
+                raise ValueError(EDITED_CLOCK)
+            return [_from_source_object(item) for item in data['words']]
         data = data.get('transcript', data.get('paragraphs'))
     if not isinstance(data, list) or not data:
         raise ValueError('No timed words found. Expected HappyScribe paragraphs, [text, start, end] '
-                         'arrays, or word objects with startMs and endMs.')
+                         'arrays, original.words, or word objects with sourceStartMs.')
     if isinstance(data[0], dict) and 'words' in data[0]:
         return [_from_seconds(item.get('text'), item['data_start'], item['data_end'])
                 for paragraph in data for item in paragraph['words'] if item.get('type', 'word') == 'word']
     if isinstance(data[0], dict):
-        return [_from_object(item) for item in data]
+        return [_from_source_object(item) for item in data]
     return [_from_seconds(*item) for item in data]
 
 
@@ -114,7 +132,7 @@ def load_words(data):
     """Return the transcript's words on the source clock, refusing anything unsafe to cut against."""
     try:
         raw = _raw_words(data)
-    except (KeyError, TypeError) as error:
+    except (AttributeError, KeyError, TypeError) as error:
         raise ValueError(f'A word is missing its text or times: {error!r}.') from error
     words = []
     for text, start, end in raw:
@@ -123,8 +141,12 @@ def load_words(data):
             continue
         if not (math.isfinite(start) and math.isfinite(end)) or start < 0 or end < start:
             raise ValueError(f'Invalid times on word "{text}".')
-        if words and start < words[-1].end:
-            raise ValueError(f'Word order runs backwards at "{text}". Review overlapping speakers first.')
+        if words and (start < words[-1].start or start < words[-1].end - WORD_EDGE_TOLERANCE):
+            raise ValueError(f'Words overlap or run backwards at "{text}". Review overlapping speakers first.')
+        if words:
+            # An overlap inside the tolerance is transcript noise: close it so later steps never see one.
+            start = max(start, words[-1].end)
+            end = max(end, start)
         words.append(Word(text, start, end))
     if not words:
         raise ValueError('No timed words found.')
@@ -140,19 +162,25 @@ def _whole_frame(segment, key):
 
 def load_cutlist(data):
     """Return the cut list as merged runs in timeline order, refusing impossible or mixed-source lists."""
+    if not isinstance(data, dict):
+        raise ValueError('Cut list must be a JSON object with fps and segments.')
     fps = data.get('fps')
     if not isinstance(fps, (int, float)) or isinstance(fps, bool) or not math.isfinite(fps) or fps <= 0:
         raise ValueError('Cut list needs a positive fps.')
     segments = data.get('segments')
     if not isinstance(segments, list) or not segments:
         raise ValueError('Cut list has no segments.')
-    if len({segment.get('sourcePath', data.get('sourcePath')) for segment in segments}) > 1:
+    if not all(isinstance(segment, dict) for segment in segments):
+        raise ValueError('Every segment in the cut list must be an object.')
+    for segment in segments:
+        _whole_frame(segment, 'timelineStartFrame')
+    if len({str(segment.get('sourcePath', data.get('sourcePath'))) for segment in segments}) > 1:
         raise ValueError('Cut list mixes recordings. Each recording has its own clock; check them separately.')
 
     runs = []
     splits = 0
     previous_end = None
-    for segment in sorted(segments, key=lambda item: item.get('timelineStartFrame', 0)):
+    for segment in sorted(segments, key=lambda item: item['timelineStartFrame']):
         identity = segment.get('id', '?')
         source_in = _whole_frame(segment, 'sourceInFrame')
         source_out = _whole_frame(segment, 'sourceOutFrame')
@@ -175,12 +203,22 @@ def load_cutlist(data):
 
 
 def check_same_source(transcript, cutlist):
-    """Refuse a transcript and cut list that both name their recording and name different ones."""
+    """Refuse a transcript and cut list that both hash their recording and hash different ones.
+
+    A transcript's sourceId is usually a free label, so it is compared only when it is a SHA-256 value.
+    """
     original = transcript.get('original') if isinstance(transcript, dict) else None
-    transcript_source = original.get('sourceId') if isinstance(original, dict) else None
-    cut_source = cutlist.get('sourceSha256')
-    if transcript_source and cut_source and transcript_source != cut_source:
+    sources = (original.get('sourceId') if isinstance(original, dict) else None,
+               cutlist.get('sourceSha256') if isinstance(cutlist, dict) else None)
+    if all(isinstance(source, str) and SHA256.fullmatch(source) for source in sources) \
+            and sources[0].lower() != sources[1].lower():
         raise ValueError('The transcript and the cut list come from a different recording.')
+
+
+def from_first_frame(pieces, timeline):
+    """Return the pieces with times counted from the timeline's first frame, whatever frame that is."""
+    return [replace(piece, timeline_start=piece.timeline_start - timeline.start,
+                    timeline_end=piece.timeline_end - timeline.start) for piece in pieces]
 
 
 def retained_words(words, timeline):

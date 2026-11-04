@@ -13,7 +13,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import cut_timeline  # noqa: E402
 
-# Lex's recorded starting preferences: acut/sunday-update-2026-11-01/EDITING-LESSONS.md.
+# Lex's recorded starting preferences, from EDITING-LESSONS.md (docs/video-workflow/CUT-CHECKS.md).
 THRESHOLDS = {
     'leadInMs': [180, 250],
     'linkedGapMs': [150, 250],
@@ -167,7 +167,8 @@ def check_opening(pieces, timeline):
     first = pieces[0]
     lead_in = ms(first.timeline_start - timeline.runs[0].timeline_start)
     low, high = THRESHOLDS['leadInMs']
-    flags = clip_flags(first, 'incoming')
+    # A word in a later section sits at a join, and the join reports its clip.
+    flags = clip_flags(first, 'incoming') if first.run_index == timeline.runs[0].index else []
     if lead_in < low:
         flags.append(flag('lead-in-too-short', 'check', f'{lead_in} ms before "{first.word.text}"; preferred {low}-{high} ms.',
                           'incoming', first.word.text, lead_in))
@@ -181,7 +182,8 @@ def check_ending(pieces, timeline):
     last = pieces[-1]
     tail = ms(timeline.end - last.timeline_end)
     return {'tailMs': tail, 'lastWord': last.word.text,
-            'flags': clip_flags(last, 'outgoing') + edge_flags(tail, last, 'outgoing')}
+            'flags': (clip_flags(last, 'outgoing') if last.run_index == timeline.runs[-1].index else [])
+            + edge_flags(tail, last, 'outgoing')}
 
 
 def check_joins(words, timeline):
@@ -246,7 +248,7 @@ def render_markdown(report):
     lines = [
         '# Join check', '',
         f'**{report["listening"]}.** Read this first, then listen. This is a reading of the word times, so it does '
-        'not replace the normal-speed audition in the A-cut quality gate.', '',
+        'not replace listening to the whole cut at normal speed.', '',
         f'Joins: {summary["joins"]}. Kept words: {summary["keptWords"]}. Problems: {summary["problems"]}. '
         f'Checks: {summary["checks"]}. Joins with a flag: {summary["joinsWithFlags"]}. The counts of problems and '
         f'checks include the opening and ending. Clip splits with continuous source (not joins): '
@@ -294,12 +296,12 @@ def main():
     for target in targets:
         if target.exists():
             sys.exit(f'{target} already exists. Choose a new folder; older reports stay as they are.')
-    transcript = json.loads(args.words.read_text(encoding='utf-8-sig'))
-    cutlist = json.loads(args.cutlist.read_text(encoding='utf-8-sig'))
     try:
+        transcript = json.loads(args.words.read_text(encoding='utf-8-sig'))
+        cutlist = json.loads(args.cutlist.read_text(encoding='utf-8-sig'))
         cut_timeline.check_same_source(transcript, cutlist)
         report = check_joins(cut_timeline.load_words(transcript), cut_timeline.load_cutlist(cutlist))
-    except ValueError as error:
+    except (OSError, ValueError) as error:
         sys.exit(f'Join check stopped: {error}')
     report['inputs'] = {'words': args.words.name, 'cutList': args.cutlist.name}
     args.out_dir.mkdir(parents=True, exist_ok=True)
