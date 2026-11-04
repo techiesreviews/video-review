@@ -14,7 +14,8 @@ file wins.
 - **Two machines.** The project is worked on from Linux and from Windows (Git Bash), so committed
   settings hold no machine paths: `scripts/agents/kit.json` has no `mainRoot`, and the kit finds the main
   checkout from git. A setting only one machine needs goes in `.claude/settings.local.json`, which git
-  ignores, or an environment variable, such as `KIT_MAIN_ROOT`.
+  ignores, or an environment variable, such as `KIT_MAIN_ROOT`. A PC with its own uncommitted kit files
+  moves them first: [windows-pc-setup.md](windows-pc-setup.md).
 - **Checks:** `checks.test` runs `scripts/agents/run-tests.sh`: the Python tests (`unittest discover -s
   tests`, plus `tests/test_server.py` and `tests/test_mcp_server.py`, which are plain scripts discovery
   does not collect) and the Node tests (`tests/*.test.mjs`), with no installs. The repo has
