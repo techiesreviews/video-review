@@ -180,6 +180,13 @@ class OpeningAndEndingTests(unittest.TestCase):
         self.assertEqual(check(WORDS, (24, 60), (117, 148))['ending']['flags'][0]['code'], 'tight-speech-edge')
 
 
+class OpeningFadeTests(unittest.TestCase):
+    def test_a_cut_right_on_the_first_word_is_a_problem(self):
+        report = check(WORDS, (30, 60), (117, 150))
+        self.assertIn('fade-touches-word', codes(report['opening']))
+        self.assertGreaterEqual(report['summary']['problems'], 1)
+
+
 class WordlessEdgeTests(unittest.TestCase):
     CLIPS = {'cut-inside-word', 'clips-word-start', 'clips-word-end'}
 
@@ -236,6 +243,25 @@ class ReportTests(unittest.TestCase):
 
 
 class CommandFailureTests(unittest.TestCase):
+    def test_output_folder_that_is_a_file_stops_with_a_plain_sentence(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            words, cut, taken = folder / 'words.json', folder / 'cut.json', folder / 'taken'
+            words.write_text(json.dumps(WORDS), encoding='utf-8')
+            cut.write_text(json.dumps(cutlist(*CLEAN)), encoding='utf-8')
+            taken.write_text('', encoding='utf-8')
+            result = subprocess.run([sys.executable, str(SCRIPT), str(words), str(cut), '--out-dir', str(taken)],
+                                    capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('Join check stopped', result.stderr)
+            self.assertNotIn('Traceback', result.stderr)
+
+    def test_a_segment_id_that_is_a_number_is_read(self):
+        data = cutlist(*CLEAN)
+        data['segments'][0]['id'] = 1
+        report = join_check.check_joins(cut_timeline.load_words(WORDS), cut_timeline.load_cutlist(data))
+        self.assertEqual(report['joins'][0]['outgoing'], '1')
+
     def test_missing_file_and_bad_json_stop_with_a_plain_sentence(self):
         with tempfile.TemporaryDirectory() as folder:
             folder = Path(folder)

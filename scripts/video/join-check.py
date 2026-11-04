@@ -169,7 +169,9 @@ def check_opening(pieces, timeline):
     low, high = THRESHOLDS['leadInMs']
     # A word in a later section sits at a join, and the join reports its clip.
     flags = clip_flags(first, 'incoming') if first.run_index == timeline.runs[0].index else []
-    if lead_in < low:
+    if lead_in < THRESHOLDS['audioFadeMs'] and not first.clipped_start:
+        flags += edge_flags(lead_in, first, 'incoming')
+    elif lead_in < low:
         flags.append(flag('lead-in-too-short', 'check', f'{lead_in} ms before "{first.word.text}"; preferred {low}-{high} ms.',
                           'incoming', first.word.text, lead_in))
     elif lead_in > high:
@@ -304,11 +306,14 @@ def main():
     except (OSError, ValueError) as error:
         sys.exit(f'Join check stopped: {error}')
     report['inputs'] = {'words': args.words.name, 'cutList': args.cutlist.name}
-    args.out_dir.mkdir(parents=True, exist_ok=True)
-    with targets[0].open('x', encoding='utf-8', newline='\n') as output:
-        output.write(render_markdown(report))
-    with targets[1].open('x', encoding='utf-8', newline='\n') as output:
-        json.dump(report, output, ensure_ascii=False, indent=2)
+    try:
+        args.out_dir.mkdir(parents=True, exist_ok=True)
+        with targets[0].open('x', encoding='utf-8', newline='\n') as output:
+            output.write(render_markdown(report))
+        with targets[1].open('x', encoding='utf-8', newline='\n') as output:
+            json.dump(report, output, ensure_ascii=False, indent=2)
+    except OSError as error:
+        sys.exit(f'Join check stopped: {error}')
     summary = report['summary']
     print(f'{summary["joins"]} joins read, not listened: {summary["problems"]} problems, {summary["checks"]} checks. '
           f'Read {targets[0]} first.')

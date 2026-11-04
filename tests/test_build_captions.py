@@ -153,7 +153,44 @@ class TimelineStartTests(unittest.TestCase):
         self.assertTrue(captions.word_srt(moved).startswith('1\n00:00:00,200 -->'))
 
 
+class WordAcrossACutTests(unittest.TestCase):
+    def test_a_word_kept_on_both_sides_of_a_cut_is_shown_once(self):
+        cut = {'fps': 30, 'segments': [
+            {'id': 'C01', 'sourceInFrame': 30, 'sourceOutFrame': 40, 'timelineStartFrame': 0},
+            {'id': 'C02', 'sourceInFrame': 50, 'sourceOutFrame': 60, 'timelineStartFrame': 10}]}
+        kept = captions.one_per_word(pieces([['long', 1.0, 2.0]], cut))
+        self.assertEqual(len(kept), 1)
+        self.assertTrue(kept[0].is_partial)
+        self.assertEqual(captions.word_srt(kept), '1\n00:00:00,000 --> 00:00:00,667\nlong\n')
+
+
 class CommandFailureTests(unittest.TestCase):
+    def test_output_folder_that_is_a_file_stops_with_a_plain_sentence(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            words, cut, taken = folder / 'words.json', folder / 'cut.json', folder / 'taken'
+            words.write_text(json.dumps(WORDS), encoding='utf-8')
+            cut.write_text(json.dumps(CUTLIST), encoding='utf-8')
+            taken.write_text('', encoding='utf-8')
+            result = subprocess.run([sys.executable, str(SCRIPT), str(words), str(cut), '--out-dir', str(taken)],
+                                    capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('Captions stopped', result.stderr)
+            self.assertNotIn('Traceback', result.stderr)
+
+    def test_the_command_counts_times_from_the_first_frame(self):
+        late = {'fps': 30, 'segments': [dict(CUTLIST['segments'][0], timelineStartFrame=108000),
+                                        dict(CUTLIST['segments'][1], timelineStartFrame=108036)]}
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            words, cut = folder / 'words.json', folder / 'cut.json'
+            words.write_text(json.dumps(WORDS), encoding='utf-8')
+            cut.write_text(json.dumps(late), encoding='utf-8')
+            result = subprocess.run([sys.executable, str(SCRIPT), str(words), str(cut), '--out-dir', str(folder / 'out')],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue((folder / 'out/captions.words.srt').read_text(encoding='utf-8').startswith('1\n00:00:00,200 -->'))
+
     def test_missing_file_and_bad_json_stop_with_a_plain_sentence(self):
         with tempfile.TemporaryDirectory() as folder:
             folder = Path(folder)
