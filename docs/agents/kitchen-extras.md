@@ -13,12 +13,15 @@ file wins.
   `data/`).
 - **Two machines.** The project is worked on from Linux and from Windows (Git Bash), so committed
   settings hold no machine paths: `scripts/agents/kit.json` has no `mainRoot`, and the kit finds the main
-  checkout from git. A setting only one machine needs goes in `.claude/settings.local.json` or an
-  environment variable, such as `KIT_MAIN_ROOT`.
-- **Checks:** `checks.test` runs `scripts/agents/run-tests.sh`: the Python tests
-  (`unittest discover -s tests`) and the Node tests (`tests/*.test.mjs`), with no installs. The repo has
-  no GitHub CI workflow, so `kit pr` runs them here and lands after the review.
-  `tests/listening-browser.mjs` and `npm run check:browser` need Playwright and are run by hand.
+  checkout from git. A setting only one machine needs goes in `.claude/settings.local.json`, which git
+  ignores, or an environment variable, such as `KIT_MAIN_ROOT`.
+- **Checks:** `checks.test` runs `scripts/agents/run-tests.sh`: the Python tests (`unittest discover -s
+  tests`, plus `tests/test_server.py` and `tests/test_mcp_server.py`, which are plain scripts discovery
+  does not collect) and the Node tests (`tests/*.test.mjs`), with no installs. The repo has
+  no GitHub CI workflow, so `kit pr` runs them here for a code change, then lands after the review. A
+  CSS-only change gets a review but no tests. A docs-only change (`paths.docs`) gets neither, as in every
+  project.
+  `tests/listening-browser.mjs` needs Playwright and is run by hand.
 - **Own commands:** none yet (`scripts/agents/project.d` is empty).
 - **Shared file:** none is set.
 - **Docs the shared rulebook names:** no runner guide, issue tracker guide or UX rulebook yet. How the

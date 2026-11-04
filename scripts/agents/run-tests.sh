@@ -6,4 +6,7 @@ cd "$(dirname -- "${BASH_SOURCE[0]}")/../.."
 python=python3
 "$python" -c '' > /dev/null 2>&1 || python=python
 "$python" -m unittest discover -s tests
+# These two are plain scripts, not unittest classes, so discovery does not collect them.
+"$python" tests/test_server.py
+"$python" tests/test_mcp_server.py
 node --test tests/*.test.mjs

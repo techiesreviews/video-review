@@ -143,8 +143,7 @@ The UI can use online web fonts, with system-font fallbacks. Video data and revi
 ## Development checks
 
 ```sh
-python tests/test_server.py
-python tests/test_mcp_server.py
+bash scripts/agents/run-tests.sh
 ```
 
 The tests cover local video range requests, comment persistence, timestamp validation, origin checks and the MCP tools, using temporary data directories.
