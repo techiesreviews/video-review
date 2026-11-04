@@ -76,7 +76,8 @@ These steps have not yet been tried on this PC, so check the first cue before re
 1. On the Edit page, choose **File > Import > Subtitle** and pick the `.srt`. It lands in the Media Pool.
 2. Drag it to the first frame of the timeline. This adds a subtitle track and leaves the picture and sound alone.
 3. Check the timing. The SRT counts from zero, and a Resolve timeline usually starts at 01:00:00:00, so play the
-   first cue against the first spoken word. `build-captions.py` prints that word's time. If the whole track sits
-   early by that amount, move it along the timeline by that much.
+   first cue against the first spoken word. `build-captions.py` prints that word's time, which only shows where
+   to look. If the whole track sits off, move it along the timeline by the difference between the cue and the
+   word.
 4. To keep captions out of the picture, on the Deliver page set the subtitle export to a separate file, or leave
    subtitle export off. Do not choose the burn-in option.
