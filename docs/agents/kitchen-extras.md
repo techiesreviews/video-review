@@ -22,6 +22,8 @@ file wins.
   CSS-only change gets a review but no tests. A docs-only change (`paths.docs`) gets neither, as in every
   project.
   `tests/listening-browser.mjs` needs Playwright and is run by hand.
+- **`kit unit` is not set up here:** it takes one test runner and this project has two, so wherever the
+  rulebook says `kit unit`, run `bash scripts/agents/run-tests.sh`.
 - **Own commands:** none yet (`scripts/agents/project.d` is empty).
 - **Shared file:** none is set.
 - **Docs the shared rulebook names:** no runner guide, issue tracker guide or UX rulebook yet. How the

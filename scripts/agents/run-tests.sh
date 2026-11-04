@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The project's checks.test (scripts/agents/kit.json): the Python and Node unit tests. Needs no installs or network.
+# The project's checks.test (scripts/agents/kit.json): the Python and Node unit tests. Needs Bash, Python and Node, but no npm install or network.
 # kit pr runs a check without a shell, so the choice of Python (python3, else python on Windows) lives here.
 set -euo pipefail
 cd "$(dirname -- "${BASH_SOURCE[0]}")/../.."

@@ -142,8 +142,10 @@ The UI can use online web fonts, with system-font fallbacks. Video data and revi
 
 ## Development checks
 
+These need Bash and Node as well as Python, but no `npm install`:
+
 ```sh
 bash scripts/agents/run-tests.sh
 ```
 
-The tests cover local video range requests, comment persistence, timestamp validation, origin checks and the MCP tools, using temporary data directories.
+The tests cover local video range requests, comment persistence, timestamp validation, origin checks, the MCP tools, and the transcript, cut and waveform logic, using temporary data directories.
