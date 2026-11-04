@@ -52,6 +52,58 @@ Waveform heights are scaled for readability; this is not a loudness meter. Pause
 approximate transcript word times, so listen to the waveform boundaries before accepting a cut. This editor
 does not destructively rewrite media or automatically change a Resolve project.
 
+## Experience the cut before exporting
+
+Removals are still previews: playback jumps over them, and the original video file and any Resolve timeline are
+not touched. These controls let you hear and feel the result first.
+
+- **Play whole cut** plays from the first kept frame with every removal skipped. If you are in the Original
+  transcript view, it switches back to the edited one. **Space** plays and pauses wherever you are, including
+  after clicking a word. Enter selects a focused word, and Shift+Space extends a selection.
+- **Two clocks** sit beside the frame buttons: **Cut** (time in the cut, then the cut's length) and **Source**
+  (time in the review file, then its length). Source time here means the review file's own clock, not the
+  original recording's.
+- **Source time / Cut time** chooses which clock the seek bar and timecodes use, and is remembered. In cut time the
+  seek bar is always shown, even with the waveform on, and it runs over the cut only. Dragging it, the frame
+  buttons and J/L all skip removals. A seek onto a join lands just after it. Comment times and pins follow the
+  choice too; hover a comment's time to see its source time. Transcript times, the waveform and the exact-time
+  fields in the comment box stay in source time, and comments are always saved in source time.
+- **Join fade** (on by default) fades the sound for 15 ms out and back in at each join, like the native audio fades
+  in the Resolve cut. It applies to every jump, including Hear cut. The fade starts early, so it does not hold back
+  the jump, and it only hides clicks. It cannot repair a clipped word. Switch it off to compare.
+
+A short silence at a join is the browser finding its place in the file, and it is not in the final cut. The picture can
+also show a removed frame or two just before the jump. Review copies with frequent keyframes cut that silence
+a lot. The measurements are in [`docs/agents/evidence/browser-cut-preview.md`](agents/evidence/browser-cut-preview.md).
+
+## Ask the agent to change something
+
+Select words or a pause, choose **Ask agent**, write what should change, and choose **Send to agent**. For a single
+moment or a range with no words selected, write in the comment box and choose **Ask agent** instead of Comment.
+The request appears in the comment list marked **For agent**, with its quote and frames. You can edit, reply to or
+delete it like any comment. Nothing changes until your connected agent acts on it.
+
+### For agents
+
+`list_comments`, `get_comment` and, on the hosted app, `wait_for_comments` return these requests with an
+`agentRequest` field:
+
+```json
+{"type": "change", "instruction": "Tighten this and keep the laugh", "quote": "keep the laugh",
+ "wordIds": ["W5", "W6", "W7"], "firstWordId": "W5", "lastWordId": "W7", "startFrame": 750, "endFrame": 780,
+ "sourceSpans": [{"sourceStartFrame": 1050, "sourceEndFrame": 1080, "sourceStartMs": 35000, "sourceEndMs": 36000}],
+ "transcriptRevision": "r1"}
+```
+
+`instruction` is always the comment's current text. `startFrame` and `endFrame` are frames in the review file
+(`endFrame` is null for a single frame), and `sourceSpans` are frames in the original footage. `quote` is null and
+`wordIds` is empty when the moment has no words. The stored `editRequest` has type `change` and keeps the quote, word
+IDs and frames from when it was asked. Other request types are unchanged and have no `agentRequest`.
+
+`get_transcript` returns the reviewer's current preview removals as `draftEdits`:
+`{id, startMs, endMs, wordIds, quote, kind, commentId}`, in review-file milliseconds, with `kind` either `words` or
+`pause`. They are not in the rendered file until an agent applies them. The hosted app reads them from the open tab.
+
 ## See the original words and restore a passage
 
 **Original transcript** is always available above the words. It shows review removals with strike-through text,

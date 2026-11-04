@@ -79,15 +79,27 @@ def thread(comment):
         replies.insert(0,{'id':'resolution','author':'ai','text':comment['resolution'],'createdAt':comment.get('updatedAt') or comment.get('createdAt'),'legacy':True})
     return replies
 
+def frame_at(ms,fps):
+    """The frame at a time, rounding half up as the browser and the hosted worker do."""
+    return math.floor(ms*fps/1000+.5)
+
+def agent_request(video,c):
+    """What the reviewer asked an agent to do, in one field: the comment's current text is the instruction."""
+    e=c['editRequest'];fps=video['fps'];end=c.get('endMs')
+    return {'type':'change','instruction':c['text'],'quote':e.get('quote'),'wordIds':e.get('wordIds') or [],'firstWordId':e.get('firstWordId'),'lastWordId':e.get('lastWordId'),
+        'startFrame':frame_at(c['startMs'],fps),'endFrame':frame_at(end,fps) if end is not None else None,
+        'sourceSpans':c.get('sourceSpans',e.get('sourceSpans',source_spans(video,c['startMs'],end))),'transcriptRevision':e.get('transcriptRevision'),**({'cutId':e['cutId']} if e.get('cutId') else {})}
+
 def describe(video,c):
     """A comment with everything an editor needs: timecodes, frames and original-source mapping."""
     fps=video['fps']
     return {'id':c['id'],'status':c['status'],'author':c.get('author','you'),'text':c['text'],
         'start':timecode(c['startMs']),'end':timecode(c['endMs']) if c.get('endMs') is not None else None,
-        'startMs':c['startMs'],'endMs':c.get('endMs'),'startFrame':round(c['startMs']*fps/1000),
-        'endFrame':round(c['endMs']*fps/1000) if c.get('endMs') is not None else None,
+        'startMs':c['startMs'],'endMs':c.get('endMs'),'startFrame':frame_at(c['startMs'],fps),
+        'endFrame':frame_at(c['endMs'],fps) if c.get('endMs') is not None else None,
         'sourceSpans':c.get('sourceSpans',c.get('editRequest',{}).get('sourceSpans',source_spans(video,c['startMs'],c.get('endMs')))),
         **({'editRequest':c['editRequest']} if c.get('editRequest') else {}),
+        **({'agentRequest':agent_request(video,c)} if c.get('editRequest',{}).get('type')=='change' else {}),
         'replies':[{'author':r['author'],'text':r['text'],'createdAt':r.get('createdAt')} for r in thread(c)],
         'createdAt':c.get('createdAt')}
 
@@ -101,7 +113,7 @@ def check_author(author):
     return author
 
 def check_edit_request(request,video,start,end):
-    if not isinstance(request,dict) or request.get('type') not in ['remove','restore','clipped','extend_before','extend_after','mistake','pause','comment']:
+    if not isinstance(request,dict) or request.get('type') not in ['remove','restore','clipped','extend_before','extend_after','mistake','pause','comment','change']:
         raise ValueError('Invalid transcript edit request')
     result={'type':request['type']}
     for key in ['quote','firstWordId','lastWordId','cutId','transcriptRevision']:
@@ -109,6 +121,10 @@ def check_edit_request(request,video,start,end):
             if not isinstance(request[key],str) or len(request[key])>(3000 if key=='quote' else 120):raise ValueError('Invalid transcript selection')
             result[key]=request[key]
     result['sourceSpans']=source_spans(video,start,end)
+    if request['type']=='change':
+        ids=request.get('wordIds',[])
+        if not isinstance(ids,list) or len(ids)>2000 or any(not isinstance(i,str) or len(i)>120 for i in ids):raise ValueError('Invalid word IDs: one request can cover up to 2,000 words.')
+        result.update(wordIds=list(ids),startFrame=frame_at(start,video['fps']),endFrame=frame_at(end,video['fps']) if end is not None else None)
     if request['type']=='restore':
         import math
         a,b,d=(request.get(k) for k in ['sourceStartMs','sourceEndMs','sourceDurationMs'])

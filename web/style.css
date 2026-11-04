@@ -45,8 +45,14 @@ video{display:block;width:100%;height:100%;object-fit:contain;background:#000;cu
 .control-row{display:flex;align-items:center;gap:4px;margin-top:6px}
 .ctl{height:34px;min-width:34px;display:grid;place-items:center;border-radius:8px;color:#ececf2}.ctl:hover{background:rgba(255,255,255,.1)}
 .ctl svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}#play svg{fill:currentColor;stroke:none;width:20px;height:20px}
-.ctl.text{padding:0 10px;font-size:12px;font-weight:600}
+.ctl.text{padding:0 7px;font-size:12px;font-weight:600}
 .time{margin-left:8px;font:13px var(--mono);white-space:nowrap}.time .dim{color:#8d8d9b}.time small{margin-left:10px;color:#8d8d9b;font-size:11px}
+.clock-label{margin-right:4px;color:#8d8d9b;font-size:11px;font-family:'DM Sans','Segoe UI',sans-serif}.alt-clock{color:#b9b9c6;font-size:12px;margin-left:4px}
+.ctl.text[aria-pressed="true"]#timeMode,.ctl.text[aria-pressed="true"]#joinFade{color:#c6beff}.ctl.text[aria-pressed="false"]#joinFade{color:#8d8d9b}
+.waveform-enabled.cut-time .player .track{display:block}
+.ask-badge{padding:0 7px;border-radius:999px;background:var(--accent-soft);color:var(--accent);font-size:11px;font-weight:600;white-space:nowrap}
+.ask-where{margin:2px 0 0;color:var(--muted);font-size:12px;overflow-wrap:anywhere}
+#askAgentNote{height:30px;padding:0 13px;font-size:13px}#askAgentNote:disabled{opacity:.5}
 .spacer{flex:1}
 .below-player{width:100%;max-width:1280px;margin-top:20px;background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden;flex-shrink:0}
 .transcript-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 20px 10px}.transcript-heading h2{font-size:17px;margin:0;letter-spacing:-.2px}.transcript-heading p{font-size:12px;color:var(--muted);margin:3px 0 0}.transcript-heading .ghost{height:32px;font-size:12px;padding:0 12px}
