@@ -32,7 +32,18 @@ function Find-ReviewPython {
     throw 'Python was not found. Install Python 3.11 or newer from python.org, then try again.'
 }
 
+# The app itself needs only Python. ffprobe (part of ffmpeg) is needed to add a video, so say so before it surprises anyone.
+function Test-ReviewTools {
+    $user = [Environment]::GetEnvironmentVariable('Path', 'User')
+    $found = (Get-Command ffprobe.exe -ErrorAction SilentlyContinue) -or ($user -and ($user -split ';' | Where-Object { $_ -and (Test-Path -LiteralPath (Join-Path ([Environment]::ExpandEnvironmentVariables($_)) 'ffprobe.exe')) }))
+    if (-not $found) {
+        Write-Host 'Note: ffprobe (part of ffmpeg) was not found. The page will open, but adding a video will fail until you install it.'
+        Write-Host '      To install it, open PowerShell and run: winget install Gyan.FFmpeg   (then close and reopen this window)'
+    }
+}
+
 try {
+    Test-ReviewTools
     # Another copy on the port would show its older screens, so this copy takes the next free port instead.
     $state = Get-PortState $reviewPort
     while ($state -eq 'other') {
@@ -46,7 +57,11 @@ try {
         $python = Find-ReviewPython
         $reviewLog = Join-Path $reviewRoot 'server-error.log'
         $reviewArguments = $python.Prefix + @(('"' + (Join-Path $reviewRoot 'server.py') + '"'), '--port', $reviewPort)
-        $server = Start-Process -FilePath $python.Path -ArgumentList $reviewArguments -WorkingDirectory $reviewRoot -WindowStyle Hidden -RedirectStandardError $reviewLog -PassThru
+        try {
+            $server = Start-Process -FilePath $python.Path -ArgumentList $reviewArguments -WorkingDirectory $reviewRoot -WindowStyle Hidden -RedirectStandardError $reviewLog -PassThru
+        } catch {
+            throw "Python could not be started ($($python.Path)). Install Python 3.11 or newer from python.org, then try again."
+        }
         $reviewReady = $false
         for ($reviewAttempt = 0; $reviewAttempt -lt 40 -and -not $server.HasExited; $reviewAttempt++) {
             Start-Sleep -Milliseconds 250
