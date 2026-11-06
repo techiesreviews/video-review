@@ -4,7 +4,7 @@ Speaks the Model Context Protocol over stdio using only the standard library.
 Register it with:  claude mcp add video-review -- python /path/to/mcp_server.py
 """
 from pathlib import Path
-import argparse, json, os, sys, traceback
+import argparse, atexit, json, os, sys, threading, time, traceback
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 import review_store as store
 
@@ -105,11 +105,22 @@ def handle(msg):
         except (ValueError,TypeError) as e:return {'content':[{'type':'text','text':str(e)}],'isError':True}
     raise LookupError(f'Method not found: {method}')
 
+def start_heartbeat(interval=15):
+    """Lets the page say truthfully whether an agent is attached: this file is fresh only while the server runs."""
+    def beat():
+        while True:
+            try:store.touch_agent(DATA)
+            except OSError:pass
+            time.sleep(interval)
+    threading.Thread(target=beat,daemon=True).start()
+    atexit.register(lambda:store.agent_gone(DATA))
+
 def main():
     global DATA
     parser=argparse.ArgumentParser(description='Video Review MCP server (stdio)')
     parser.add_argument('--data-dir',default=None)
     DATA=store.data_dir(parser.parse_args().data_dir)
+    start_heartbeat()
     out=sys.stdout.buffer
     for line in sys.stdin.buffer:
         if not line.strip():continue

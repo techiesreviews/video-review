@@ -132,12 +132,15 @@ try{
   // Ask agent on a selected word.
   await page.locator('.transcript-word').nth(1).click();
   await page.locator('.transcript-word').nth(2).click({modifiers:['Shift']});
-  await page.locator('#askAgent').click();await page.locator('#askAgentText').fill('Tighten this and keep the laugh');await page.locator('#sendAskAgent').click();
+  assert.equal(await page.evaluate(()=>document.activeElement.id),'transcriptNote','Selecting words puts the cursor in the edit bar.');
+  await page.keyboard.type('Tighten this and keep the laugh');await page.keyboard.press('Enter');
+  await page.waitForFunction(()=>document.querySelector('#barStatus').textContent.includes('No agent connected'));
+  assert.match(await text('#barStatus'),/saved and waits for it/,'With no agent attached the bar says so and keeps the note.');
+  assert.equal(await page.locator('#transcriptNote').inputValue(),'');
   const askCard=page.locator('.comment',{hasText:'Tighten this and keep the laugh'});await askCard.waitFor();
   assert.equal(await askCard.locator('.ask-badge').innerText(),'For agent');
   assert.match(await askCard.locator('.ask-where').innerText(),/word1 word2/);
   assert.match(await askCard.locator('.ts').innerText(),/^0:00 – 0:01$/,'The comment time follows the chosen clock.');
-  assert.equal(await page.locator('#askAgentForm').isVisible(),false);
   let notes=JSON.parse(await readFile(join(temp,'comments.json'),'utf8')).comments,saved=notes.find(n=>n.text.startsWith('Tighten'));
   assert.equal(saved.editRequest.type,'change');assert.deepEqual(saved.editRequest.wordIds,['W1','W2']);assert.equal(saved.editRequest.quote,'word1 word2');
   assert.equal(saved.editRequest.startFrame,Math.round(saved.startMs*fps/1000));assert.equal(saved.editRequest.endFrame,Math.round(saved.endMs*fps/1000));
@@ -157,6 +160,38 @@ try{
   await page.locator('#noteText').fill('Plain note');await page.locator('#saveNote').click();await page.locator('.comment',{hasText:'Plain note'}).waitFor();
   notes=JSON.parse(await readFile(join(temp,'comments.json'),'utf8')).comments;assert.equal(notes.find(n=>n.text==='Plain note').editRequest,undefined);
 
+  // The edit bar: one box, focused at once, Delete first; Tab completes; an empty box turns Backspace into a cut.
+  await page.locator('.transcript-word').nth(8).click();
+  assert.equal(await page.evaluate(()=>document.activeElement.id),'transcriptNote');
+  assert.equal((await page.locator('#transcriptSelection button:visible').first().innerText()).trim(),'Delete','Delete is the first button.');
+  const before=await page.locator('#transcriptSelection').boundingBox(),boxBefore=await page.locator('#transcriptNote').boundingBox();
+  await page.keyboard.type('Tigh');
+  assert.ok((await page.locator('#transcriptGhost').textContent()).endsWith('ten this and keep the laugh'),'A grey suggestion appears, from the note sent a moment ago.');
+  await page.keyboard.press('Tab');
+  assert.equal(await page.locator('#transcriptNote').inputValue(),'Tighten this and keep the laugh','Tab takes the suggestion.');
+  assert.equal(await page.evaluate(()=>document.activeElement.id),'transcriptNote','Tab does not leave the box when it completes.');
+  const after=await page.locator('#transcriptSelection').boundingBox(),boxAfter=await page.locator('#transcriptNote').boundingBox();
+  assert.deepEqual([after.height,boxAfter.width],[before.height,boxBefore.width],'Completing text does not move or grow anything.');
+  const editsOnDisk=async()=>JSON.parse(await readFile(join(temp,'transcripts/tone.json'),'utf8')).draftEdits;
+  const edits=(await editsOnDisk()).length;
+  await page.keyboard.press('Backspace');assert.equal(await page.locator('#transcriptNote').inputValue(),'Tighten this and keep the laug');
+  assert.equal((await editsOnDisk()).length,edits,'Backspace in text only edits the text.');
+  await page.keyboard.press('Escape');assert.equal(await page.locator('#transcriptNote').inputValue(),'');assert.equal(await page.locator('#transcriptSelection').isVisible(),true,'First Escape clears the text.');
+  await writeFile(join(temp,'agent-seen.json'),JSON.stringify({pid:1,at:new Date().toISOString()}));
+  await page.keyboard.type('Please make this quicker');await page.keyboard.press('Enter');
+  await page.waitForFunction(()=>document.querySelector('#barStatus').textContent.includes('Sent to your agent'));
+  await page.keyboard.press('Backspace');await page.waitForTimeout(150);
+  assert.equal((await editsOnDisk()).length,edits+1,'Backspace in the empty box removes the selected words from the cut.');
+  assert.equal(await page.locator('.transcript-word.selected').first().innerText(),'word9','The selection moves on to the next words.');
+  assert.equal(await page.evaluate(()=>document.activeElement.id),'transcriptNote');
+  await page.keyboard.press('Control+z');await page.waitForFunction(async()=>true);await page.waitForTimeout(250);
+  assert.equal((await editsOnDisk()).length,edits,'Ctrl+Z in the empty box undoes the cut.');
+  await page.keyboard.press('Escape');assert.equal(await page.locator('#transcriptSelection').isVisible(),false,'Escape in an empty box clears the selection.');
+  await page.locator('.transcript-word').nth(8).click();await page.locator('[data-transcript-action="remove"]').click();await page.waitForTimeout(250);
+  assert.equal((await editsOnDisk()).length,edits+1,'The Delete button does the same.');
+  await page.locator('#undoTranscriptCut').click();await page.waitForTimeout(250);assert.equal((await editsOnDisk()).length,edits);
+  await rm(join(temp,'agent-seen.json'),{force:true});
+
   // Everything removed: nothing to play, and the page says so.
   await writeFile(join(temp,'transcripts/tone.json'),JSON.stringify({words,cuts:[],revision:'all-gone',draftEdits:[{id:'all',startMs:0,endMs:8000,wordIds:words.map(w=>w.id),quote:'all',kind:'words'}]}));
   await page.reload();await page.waitForSelector('.transcript-word',{state:'attached'});await page.waitForFunction(()=>document.querySelector('#duration').textContent==='0:00');
@@ -168,10 +203,11 @@ try{
   // The new controls fit a phone without sideways scrolling.
   await page.setViewportSize({width:390,height:844});await page.waitForTimeout(100);
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'No sideways scrolling on a phone.');
+  await page.locator('.transcript-word').nth(1).click();assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'The edit bar fits a phone without sideways scrolling.');
   await mkdir('data/test-artifacts',{recursive:true});await page.screenshot({path:'data/test-artifacts/cut-preview-mobile.png',fullPage:true});
-  await page.setViewportSize({width:1440,height:1040});await page.locator('.transcript-word').nth(1).click();await page.locator('#askAgent').click();await page.screenshot({path:'data/test-artifacts/cut-preview-desktop.png'});
+  await page.setViewportSize({width:1440,height:1040});await page.locator('.transcript-word').nth(1).click();await page.keyboard.type('Tigh');await page.screenshot({path:'data/test-artifacts/cut-preview-desktop.png'});
   assert.deepEqual(errors,[]);
-  console.log('PASS: play whole cut, both clocks, Space, join fade on and off, cut-time seeking, ask agent on a word and a frame, all-removed cut, phone layout.');
+  console.log('PASS: play whole cut, both clocks, Space, join fade on and off, cut-time seeking, ask agent on a word and a frame, the edit bar (autofocus, Tab, Backspace, Ctrl+Z, no-agent line), all-removed cut, phone layout.');
 }finally{
   await browser?.close();server.kill();await new Promise(r=>server.once('exit',r));assert.equal(dirname(temp),resolve(tmpdir()));assert.ok(basename(temp).startsWith('video-cut-preview-'));await rm(temp,{recursive:true,force:true});
 }

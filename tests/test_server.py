@@ -54,6 +54,18 @@ class ReviewServerTests:
         else:raise AssertionError('A transcript from a longer cut was accepted')
         with self.request('/api/transcript/example-v1') as response:assert json.load(response)==saved
 
+    def test_agent_status_is_true_only_while_the_agent_is_alive(self):
+        seen=self.data/'agent-seen.json'
+        seen.unlink(missing_ok=True)
+        with self.request('/api/agent') as r:assert json.load(r)=={'connected':False}
+        server.store.touch_agent(self.data)
+        with self.request('/api/agent') as r:assert json.load(r)=={'connected':True}
+        seen.write_text(json.dumps({'pid':1,'at':'2020-01-01T00:00:00+00:00'}))
+        with self.request('/api/agent') as r:assert json.load(r)=={'connected':False}
+        seen.write_text('{"at":"not a time"}')
+        with self.request('/api/agent') as r:assert json.load(r)=={'connected':False}
+        seen.unlink(missing_ok=True)
+
     def test_file_version_changes_when_the_file_is_replaced(self):
         with self.request('/api/videos') as r:before=json.load(r)[0]['fileVersion']
         self.media.write_bytes(bytes(range(128)))
