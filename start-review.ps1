@@ -57,6 +57,7 @@ try {
         $python = Find-ReviewPython
         $reviewLog = Join-Path $reviewRoot 'server-error.log'
         $reviewArguments = $python.Prefix + @(('"' + (Join-Path $reviewRoot 'server.py') + '"'), '--port', $reviewPort)
+        if ($env:VIDEO_REVIEW_DATA_DIR) { $reviewArguments += @('--data-dir', ('"' + $env:VIDEO_REVIEW_DATA_DIR + '"')) }
         try {
             $server = Start-Process -FilePath $python.Path -ArgumentList $reviewArguments -WorkingDirectory $reviewRoot -WindowStyle Hidden -RedirectStandardError $reviewLog -PassThru
         } catch {
