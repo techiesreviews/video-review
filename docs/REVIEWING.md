@@ -6,10 +6,12 @@
    Paragraph-only timestamps cannot be used as invented word timings.
 3. Click a word to seek. Drag across words, or Shift-click, to select a phrase. Selecting a pause stays paused.
    Follow playback keeps the current word in view; search finds words in the current transcript.
-4. Choose a quick request such as clipped, more room, or remove. The request appears in the comment list
-   immediately. Edit its note in the field below the options. Clicking a comment seeks the video and transcript.
-5. Remove from cut (or Delete) makes a reversible preview decision. Undo restores it; Show removed exposes
-   omitted words. This changes preview playback, not the original video file or a Resolve timeline.
+4. Selecting words opens a slim edit bar with one text box, ready to type. **Delete** is the first button; after it
+   come Play selection, Word clipped, More before, More after and Mistake / retake. Each request appears in the
+   comment list immediately. Clicking a comment seeks the video and transcript. Esc (or the small x) clears the selection.
+5. **Delete** (or Backspace/Delete with the text box empty) makes a reversible preview decision. Ctrl+Z undoes it,
+   and the next words stay selected. Show removed exposes omitted words. This changes preview playback, not the
+   original video file or a Resolve timeline.
 6. Connect an editing agent using the private connection prompt. Keep the tab open. The agent can read comments,
    request the transcript, and apply approved changes to its local editable project. Export the cut list when needed.
 7. For a replacement render, keep the same review entry and file name. Render to a temporary name, preserve
@@ -21,6 +23,15 @@ the old browser copy. If the browser cannot reopen the file, choose the new copy
 
 Download review backups regularly. They include notes and transcripts, not video bytes. Disconnect agents
 revokes the session's tokens. Never commit connection tokens, footage, transcripts or private review backups.
+
+## The edit bar
+
+- Type a note and press Enter: it is saved as a request for the agent and shown in the comment list. Grey text
+  completes it from your recent notes and the quick phrases; **Tab** (or →) accepts it, so Tab never inserts anything.
+- Backspace or Delete in an **empty** box removes the selected words from the cut, like a video editor. With text
+  in the box they only edit the text. Space in an empty box plays and pauses. Esc clears the text, then the selection.
+- The bar says in one line whether an agent is attached. With none, the note is still saved and waits for it.
+  The offline app knows because `mcp_server.py` refreshes `agent-seen.json` in the data folder every few seconds while it runs.
 
 ## Listen and edit through the words
 

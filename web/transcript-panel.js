@@ -1,14 +1,15 @@
 import {normalizeTranscript,activeWordIndex,wordSelection,originalOmissions,wordsInSpan} from './transcript-core.js';
 import {makeRemoval,removalBounds,skipRemoved,previewDuration,exportCut,removedRanges} from './cut-core.js';
 import {createWaveform} from './waveform-panel.js';
+import {barKey,suggestion,recentNotes,nextWordAfterDelete,sentLine} from './edit-bar-core.js';
 
 const LABELS={remove:'Remove the selected passage',clipped:'This word or join is clipped; recover the missing beginning or ending',extend_before:'Give this passage more room before it starts',extend_after:'Let the end of this passage finish before cutting',mistake:'Check this mistake / retake and keep the complete take',pause:'Shorten this pause while preserving the breath and complete words',comment:'Note about the selected passage'};
 const $=s=>document.querySelector(s);
 const stamp=ms=>`${Math.floor(ms/60000)}:${String(Math.floor(ms/1000)%60).padStart(2,'0')}.${String(ms%1000).padStart(3,'0')}`;
 function element(tag,cls,text){const node=document.createElement(tag);if(cls)node.className=cls;if(text!=null)node.textContent=text;return node;}
 
-export function createTranscriptPanel({media,seek,playContext,request,updateRequest,cancelRequest=async()=>{},showError,pause=()=>{},onCutsChange=()=>{},notify=()=>{}}){
-  let transcript=null,selected=null,anchor=null,wordNodes=[],highlighted=-1,videoId=null,loadToken=0,dragAnchor=null,dragEnd=null,dragMoved=false,suppressClick=false,noteId=null,noteTimer=null,pendingFocus=null;
+export function createTranscriptPanel({media,seek,playContext,request,updateRequest,cancelRequest=async()=>{},showError,pause=()=>{},onCutsChange=()=>{},notify=()=>{},togglePlay=()=>{},agentConnected=async()=>false}){
+  let transcript=null,selected=null,anchor=null,wordNodes=[],highlighted=-1,videoId=null,loadToken=0,dragAnchor=null,dragEnd=null,dragMoved=false,suppressClick=false,noteId=null,noteBase='',noteTimer=null,pendingFocus=null,sending=false;
   const body=$('#transcriptText');
   let backendRef=null,videoRef=null,showRemoved=false,busy=false,dragPoint=null,scrollFrame=null;
   let pauseNodes=[],currentNode=null,auditionRange=null,pauseThreshold=450,sourceAnchor=null;
@@ -25,9 +26,18 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   $('#pauseThreshold').onchange=()=>{pauseThreshold=Number($('#pauseThreshold').value);try{localStorage.setItem('techies-review-pause-threshold',String(pauseThreshold));}catch{}render();tick(media.currentTime*1000,!media.paused);};
   function selectionState(){if(!selected)return;$('#selectionTime').textContent=`${stamp(selected.startMs)} – ${stamp(selected.endMs)}`;$('#selectionQuote').textContent=selected.quote;try{waveform.setRange(removalBounds(transcript,selected,videoRef.durationMs,videoRef.fps));}catch{waveform.setRange(null);}}
   function adjustSelection(range){if(!range){clear();return;}if(!selected)return;selected={...selected,...range,precise:true};selectionState();}
-  function noteState(id=null,text=''){noteId=id;$('#transcriptNote').value=text;$('#saveTranscriptNote').textContent=id?'Save changes':'Add note';$('#saveTranscriptNote').disabled=!text.trim();}
-  function clear(){selected=null;anchor=null;sourceAnchor=null;auditionRange=null;noteState();for(const n of body.querySelectorAll('.selected'))n.classList.remove('selected');$('#transcriptPanel').classList.remove('source-selection');$('#restoreOriginalSelection').hidden=true;$('#restoreOriginalSelection').disabled=false;closeAsk();$('#transcriptSelection').hidden=true;$('[data-transcript-action="pause"]').hidden=true;waveform.setRange(null);}
-  function choose(a,b=a){
+  const noteBox=$('#transcriptNote');
+  function ghostState(){
+    const ghost=$('#transcriptGhost'),value=noteBox.value,atEnd=noteBox.selectionStart===value.length&&noteBox.selectionEnd===value.length;
+    const full=document.activeElement===noteBox&&atEnd?suggestion(value,recentNotes(backendRef?.comments?.()||[])):'';
+    ghost.replaceChildren();if(full){const typed=element('b','',value);ghost.append(typed,document.createTextNode(full.slice(value.length)));}
+    noteBox.dataset.suggestion=full;return full;
+  }
+  function barStatus(text=''){$('#barStatus').textContent=text;}
+  function noteState(id=null,text='',base=''){noteId=id;noteBase=base;noteBox.value=text;barStatus();ghostState();}
+  function focusBar(){if(!$('#transcriptSelection').hidden)noteBox.focus({preventScroll:true});}
+  function clear(){selected=null;anchor=null;sourceAnchor=null;auditionRange=null;clearTimeout(noteTimer);noteState();for(const n of body.querySelectorAll('.selected'))n.classList.remove('selected');$('#transcriptPanel').classList.remove('source-selection');$('#restoreOriginalSelection').hidden=true;$('#restoreOriginalSelection').disabled=false;$('#transcriptSelection').hidden=true;$('[data-transcript-action="pause"]').hidden=true;waveform.setRange(null);}
+  function choose(a,b=a,{focus=true}={}){
     if(!transcript?.words.length)return;
     $('#transcriptPanel').classList.remove('source-selection');$('#restoreOriginalSelection').hidden=true;sourceAnchor=null;for(const n of body.querySelectorAll('.source-word.selected'))n.classList.remove('selected');
     noteState();
@@ -35,13 +45,13 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     selected={...wordSelection(transcript.words,a,b),a:Math.min(a,b),b:Math.max(a,b)};
     for(let i=0;i<wordNodes.length;i++)wordNodes[i].classList.toggle('selected',i>=selected.a&&i<=selected.b);
     $('#selectionTime').textContent=`${stamp(selected.startMs)} – ${stamp(selected.endMs)}`;
-    $('#selectionQuote').textContent=selected.quote;$('#transcriptSelection').hidden=false;selectionState();
+    $('#selectionQuote').textContent=selected.quote;$('#transcriptSelection').hidden=false;selectionState();if(focus)focusBar();
   }
   function chooseCut(cut){
     clear();selected={startMs:Math.max(0,cut.atMs-200),endMs:cut.atMs+200,cutId:cut.id,quote:'Join '+cut.id};
     $('#selectionTime').textContent=stamp(cut.atMs);$('#selectionQuote').textContent='Join '+cut.id+' — listen before and after the cut';$('#transcriptSelection').hidden=false;
     seek(cut.atMs);
-    selectionState();
+    selectionState();focusBar();
   }
   function render(){
     clear();body.replaceChildren();wordNodes=[];pauseNodes=[];currentNode=null;highlighted=-1;
@@ -56,7 +66,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
         const pause=element('button','transcript-join transcript-pause',((word.startMs-previous.endMs)/1000).toFixed(1)+' s pause');
         pause.type='button';pause.title='Review this gap; keep natural breaths and deliberate emphasis';
         pause.dataset.startMs=previous.endMs;pause.dataset.endMs=word.startMs;
-        pause.onclick=()=>{clear();selected={kind:'pause',startMs:previous.endMs,endMs:word.startMs,firstWordId:previous.id,lastWordId:word.id,quote:`Pause after “${previous.text}”, before “${word.text}”`};$('#selectionTime').textContent=`${stamp(selected.startMs)} – ${stamp(selected.endMs)}`;$('#selectionQuote').textContent=selected.quote;$('#transcriptSelection').hidden=false;$('[data-transcript-action="pause"]').hidden=false;selectionState();seek(previous.endMs);};
+        pause.onclick=()=>{clear();selected={kind:'pause',startMs:previous.endMs,endMs:word.startMs,firstWordId:previous.id,lastWordId:word.id,quote:`Pause after “${previous.text}”, before “${word.text}”`};$('#selectionTime').textContent=`${stamp(selected.startMs)} – ${stamp(selected.endMs)}`;$('#selectionQuote').textContent=selected.quote;$('#transcriptSelection').hidden=false;$('[data-transcript-action="pause"]').hidden=false;selectionState();seek(previous.endMs);focusBar();};
         pauseNodes.push(pause);
         paragraph.append(pause,document.createTextNode(' '));
       }
@@ -66,7 +76,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
       }
       const node=element('span','transcript-word',word.text);node.dataset.index=i;node.tabIndex=i===0?0:-1;node.setAttribute('role','button');node.setAttribute('aria-label',`${word.text}, ${stamp(word.startMs)}`);node.title=stamp(word.startMs);
       node.onclick=e=>{if(suppressClick)return;if(e.shiftKey&&anchor!=null){window.getSelection()?.removeAllRanges();choose(anchor,i);return;}if(window.getSelection()?.toString()&&body.contains(window.getSelection().anchorNode))return;anchor=i;choose(i);seek(word.startMs);};
-      node.onkeydown=e=>{if(e.key==='Enter'||(e.key===' '&&e.shiftKey)){e.preventDefault();if(e.shiftKey&&anchor!=null)choose(anchor,i);else{anchor=i;choose(i);seek(word.startMs);}}else if(['ArrowLeft','ArrowRight'].includes(e.key)){e.preventDefault();const next=Math.max(0,Math.min(wordNodes.length-1,i+(e.key==='ArrowLeft'?-1:1)));node.tabIndex=-1;wordNodes[next].tabIndex=0;wordNodes[next].focus();if(e.shiftKey){anchor??=i;choose(anchor,next);}}};
+      node.onkeydown=e=>{if(e.key==='Enter'||(e.key===' '&&e.shiftKey)){e.preventDefault();if(e.shiftKey&&anchor!=null)choose(anchor,i);else{anchor=i;choose(i);seek(word.startMs);}}else if(['ArrowLeft','ArrowRight'].includes(e.key)){e.preventDefault();const next=Math.max(0,Math.min(wordNodes.length-1,i+(e.key==='ArrowLeft'?-1:1)));node.tabIndex=-1;wordNodes[next].tabIndex=0;wordNodes[next].focus();if(e.shiftKey){anchor??=i;choose(anchor,next,{focus:false});}}};
       paragraph.append(node,document.createTextNode(' '));wordNodes.push(node);count++;
     }
     refreshCuts();search();reflow();
@@ -89,7 +99,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     let cursor=0;for(const node of nodes){const end=cursor+node.textContent.length;node.classList.toggle('found',matches.some(([a,b])=>cursor<b&&end>a));cursor=end+1;}
   }
   $('#transcriptSearch').addEventListener('input',search);
-  $('#transcriptSearch').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();const match=body.querySelector('.found');if(match){if(match.classList.contains('source-word')){match.click();centre(match);}else{centre(match);anchor=Number(match.dataset.index);choose(anchor);seek(transcript.words[anchor].startMs);}}}});
+  $('#transcriptSearch').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();const match=body.querySelector('.found');if(match){if(match.classList.contains('source-word')){match.click();centre(match);}else{centre(match);anchor=Number(match.dataset.index);choose(anchor,anchor,{focus:false});seek(transcript.words[anchor].startMs);}}}});
   $('#clearTranscriptSelection').onclick=()=>{window.getSelection()?.removeAllRanges();clear();};
   function refreshCuts(){
     const edits=transcript?.draftEdits||[],removedIds=new Set(edits.flatMap(e=>e.wordIds));
@@ -150,12 +160,24 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   }
   async function removeSelection(){
     if(!selected||busy||selected.kind==='source')return;busy=true;
-    try{const edit=makeRemoval(transcript,selected,videoRef.durationMs,videoRef.fps),saved=await request(currentRequest(selected.kind==='pause'?'pause':'remove',`Remove from cut: “${selected.quote}”`));edit.commentId=saved?.id||null;await saveCuts([...(transcript.draftEdits||[]),edit]);seek(Math.max(0,edit.startMs-500));}
+    const wasWords=selected.kind==null&&selected.a!=null,first=selected.a,last=selected.b;
+    try{
+      const edit=makeRemoval(transcript,selected,videoRef.durationMs,videoRef.fps),saved=await request(currentRequest(selected.kind==='pause'?'pause':'remove',`Remove from cut: “${selected.quote}”`));edit.commentId=saved?.id||null;
+      await saveCuts([...(transcript.draftEdits||[]),edit]);seek(Math.max(0,edit.startMs-500));
+      // Like a video editor: the words after the cut stay selected so the next delete or note is one key away.
+      const next=wasWords?nextWordAfterDelete(transcript.words,transcript.draftEdits.flatMap(e=>e.wordIds||[]),first,last):-1;
+      if(next>=0&&!showRemoved){busy=false;refreshCuts();anchor=next;choose(next);barStatus('Deleted. Ctrl+Z brings it back.');centre(wordNodes[next]);}
+    }
     catch(error){showError(error.message);}finally{busy=false;refreshCuts();}
   }
   async function undoCut(){
-    const edit=transcript?.draftEdits?.at(-1);if(!edit||busy)return;busy=true;
-    try{await saveCuts(transcript.draftEdits.slice(0,-1));if(edit.commentId)await cancelRequest(edit.commentId);seek(edit.startMs);}
+    const edit=transcript?.draftEdits?.at(-1);if(!edit||busy)return;busy=true;const fromBar=document.activeElement===noteBox;
+    try{
+      await saveCuts(transcript.draftEdits.slice(0,-1));if(edit.commentId)await cancelRequest(edit.commentId);seek(edit.startMs);
+      // The words that came back are selected again, so a mistaken undo is one Backspace from being redone.
+      const ids=edit.wordIds||[],first=transcript.words.findIndex(w=>w.id===ids[0]),last=transcript.words.findIndex(w=>w.id===ids.at(-1));
+      if(first>=0&&last>=first&&!showRemoved){busy=false;refreshCuts();anchor=first;choose(first,last,{focus:false});barStatus('Brought back. Backspace deletes it again.');if(fromBar)focusBar();}
+    }
     catch(error){showError(error.message);}finally{busy=false;refreshCuts();}
   }
   async function restoreCut(id){
@@ -169,34 +191,52 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   $('#exportTranscriptCut').onclick=()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(exportCut(transcript,videoRef),null,2)],{type:'application/json'})),link=document.createElement('a');link.href=url;link.download=videoId+'-cut.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
   document.addEventListener('keydown',event=>{const editing=event.target.closest('input,textarea,[contenteditable="true"]');if(editing||event.altKey)return;
     if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='z'&&transcript?.draftEdits?.length){event.preventDefault();undoCut();}
-    else if(['Delete','Backspace'].includes(event.key)&&selected){event.preventDefault();removeSelection();}});
+    else if(['Delete','Backspace'].includes(event.key)&&selected&&!event.repeat){event.preventDefault();removeSelection();}
+    else if(event.key==='Escape'&&selected){event.preventDefault();leaveBar();}});
   function currentRequest(type,text){return {...selected,editRequest:{type,quote:selected.quote,firstWordId:selected.firstWordId,lastWordId:selected.lastWordId,cutId:selected.cutId,transcriptRevision:transcript.revision},text};}
+  const NAMES={clipped:'Word clipped',extend_before:'More before',extend_after:'More after',mistake:'Mistake / retake'};
   for(const button of document.querySelectorAll('[data-transcript-action]'))button.onclick=async()=>{
     if(!selected)return;const type=button.dataset.transcriptAction;
-    if(type==='remove'||type==='pause'){await removeSelection();return;}
+    if(type==='remove'||type==='pause'){await removeSelection();focusBar();return;}
     const buttons=[...document.querySelectorAll('[data-transcript-action]')],selection=selected;
     buttons.forEach(b=>b.disabled=true);
-    try{const saved=await request(currentRequest(type,LABELS[type]+(selected.cutId?` (${selected.cutId})`:`: “${selected.quote}”`)));if(selected===selection&&saved)noteState(saved.id,saved.text);}
-    catch(error){showError(error.message);}finally{buttons.forEach(b=>b.disabled=false);}
+    try{
+      const saved=await request(currentRequest(type,LABELS[type]+(selected.cutId?` (${selected.cutId})`:`: “${selected.quote}”`)));
+      if(selected===selection&&saved){noteState(saved.id,'',saved.text);barStatus(`Saved “${NAMES[type]}”. ${(await agentConnected())?'Your agent will see it.':'No agent connected: it is saved and waits for it.'} Type to add detail.`);}
+    }
+    catch(error){showError(error.message);}finally{buttons.forEach(b=>b.disabled=false);focusBar();}
   };
-  async function saveNote(event){event?.preventDefault();const text=$('#transcriptNote').value.trim();if(!text||!selected)return;clearTimeout(noteTimer);const currentId=noteId,selection=selected;$('#saveTranscriptNote').disabled=true;try{const saved=currentId?await updateRequest(currentId,text):await request(currentRequest('comment',text));if(selected===selection&&saved)noteState(saved.id,saved.text);}catch(error){showError(error.message);}finally{$('#saveTranscriptNote').disabled=!$('#transcriptNote').value.trim();}}
-  $('#transcriptNoteForm').onsubmit=saveNote;
-  $('#transcriptNote').onkeydown=event=>{if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();saveNote();}};
-  $('#transcriptNote').oninput=()=>{const text=$('#transcriptNote').value.trim();$('#saveTranscriptNote').disabled=!text;clearTimeout(noteTimer);if(noteId&&text){const id=noteId;noteTimer=setTimeout(()=>updateRequest(id,text).catch(error=>showError(error.message)),450);}};
-  function closeAsk(){$('#askAgentForm').hidden=true;$('#askAgentText').value='';$('#sendAskAgent').disabled=true;$('#askAgent').setAttribute('aria-expanded','false');}
+  // One text box: Enter sends it as a request to the agent (kept as a note in the comment list either way).
   function selectionAsk(){
     const words=selected.a!=null?transcript.words.slice(selected.a,selected.b+1).map(w=>w.id):[];
     return {type:'change',quote:selected.quote.slice(0,3000),firstWordId:selected.firstWordId,lastWordId:selected.lastWordId,wordIds:words,cutId:selected.cutId,transcriptRevision:transcript.revision};
   }
-  async function sendAsk(event){
-    event?.preventDefault();const text=$('#askAgentText').value.trim();if(!text||!selected)return;$('#sendAskAgent').disabled=true;
-    try{await request({...selected,endMs:selected.endMs==null?null:Math.min(selected.endMs,videoRef.durationMs),text,editRequest:selectionAsk()});closeAsk();notify('Saved for your agent. It appears in the comment list.');}
-    catch(error){showError(error.message);$('#sendAskAgent').disabled=false;}
+  async function sendBar(){
+    const text=noteBox.value.trim();if(!text||!selected||sending)return;sending=true;clearTimeout(noteTimer);const selection=selected;
+    try{
+      if(noteId){const saved=await updateRequest(noteId,noteBase?`${noteBase} — ${text}`:text);if(selected===selection&&saved){noteState(null,'');barStatus('Note updated.');}}
+      else{await request({...selection,endMs:selection.endMs==null?null:Math.min(selection.endMs,videoRef.durationMs),text,editRequest:selectionAsk()});if(selected===selection){noteState(null,'');barStatus(sentLine(await agentConnected()));}}
+    }catch(error){showError(error.message);}finally{sending=false;focusBar();ghostState();}
   }
-  $('#askAgent').onclick=()=>{const form=$('#askAgentForm'),opening=form.hidden;if(!opening){closeAsk();return;}pause();form.hidden=false;$('#askAgent').setAttribute('aria-expanded','true');$('#askAgentText').focus();reflow();};
-  $('#askAgentForm').onsubmit=sendAsk;
-  $('#askAgentText').oninput=()=>{$('#sendAskAgent').disabled=!$('#askAgentText').value.trim();};
-  $('#askAgentText').onkeydown=event=>{if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAsk();}if(event.key==='Escape')closeAsk();};
+  $('#transcriptNoteForm').onsubmit=event=>{event.preventDefault();sendBar();};
+  function leaveBar(){const target=selected?.a!=null?wordNodes[selected.a]:null;window.getSelection()?.removeAllRanges();clear();if(target&&!target.hidden)target.focus({preventScroll:true});else body.focus({preventScroll:true});}
+  noteBox.addEventListener('keydown',event=>{
+    const value=noteBox.value,atEnd=noteBox.selectionStart===value.length&&noteBox.selectionEnd===value.length;
+    const action=barKey(event,{value,suggestion:noteBox.dataset.suggestion||'',caretAtEnd:atEnd});
+    if(!action)return;event.preventDefault();
+    if(action==='accept'){noteBox.value=noteBox.dataset.suggestion;noteBox.setSelectionRange(noteBox.value.length,noteBox.value.length);noteBox.dispatchEvent(new Event('input'));}
+    else if(action==='send')sendBar();
+    else if(action==='delete'){removeSelection().then(focusBar);}
+    else if(action==='undo')undoCut();
+    else if(action==='play')togglePlay();
+    else if(action==='clear-text'){noteBox.value='';noteBox.dispatchEvent(new Event('input'));}
+    else if(action==='clear-selection')leaveBar();
+  });
+  noteBox.addEventListener('input',()=>{
+    barStatus();ghostState();clearTimeout(noteTimer);const text=noteBox.value.trim();
+    if(noteId&&text){const id=noteId,base=noteBase;noteTimer=setTimeout(()=>updateRequest(id,base?`${base} — ${text}`:text).catch(error=>showError(error.message)),450);}
+  });
+  for(const name of ['keyup','click','focus','blur','select'])noteBox.addEventListener(name,ghostState);
   function focusAt(ms,editRequest=null,comment=null){
     if(!transcript){pendingFocus={ms,editRequest,comment};return;}
     if(editRequest?.type==='restore'&&transcript.original){showRemoved=true;refreshCuts();const group=originalOmissions(transcript,videoRef).find(g=>g.sourceStartMs<=editRequest.sourceStartMs&&g.sourceEndMs>=editRequest.sourceEndMs);if(group){currentNode=null;centre([...body.querySelectorAll('.source-removal')].find(n=>n.dataset.sourceGap===group.id));}return;}
@@ -205,7 +245,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     const cut=editRequest?.cutId?transcript.cuts.find(c=>c.id===editRequest.cutId):null;
     if(first<0){first=activeWordIndex(transcript.words,cut?.atMs??ms);if(first<0)first=transcript.words.findIndex(w=>w.startMs>=ms);if(first<0)first=transcript.words.length-1;}
     if(editRequest?.firstWordId&&transcript.words[first]?.id===editRequest.firstWordId)seek(transcript.words[first].startMs);
-    choose(first,last>=first?last:first);
+    choose(first,last>=first?last:first,{focus:false});
     if(cut){selected={startMs:Math.max(0,cut.atMs-200),endMs:cut.atMs+200,cutId:cut.id,quote:'Join '+cut.id};$('#selectionTime').textContent=stamp(cut.atMs);$('#selectionQuote').textContent='Join '+cut.id;}
     if(wordNodes[first]?.hidden){showRemoved=true;refreshCuts();}
     centre(wordNodes[first]);selectionState();
