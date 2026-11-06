@@ -48,15 +48,25 @@
       <p id="originalTranscriptNotice" class="original-transcript-notice" hidden></p>
       <div id="transcriptText" class="transcript-text" aria-label="Timed transcript" tabindex="0"><p class="transcript-empty">Your transcript will appear here. Import the existing word-timed JSON; no new transcription is needed.</p></div>
       <div id="cutPreviewBar" class="cut-preview-bar" hidden><span id="cutPreviewStatus" role="status"></span><button id="undoTranscriptCut" type="button">Undo cut</button><button id="exportTranscriptCut" type="button">Export cut list</button></div>
-      <div id="transcriptSelection" class="transcript-selection" hidden>
-        <div class="selection-detail"><span id="selectionTime"></span><p id="selectionQuote"></p><button id="clearTranscriptSelection" class="link" type="button">Clear selection</button></div>
-        <div class="transcript-actions" role="group" aria-label="Transcript review actions">
-          <button id="restoreOriginalSelection" type="button" hidden>Request restore in Resolve</button>
-          <button type="button" data-transcript-action="pause" hidden>Shorten pause</button>
-          <button type="button" id="playTranscriptSelection">Play selection</button><button type="button" data-transcript-action="remove">Remove from cut</button><button type="button" data-transcript-action="clipped">Word clipped</button><button type="button" data-transcript-action="extend_before">More before</button><button type="button" data-transcript-action="extend_after">More after</button><button type="button" data-transcript-action="mistake">Mistake / retake</button><button type="button" id="askAgent" aria-expanded="false">Ask agent</button>
+      <div id="transcriptSelection" class="transcript-selection edit-bar" role="toolbar" aria-label="Edit the selected words" hidden>
+        <div class="edit-bar-row">
+          <button type="button" id="restoreOriginalSelection" class="bar-primary" hidden>Request restore in Resolve</button>
+          <button type="button" class="bar-primary bar-delete" data-transcript-action="remove" title="Remove the selected words from the cut. Backspace or Delete does the same when the box is empty. Ctrl+Z undoes.">Delete</button>
+          <button type="button" class="bar-chip" data-transcript-action="pause" hidden>Shorten pause</button>
+          <form id="transcriptNoteForm" class="bar-input" autocomplete="off">
+            <span id="transcriptGhost" class="bar-ghost" aria-hidden="true"></span>
+            <input id="transcriptNote" type="text" maxlength="10000" autocomplete="off" spellcheck="true" aria-label="Note or request for the selected words" aria-describedby="barHint" placeholder="Tell the agent what to change…">
+          </form>
+          <span class="bar-actions" role="group" aria-label="Quick actions for the selected words">
+            <button type="button" class="bar-chip" id="playTranscriptSelection" title="Hear the selected words with a little around them">Play selection</button>
+            <button type="button" class="bar-chip" data-transcript-action="clipped" title="This word or join is clipped">Word clipped</button>
+            <button type="button" class="bar-chip" data-transcript-action="extend_before" title="Give this more room before it starts">More before</button>
+            <button type="button" class="bar-chip" data-transcript-action="extend_after" title="Let the end finish before cutting">More after</button>
+            <button type="button" class="bar-chip" data-transcript-action="mistake" title="Mistake or retake: keep the complete take">Mistake / retake</button>
+          </span>
+          <button id="clearTranscriptSelection" class="bar-x" type="button" aria-label="Clear selection (Esc)" title="Clear selection (Esc)">×</button>
         </div>
-        <form id="askAgentForm" class="transcript-note-row" hidden><textarea id="askAgentText" rows="1" maxlength="10000" aria-label="What should the agent change here?" placeholder="What should the agent change here?"></textarea><button id="sendAskAgent" type="submit" disabled>Send to agent</button></form>
-        <form id="transcriptNoteForm" class="transcript-note-row"><textarea id="transcriptNote" rows="1" aria-label="Note about selected words" placeholder="Add a note about these words…"></textarea><button id="saveTranscriptNote" type="submit" disabled>Add note</button></form>
+        <div class="edit-bar-line"><span id="selectionTime"></span><span id="selectionQuote"></span><span id="barStatus" role="status" aria-live="polite"></span><span id="barHint" class="bar-hint">Enter sends · Tab completes · Esc clears</span></div>
       </div>
     </div>
   </section>

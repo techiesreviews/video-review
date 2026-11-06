@@ -306,6 +306,22 @@ def apply(directory,cmd):
         write(path,data)
     return data,result
 
+AGENT_FRESH_SECONDS=45
+
+def touch_agent(directory):
+    """Written every few seconds while the MCP server runs, so the page can tell whether an agent is attached."""
+    write(directory/'agent-seen.json',{'pid':os.getpid(),'at':now()})
+
+def agent_gone(directory):
+    (directory/'agent-seen.json').unlink(missing_ok=True)
+
+def agent_connected(directory):
+    seen=read(directory/'agent-seen.json',None)
+    if not isinstance(seen,dict) or not isinstance(seen.get('at'),str):return False
+    try:age=(datetime.now(timezone.utc)-datetime.fromisoformat(seen['at'])).total_seconds()
+    except ValueError:return False
+    return age<=AGENT_FRESH_SECONDS
+
 def view(directory):
     """Which version the reviewer has open in the offline app, and where the playhead is."""
     return read(directory/'view.json',{'videoId':None,'playheadMs':None})

@@ -21,6 +21,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json([{**{k:v for k,v in x.items() if k!='path'},'fileVersion':store.file_version(x['path'])} for x in store.videos(DATA)])
         if route=='/api/comments':return self.send_json({'comments':store.comments(DATA)})
         if route=='/api/local':return self.send_json({'local':True})
+        if route=='/api/agent':return self.send_json({'connected':store.agent_connected(DATA)})
         if route=='/api/library/search':return self.send_json(store.search_library(DATA,parse_qs(urlsplit(self.path).query).get('q',[''])[0]))
         if route=='/api/library/removed':return self.send_json([{k:v for k,v in item.items() if k!='path'} for item in store.read(DATA/'library-archive.json',[])])
         if route.startswith('/api/transcript/'):
@@ -31,7 +32,7 @@ class Handler(BaseHTTPRequestHandler):
             key=route[7:];item=next((x for x in store.videos(DATA) if x['id']==key),None)
             if not item:return self.send_error(404)
             path=Path(item['path'])
-        elif route in ['/','/index.html','/app.js','/backend.js','/review-core.js','/transcript-core.js','/transcript-panel.js','/cut-core.js','/cut-playback.js','/join-fade.js','/waveform-core.js','/waveform-panel.js','/library-panel.js','/style.css']:
+        elif route in ['/','/index.html','/app.js','/backend.js','/review-core.js','/transcript-core.js','/transcript-panel.js','/edit-bar-core.js','/cut-core.js','/cut-playback.js','/join-fade.js','/waveform-core.js','/waveform-panel.js','/library-panel.js','/style.css']:
             path=WEB/('index.html' if route=='/' else route[1:])
         else:return self.send_error(404)
         if not path.is_file():return self.send_error(404)

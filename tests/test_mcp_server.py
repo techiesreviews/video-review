@@ -42,6 +42,9 @@ class McpServerTests:
     def comments_on_disk(self):
         return {c['id']:c for c in json.loads((self.data/'comments.json').read_text(encoding='utf-8'))['comments']}
 
+    def test_running_server_marks_the_agent_as_attached(self):
+        assert store.agent_connected(self.data),'the heartbeat is written as soon as the server starts'
+
     def test_lists_tools(self):
         names={t['name'] for t in self.rpc('tools/list')['result']['tools']}
         assert {'list_comments','reply_to_comment','resolve_comment','add_comment','register_video'}<=names
