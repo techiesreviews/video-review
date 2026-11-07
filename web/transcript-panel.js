@@ -32,6 +32,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     let full=document.activeElement===noteBox&&atEnd?suggestion(value,recentNotes(backendRef?.comments?.()||[])):'';
     ghost.replaceChildren();if(full){const typed=element('b','',value);ghost.append(typed,document.createTextNode(full.slice(value.length)));}
     // A suggestion that runs past the edge of the box could be accepted unseen, so it is not offered.
+    // Once the typed text itself is wider than the box this is always true, so long notes get no suggestion, on purpose.
     if(full&&ghost.scrollWidth>ghost.clientWidth+1){ghost.replaceChildren();full='';}
     noteBox.dataset.suggestion=full;return full;
   }
@@ -160,11 +161,14 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     }
   }
   $('#restoreOriginalSelection').onclick=()=>{if(selected?.kind==='source')requestSourceRestore(selected,$('#restoreOriginalSelection'));};
-  async function saveCuts(edits){
+  // With keep, the current selection and its note are left exactly as they are (bringing a cut back must not move a half-typed note).
+  async function saveCuts(edits,{keep=false}={}){
     const saved=await backendRef.saveTranscript(videoRef,{...transcript,draftEdits:edits});transcript=saved;
+    if(keep){refreshCuts();return '';}
     // An unsent note, including letters typed while this was saving, is handed back for the next selection.
     const draft=noteId?'':noteBox.value;clear();refreshCuts();return draft;
   }
+  function hasDraft(){return !noteId&&!!noteBox.value.trim()&&!!selected&&selected.kind!=='source';}
   async function removeSelection(){
     if(!selected||busy||selected.kind==='source')return;busy=true;
     const wasWords=selected.kind==null&&selected.a!=null,first=selected.a,last=selected.b;
@@ -183,21 +187,23 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   }
   async function undoCut(){
     const edit=transcript?.draftEdits?.at(-1);if(!edit||busy)return;busy=true;const fromBar=document.activeElement===noteBox;
-    // A half-typed note belongs to the words it was typed on, so they stay selected and the note stays with them.
-    const stay=!noteId&&noteBox.value.trim()&&selected?.a!=null&&selected.kind==null?{a:selected.a,b:selected.b}:null;
+    // A half-typed note belongs to what it was typed on, so that selection and the note stay untouched.
+    const stay=hasDraft();
     try{
-      const draft=await saveCuts(transcript.draftEdits.slice(0,-1));if(edit.commentId)await cancelRequest(edit.commentId);seek(edit.startMs);
-      // The words that came back are selected again, so a mistaken undo is one Backspace from being redone.
+      const draft=await saveCuts(transcript.draftEdits.slice(0,-1),{keep:stay});if(edit.commentId)await cancelRequest(edit.commentId);
       const note=cutNotes.get(edit.commentId);cutNotes.delete(edit.commentId);
-      if(stay){busy=false;refreshCuts();anchor=stay.a;choose(stay.a,stay.b,{focus:false});keepDraft(draft);if(fromBar)focusBar();return;}
+      if(stay){barStatus(note?'Brought back. Its note is in the comment list.':'Brought back.');return;}
+      seek(edit.startMs);
+      // The words that came back are selected again, so a mistaken undo is one Backspace from being redone.
       const ids=edit.wordIds||[],first=transcript.words.findIndex(w=>w.id===ids[0]),last=transcript.words.findIndex(w=>w.id===ids.at(-1));
-      if(first>=0&&last>=first&&!showRemoved){busy=false;refreshCuts();anchor=first;choose(first,last,{focus:false});keepDraft(note);barStatus('Brought back. Backspace deletes it again.');if(fromBar)focusBar();}
+      if(first>=0&&last>=first&&!showRemoved){busy=false;refreshCuts();anchor=first;choose(first,last,{focus:false});keepDraft([note,draft].filter(Boolean).join(' '));barStatus('Brought back. Backspace deletes it again.');if(fromBar)focusBar();}
     }
     catch(error){showError(error.message);}finally{busy=false;refreshCuts();}
   }
   async function restoreCut(id){
     const edit=transcript?.draftEdits?.find(e=>e.id===id);if(!edit||busy)return;busy=true;pause();
-    try{await saveCuts(transcript.draftEdits.filter(e=>e.id!==id));if(edit.commentId)await cancelRequest(edit.commentId);seek(edit.startMs);}
+    const stay=hasDraft();
+    try{await saveCuts(transcript.draftEdits.filter(e=>e.id!==id),{keep:stay});if(edit.commentId)await cancelRequest(edit.commentId);if(!stay)seek(edit.startMs);}
     catch(error){showError(error.message);}finally{busy=false;refreshCuts();}
   }
   $('#undoTranscriptCut').onclick=undoCut;
@@ -240,7 +246,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   noteBox.addEventListener('keydown',event=>{
     const value=noteBox.value,atEnd=noteBox.selectionStart===value.length&&noteBox.selectionEnd===value.length;
     const action=barKey(event,{value,suggestion:noteBox.dataset.suggestion||'',caretAtEnd:atEnd});
-    // Enter only ever sends through the 'send' action, so Shift+Enter cannot submit the form behind it.
+    // The only thing stopping the form from submitting itself: Enter sends through the 'send' action alone, so Shift+Enter does nothing.
     if(event.key==='Enter'&&!event.isComposing)event.preventDefault();
     if(!action)return;event.preventDefault();
     if(action==='accept'){noteBox.value=noteBox.dataset.suggestion;noteBox.setSelectionRange(noteBox.value.length,noteBox.value.length);noteBox.dispatchEvent(new Event('input'));}
