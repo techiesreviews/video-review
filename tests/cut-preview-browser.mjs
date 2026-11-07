@@ -229,6 +229,22 @@ try{
   await page.locator('[data-transcript-action="extend_after"]').click();await page.waitForFunction(()=>document.querySelector('#barStatus').textContent.includes('More after'));
   await page.keyboard.type('until the laugh ends');await page.locator('#clearTranscriptSelection').click();await page.waitForTimeout(300);
   assert.ok((await notesOnDisk()).at(-1).text.endsWith(' — until the laugh ends'),'Detail typed just before clearing the selection is still saved.');
+  // Undo cut while a note for other words is half typed: the note and its words stay as they are.
+  await page.locator('.transcript-word').nth(8).click();await page.keyboard.press('Backspace');await page.waitForTimeout(250);assert.equal((await editsOnDisk()).length,edits+1);
+  await page.locator('.transcript-word').nth(12).click();await page.keyboard.type('other words');await page.locator('#undoTranscriptCut').click();await page.waitForTimeout(250);
+  assert.equal((await editsOnDisk()).length,edits);
+  assert.equal(await page.locator('#transcriptNote').inputValue(),'other words','Undo does not move a half-typed note onto the words it brings back.');
+  assert.equal(await page.locator('.transcript-word.selected').first().innerText(),'word12');
+  // Shift+Enter does not send, and a suggestion too long to see in the box is not offered.
+  await page.locator('#transcriptNote').focus();let count2=(await notesOnDisk()).length;await page.keyboard.press('Shift+Enter');await page.waitForTimeout(200);
+  assert.equal((await notesOnDisk()).length,count2,'Shift+Enter does not send a half-written note.');
+  await page.keyboard.press('Escape');
+  const long='Please keep the whole sentence here because the punchline only lands when the setup before it is complete and unhurried okay';
+  await page.keyboard.type(long);await page.keyboard.press('Enter');await page.waitForTimeout(400);
+  assert.ok((await notesOnDisk()).some(n=>n.text===long));
+  await page.keyboard.type(long.slice(0,30));await page.keyboard.press('Tab');
+  assert.equal(await page.locator('#transcriptNote').inputValue(),long.slice(0,30),'Tab does not accept a suggestion that does not fit in the box.');
+  await page.keyboard.press('Escape');
   await page.locator('.transcript-word').nth(8).click();
   await page.keyboard.press('Escape');assert.equal(await page.locator('#transcriptSelection').isVisible(),false,'Escape in an empty box clears the selection.');
   await page.locator('.transcript-word').nth(8).click();await page.locator('[data-transcript-action="remove"]').click();await page.waitForTimeout(250);
