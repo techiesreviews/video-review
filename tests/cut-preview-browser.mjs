@@ -235,6 +235,7 @@ try{
   assert.equal((await editsOnDisk()).length,edits);
   assert.equal(await page.locator('#transcriptNote').inputValue(),'other words','Undo does not move a half-typed note onto the words it brings back.');
   assert.equal(await page.locator('.transcript-word.selected').first().innerText(),'word12');
+  assert.equal(await text('#barStatus'),'Brought back.','The bar says the cut came back.');
   // Shift+Enter does not send, and a suggestion too long to see in the box is not offered.
   await page.locator('#transcriptNote').focus();let count2=(await notesOnDisk()).length;await page.keyboard.press('Shift+Enter');await page.waitForTimeout(200);
   assert.equal((await notesOnDisk()).length,count2,'Shift+Enter does not send a half-written note.');
@@ -242,8 +243,13 @@ try{
   const long='Please keep the whole sentence here because the punchline only lands when the setup before it is complete and unhurried okay';
   await page.keyboard.type(long);await page.keyboard.press('Enter');await page.waitForTimeout(400);
   assert.ok((await notesOnDisk()).some(n=>n.text===long));
-  await page.keyboard.type(long.slice(0,30));await page.keyboard.press('Tab');
-  assert.equal(await page.locator('#transcriptNote').inputValue(),long.slice(0,30),'Tab does not accept a suggestion that does not fit in the box.');
+  await page.keyboard.type(long.slice(0,30));
+  assert.equal(await page.locator('#transcriptNote').getAttribute('data-suggestion'),'','A suggestion that does not fit in the box is not offered.');
+  assert.equal(await page.locator('#transcriptGhost').textContent(),'');
+  await page.keyboard.press('Tab');
+  assert.equal(await page.locator('#transcriptNote').inputValue(),long.slice(0,30),'Tab does not accept it unseen.');
+  await page.locator('#transcriptNote').focus();await page.keyboard.press('Escape');await page.keyboard.type('Tigh');
+  assert.equal(await page.locator('#transcriptNote').getAttribute('data-suggestion'),'Tighten this and keep the laugh','A short suggestion that fits is still offered.');
   await page.keyboard.press('Escape');
   await page.locator('.transcript-word').nth(8).click();
   await page.keyboard.press('Escape');assert.equal(await page.locator('#transcriptSelection').isVisible(),false,'Escape in an empty box clears the selection.');

@@ -11,7 +11,8 @@
    comment list immediately. Clicking a comment seeks the video and transcript. Esc (or the small x) clears the selection.
 5. **Delete** (or Backspace/Delete with the text box empty) makes a reversible preview decision. After a delete the next
    words are selected; Ctrl+Z undoes it and selects the words again. A note typed but not sent when Delete is clicked
-   is saved with the cut, and an immediate Ctrl+Z puts it back in the box. Show removed exposes omitted words. This changes
+   is saved with the cut, and Ctrl+Z puts it back in the box, unless a note on other words has been started; that
+   note and its words are kept instead. Show removed exposes omitted words. This changes
    preview playback, not the original video file or a Resolve timeline.
 6. Connect an editing agent using the private connection prompt. Keep the tab open. The agent can read comments,
    request the transcript, and apply approved changes to its local editable project. Export the cut list when needed.
