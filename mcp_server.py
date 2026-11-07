@@ -4,7 +4,7 @@ Speaks the Model Context Protocol over stdio using only the standard library.
 Register it with:  claude mcp add video-review -- python /path/to/mcp_server.py
 """
 from pathlib import Path
-import argparse, json, os, sys, traceback
+import argparse, atexit, json, os, sys, threading, time, traceback
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 import review_store as store
 
@@ -12,17 +12,19 @@ DATA=None
 PORT=os.environ.get('VIDEO_REVIEW_PORT','8879')
 INSTRUCTIONS=f"""Video Review holds the reviewer's timestamped comments on local video edits. The reviewer watches in the browser at http://127.0.0.1:{PORT} and sees your replies live.
 
-Workflow: call list_comments to read open comments. Each has edited-video timecodes, frame numbers and sourceSpans (frames in the original footage, mapped through the version's keepRanges). Make the change in the edit. Then call resolve_comment with a one-line summary of what you changed. If a comment is ambiguous, ask with reply_to_comment instead of guessing and leave it open. When you render the fixes, first rename the reviewed file (for example add "-old" to its name), then render to a temporary name and rename it to the reviewed file's original path once it is finished, so the comments stay on that one video and the reviewer sees them marked done. Then call open_video on that video with the new durationMs and keepRanges: the reviewer's page reloads the file. Use register_video only for a different video, with a new id; never reuse an id."""
+Workflow: call list_comments to read open comments. Each has edited-video timecodes, frame numbers and sourceSpans (frames in the original footage, mapped through the version's keepRanges). Make the change in the edit. Then call resolve_comment with a one-line summary of what you changed. If a comment is ambiguous, ask with reply_to_comment instead of guessing and leave it open. When you render the fixes, first rename the reviewed file (for example add "-old" to its name), then render to a temporary name and rename it to the reviewed file's original path once it is finished, so the comments stay on that one video and the reviewer sees them marked done. Then call open_video on that video with the new durationMs and keepRanges: the reviewer's page reloads the file. Use register_video only for a different video, with a new id; never reuse an id.
+
+A comment with an agentRequest field is a free-text change the reviewer asked for on a word or frame: agentRequest.instruction says what to do, and its quote, wordIds, startFrame, endFrame and sourceSpans say where. Act on it like any other comment, or ask with reply_to_comment if it is unclear. get_transcript returns the reviewer's current preview removals as draftEdits ({{id,startMs,endMs,wordIds,quote,kind,commentId}}, in review-file milliseconds); they are not in the rendered file until you apply them."""
 
 def obj(properties,required=()):
     return {'type':'object','properties':properties,'required':list(required),'additionalProperties':False}
 TIME={'type':['string','integer'],'description':'Milliseconds, seconds ("201.5"), or a timecode such as "3:21.133" / "00:03:21.133".'}
 TOOLS=[
-    {'name':'get_transcript','description':'Read the existing word-timed transcript for a video version. No transcription or credit spending. Words include stable IDs and review times; a transcript is not proof that a cut sounds natural.','inputSchema':obj({'videoId':{'type':'string'}},['videoId'])},
+    {'name':'get_transcript','description':'Read the existing word-timed transcript for a video version. No transcription or credit spending. Words include stable IDs and review times; a transcript is not proof that a cut sounds natural. draftEdits lists the reviewer\'s current preview removals: {id,startMs,endMs,wordIds,quote,kind,commentId}, in review-file milliseconds.','inputSchema':obj({'videoId':{'type':'string'}},['videoId'])},
     {'name':'set_transcript','description':'Attach an existing word-timed transcript to a video version. Supply {words:[{id,text,startMs,endMs}],revision,label,cuts:[{id,atMs,risk}]}. Times are milliseconds in this exact rendered version. Derive recut timings from the raw transcript and actual Resolve cut list; never buy a new transcription.','inputSchema':obj({'videoId':{'type':'string'},'transcript':{'type':'object'}},['videoId','transcript'])},
     {'name':'list_videos','description':'List the video versions in the review library with file paths, frame rate, duration and comment counts.','inputSchema':obj({})},
-    {'name':'list_comments','description':'Read review comments with timecodes, frame numbers, original-source frame mapping and reply threads. Defaults to open comments on every version.','inputSchema':obj({'videoId':{'type':'string','description':'Only this video version.'},'status':{'type':'string','enum':['open','done','all'],'default':'open'}})},
-    {'name':'get_comment','description':'Read one comment and its reply thread.','inputSchema':obj({'commentId':{'type':'string'}},['commentId'])},
+    {'name':'list_comments','description':'Read review comments with timecodes, frame numbers, original-source frame mapping and reply threads. Defaults to open comments on every version. A comment the reviewer sent as a change request has an agentRequest field with the instruction and where it applies.','inputSchema':obj({'videoId':{'type':'string','description':'Only this video version.'},'status':{'type':'string','enum':['open','done','all'],'default':'open'}})},
+    {'name':'get_comment','description':'Read one comment and its reply thread, with its agentRequest field if it is a change request.','inputSchema':obj({'commentId':{'type':'string'}},['commentId'])},
     {'name':'reply_to_comment','description':'Reply in a comment thread, for example to ask the reviewer a question or report progress. The comment stays open.','inputSchema':obj({'commentId':{'type':'string'},'text':{'type':'string'}},['commentId','text'])},
     {'name':'resolve_comment','description':'Mark a comment done after applying it, with a short summary of what changed. The summary appears as your reply under the comment.','inputSchema':obj({'commentId':{'type':'string'},'summary':{'type':'string','description':'What you changed, e.g. "Removed 0.4 s pause at 1:12.300."'}},['commentId','summary'])},
     {'name':'reopen_comment','description':'Reopen a resolved comment, optionally explaining why.','inputSchema':obj({'commentId':{'type':'string'},'reason':{'type':'string'}},['commentId'])},
@@ -103,11 +105,22 @@ def handle(msg):
         except (ValueError,TypeError) as e:return {'content':[{'type':'text','text':str(e)}],'isError':True}
     raise LookupError(f'Method not found: {method}')
 
+def start_heartbeat(interval=15):
+    """Lets the page say truthfully whether an agent is attached: this file is fresh only while the server runs."""
+    def beat():
+        while True:
+            try:store.touch_agent(DATA)
+            except OSError:pass
+            time.sleep(interval)
+    threading.Thread(target=beat,daemon=True).start()
+    atexit.register(lambda:store.agent_gone(DATA))
+
 def main():
     global DATA
     parser=argparse.ArgumentParser(description='Video Review MCP server (stdio)')
     parser.add_argument('--data-dir',default=None)
     DATA=store.data_dir(parser.parse_args().data_dir)
+    start_heartbeat()
     out=sys.stdout.buffer
     for line in sys.stdin.buffer:
         if not line.strip():continue

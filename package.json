@@ -6,7 +6,8 @@
   "scripts": {
     "studio:remotion": "remotion studio plates/remotion/src/index.ts",
     "studio:hyperframes": "hyperframes preview plates/hyperframes",
-    "check:browser": "node scripts/video/check-browser.mjs"
+    "check:browser": "node scripts/video/check-browser.mjs",
+    "test:cut": "node --test tests/transcript.test.mjs tests/cut-preview.test.mjs && node tests/cut-preview-browser.mjs"
   },
   "overrides": {
     "zod": "4.6.7"

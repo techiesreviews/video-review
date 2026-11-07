@@ -6,10 +6,14 @@
    Paragraph-only timestamps cannot be used as invented word timings.
 3. Click a word to seek. Drag across words, or Shift-click, to select a phrase. Selecting a pause stays paused.
    Follow playback keeps the current word in view; search finds words in the current transcript.
-4. Choose a quick request such as clipped, more room, or remove. The request appears in the comment list
-   immediately. Edit its note in the field below the options. Clicking a comment seeks the video and transcript.
-5. Remove from cut (or Delete) makes a reversible preview decision. Undo restores it; Show removed exposes
-   omitted words. This changes preview playback, not the original video file or a Resolve timeline.
+4. Selecting words opens a slim edit bar with one text box, ready to type. **Delete** is the first button; after it
+   come Play selection, Word clipped, More before, More after and Mistake / retake. Each request appears in the
+   comment list immediately. Clicking a comment seeks the video and transcript. Esc (or the small x) clears the selection.
+5. **Delete** (or Backspace/Delete with the text box empty) makes a reversible preview decision. After a delete the next
+   words are selected; Ctrl+Z undoes it and selects the words again. A note typed but not sent when Delete is clicked
+   is saved with the cut, and Ctrl+Z puts it back in the box, unless a note has been started on another selection; that
+   note and its selection are kept, and the cut's note stays in its comment under Resolved. Show removed exposes omitted words. This changes
+   preview playback, not the original video file or a Resolve timeline.
 6. Connect an editing agent using the private connection prompt. Keep the tab open. The agent can read comments,
    request the transcript, and apply approved changes to its local editable project. Export the cut list when needed.
 7. For a replacement render, keep the same review entry and file name. Render to a temporary name, preserve
@@ -21,6 +25,16 @@ the old browser copy. If the browser cannot reopen the file, choose the new copy
 
 Download review backups regularly. They include notes and transcripts, not video bytes. Disconnect agents
 revokes the session's tokens. Never commit connection tokens, footage, transcripts or private review backups.
+
+## The edit bar
+
+- Type a note and press Enter: it is saved as a request for the agent and shown in the comment list. Grey text
+  completes it from your recent notes and the quick phrases; **Tab** (or →) accepts it, so Tab never inserts anything.
+- Backspace or Delete in an **empty** box removes the selected words from the cut, like a video editor. With text
+  in the box they only edit the text. Space in an empty box plays and pauses. Esc clears the text, then the selection.
+- The bar says in one line whether an agent is attached. With none, the note is still saved and waits for it.
+  The offline app knows because `mcp_server.py` refreshes `agent-seen.json` in the data folder every 15 seconds while it runs,
+  so after the agent stops the bar can still say it is attached for up to 45 seconds.
 
 ## Listen and edit through the words
 
@@ -51,6 +65,58 @@ returns to the full recording. The overview stays available while zoomed in.
 Waveform heights are scaled for readability; this is not a loudness meter. Pauses are measured between
 approximate transcript word times, so listen to the waveform boundaries before accepting a cut. This editor
 does not destructively rewrite media or automatically change a Resolve project.
+
+## Experience the cut before exporting
+
+Removals are still previews: playback jumps over them, and the original video file and any Resolve timeline are
+not touched. These controls let you hear and feel the result first.
+
+- **Play whole cut** plays from the first kept frame with every removal skipped. If you are in the Original
+  transcript view, it switches back to the edited one. **Space** plays and pauses wherever you are, including
+  after clicking a word. Enter selects a focused word, and Shift+Space extends a selection.
+- **Two clocks** sit beside the frame buttons: **Cut** (time in the cut, then the cut's length) and **Source**
+  (time in the review file, then its length). Source time here means the review file's own clock, not the
+  original recording's.
+- **Source time / Cut time** chooses which clock the seek bar and timecodes use, and is remembered. In cut time the
+  seek bar is always shown, even with the waveform on, and it runs over the cut only. Dragging it, the frame
+  buttons and J/L all skip removals. A seek onto a join lands just after it. Comment times and pins follow the
+  choice too; hover a comment's time to see its source time. Transcript times, the waveform and the exact-time
+  fields in the comment box stay in source time, and comments are always saved in source time.
+- **Join fade** (on by default) fades the sound for 15 ms out and back in at each join, like the native audio fades
+  in the Resolve cut. It applies to every jump, including Hear cut. The fade starts early, so it does not hold back
+  the jump, and it only hides clicks. It cannot repair a clipped word. Switch it off to compare.
+
+A short silence at a join is the browser finding its place in the file, and it is not in the final cut. The picture can
+also show a removed frame or two just before the jump. Review copies with frequent keyframes cut that silence
+a lot. The measurements are in [`docs/agents/evidence/browser-cut-preview.md`](agents/evidence/browser-cut-preview.md).
+
+## Ask the agent to change something
+
+Select words or a pause, choose **Ask agent**, write what should change, and choose **Send to agent**. For a single
+moment or a range with no words selected, write in the comment box and choose **Ask agent** instead of Comment.
+The request appears in the comment list marked **For agent**, with its quote and frames. You can edit, reply to or
+delete it like any comment. Nothing changes until your connected agent acts on it.
+
+### For agents
+
+`list_comments`, `get_comment` and, on the hosted app, `wait_for_comments` return these requests with an
+`agentRequest` field:
+
+```json
+{"type": "change", "instruction": "Tighten this and keep the laugh", "quote": "keep the laugh",
+ "wordIds": ["W5", "W6", "W7"], "firstWordId": "W5", "lastWordId": "W7", "startFrame": 750, "endFrame": 780,
+ "sourceSpans": [{"sourceStartFrame": 1050, "sourceEndFrame": 1080, "sourceStartMs": 35000, "sourceEndMs": 36000}],
+ "transcriptRevision": "r1"}
+```
+
+`instruction` is always the comment's current text. `startFrame` and `endFrame` are frames in the review file
+(`endFrame` is null for a single frame), and `sourceSpans` are frames in the original footage. `quote` is null and
+`wordIds` is empty when the moment has no words. The stored `editRequest` has type `change` and keeps the quote, word
+IDs and frames from when it was asked. Other request types are unchanged and have no `agentRequest`.
+
+`get_transcript` returns the reviewer's current preview removals as `draftEdits`:
+`{id, startMs, endMs, wordIds, quote, kind, commentId}`, in review-file milliseconds, with `kind` either `words` or
+`pause`. They are not in the rendered file until an agent applies them. The hosted app reads them from the open tab.
 
 ## See the original words and restore a passage
 

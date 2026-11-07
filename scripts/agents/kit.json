@@ -1,0 +1,29 @@
+{
+  "project": "video-review",
+  "branches": {
+    "land": "dev",
+    "release": "main",
+    "ci": "dev"
+  },
+  "checks": {
+    "test": "bash scripts/agents/run-tests.sh",
+    "doctor": [
+      "python3 -V 2>/dev/null || python -V"
+    ]
+  },
+  "commands": "scripts/agents/project.d",
+  "maps": "docs/wayfinder",
+  "rulebookExtras": "docs/agents/kitchen-extras.md",
+  "paths": {
+    "docs": [
+      "^docs/",
+      "\\.md$"
+    ],
+    "css": [
+      "\\.css$"
+    ],
+    "visible": [
+      "^web/"
+    ]
+  }
+}

@@ -54,6 +54,18 @@ class ReviewServerTests:
         else:raise AssertionError('A transcript from a longer cut was accepted')
         with self.request('/api/transcript/example-v1') as response:assert json.load(response)==saved
 
+    def test_agent_status_is_true_only_while_the_agent_is_alive(self):
+        seen=self.data/'agent-seen.json'
+        seen.unlink(missing_ok=True)
+        with self.request('/api/agent') as r:assert json.load(r)=={'connected':False}
+        server.store.touch_agent(self.data)
+        with self.request('/api/agent') as r:assert json.load(r)=={'connected':True}
+        seen.write_text(json.dumps({'pid':1,'at':'2020-01-01T00:00:00+00:00'}))
+        with self.request('/api/agent') as r:assert json.load(r)=={'connected':False}
+        seen.write_text('{"at":"not a time"}')
+        with self.request('/api/agent') as r:assert json.load(r)=={'connected':False}
+        seen.unlink(missing_ok=True)
+
     def test_file_version_changes_when_the_file_is_replaced(self):
         with self.request('/api/videos') as r:before=json.load(r)[0]['fileVersion']
         self.media.write_bytes(bytes(range(128)))
@@ -98,6 +110,16 @@ class ReviewServerTests:
         assert (view['videoId'],view['playheadMs'])==('example-v1',1234)
         with self.request('/api/view-request') as r:
             assert json.load(r)=={}
+
+    def test_browser_saves_a_change_request_and_refuses_a_bad_one(self):
+        headers={'Content-Type':'application/json','Origin':self.origin}
+        note={'action':'add','videoId':'example-v1','startMs':1000,'endMs':2000,'text':'Tighten this','editRequest':{'type':'change','quote':'two words','firstWordId':'W1','lastWordId':'W2','wordIds':['W1','W2']}}
+        with self.request('/api/comments',note,headers) as r:saved=json.load(r)['comments'][-1]
+        assert saved['editRequest']['type']=='change' and saved['editRequest']['wordIds']==['W1','W2']
+        assert (saved['editRequest']['startFrame'],saved['editRequest']['endFrame'])==(30,60)
+        try:self.request('/api/comments',{**note,'editRequest':{'type':'change','wordIds':'W1'}},headers)
+        except HTTPError as error:assert error.code==400
+        else:raise AssertionError('A malformed change request was accepted')
 
     def test_invalid_range_is_rejected(self):
         note={'action':'add','videoId':'example-v1','startMs':2000,'endMs':1000,'text':'Example','createdAt':'now'}
