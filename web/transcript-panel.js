@@ -192,7 +192,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     try{
       const draft=await saveCuts(transcript.draftEdits.slice(0,-1),{keep:stay});if(edit.commentId)await cancelRequest(edit.commentId);
       const note=cutNotes.get(edit.commentId);cutNotes.delete(edit.commentId);
-      if(stay){barStatus(note?'Brought back. Its note is in the comment list.':'Brought back.');return;}
+      if(stay){barStatus(note?'Brought back. Its note is under Resolved.':'Brought back.');return;}
       seek(edit.startMs);
       // The words that came back are selected again, so a mistaken undo is one Backspace from being redone.
       const ids=edit.wordIds||[],first=transcript.words.findIndex(w=>w.id===ids[0]),last=transcript.words.findIndex(w=>w.id===ids.at(-1));
@@ -203,7 +203,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   async function restoreCut(id){
     const edit=transcript?.draftEdits?.find(e=>e.id===id);if(!edit||busy)return;busy=true;pause();
     const stay=hasDraft();
-    try{await saveCuts(transcript.draftEdits.filter(e=>e.id!==id),{keep:stay});if(edit.commentId)await cancelRequest(edit.commentId);if(!stay)seek(edit.startMs);}
+    try{await saveCuts(transcript.draftEdits.filter(e=>e.id!==id),{keep:stay});if(edit.commentId)await cancelRequest(edit.commentId);if(stay)barStatus('Brought back.');else seek(edit.startMs);}
     catch(error){showError(error.message);}finally{busy=false;refreshCuts();}
   }
   $('#undoTranscriptCut').onclick=undoCut;
@@ -246,7 +246,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   noteBox.addEventListener('keydown',event=>{
     const value=noteBox.value,atEnd=noteBox.selectionStart===value.length&&noteBox.selectionEnd===value.length;
     const action=barKey(event,{value,suggestion:noteBox.dataset.suggestion||'',caretAtEnd:atEnd});
-    // The only thing stopping the form from submitting itself: Enter sends through the 'send' action alone, so Shift+Enter does nothing.
+    // Enter never submits the form directly; only the 'send' action sends, so Shift+Enter does nothing.
     if(event.key==='Enter'&&!event.isComposing)event.preventDefault();
     if(!action)return;event.preventDefault();
     if(action==='accept'){noteBox.value=noteBox.dataset.suggestion;noteBox.setSelectionRange(noteBox.value.length,noteBox.value.length);noteBox.dispatchEvent(new Event('input'));}
