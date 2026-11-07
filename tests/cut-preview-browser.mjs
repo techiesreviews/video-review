@@ -186,6 +186,33 @@ try{
   assert.equal(await page.evaluate(()=>document.activeElement.id),'transcriptNote');
   await page.keyboard.press('Control+z');await page.waitForFunction(async()=>true);await page.waitForTimeout(250);
   assert.equal((await editsOnDisk()).length,edits,'Ctrl+Z in the empty box undoes the cut.');
+  assert.equal(await page.locator('.transcript-word.selected').first().innerText(),'word8','Ctrl+Z selects the words that came back.');
+  assert.match(await text('#barStatus'),/Brought back/);
+  await page.keyboard.press('Delete');await page.waitForTimeout(250);
+  assert.equal((await editsOnDisk()).length,edits+1,'Delete in the empty box removes the selected words too.');
+  await page.keyboard.press('Control+z');await page.waitForTimeout(250);assert.equal((await editsOnDisk()).length,edits);
+  // Nothing typed is lost: a note typed before clicking Delete, or while a cut is saving, stays in the box.
+  await page.keyboard.type('Unsent idea');await page.locator('[data-transcript-action="remove"]').click();await page.waitForTimeout(250);
+  assert.equal((await editsOnDisk()).length,edits+1);
+  assert.equal(await page.locator('#transcriptNote').inputValue(),'Unsent idea','A typed note survives clicking Delete.');
+  await page.keyboard.press('Escape');await page.keyboard.press('Control+z');await page.waitForTimeout(250);assert.equal((await editsOnDisk()).length,edits);
+  await page.route('**/api/transcript/**',async route=>{if(route.request().method()==='POST')await new Promise(r=>setTimeout(r,300));await route.continue();});
+  await page.keyboard.press('Backspace');await page.keyboard.type('x');await page.waitForTimeout(600);
+  assert.equal((await editsOnDisk()).length,edits+1);
+  assert.equal(await page.locator('#transcriptNote').inputValue(),'x','Letters typed while a cut saves stay in the box.');
+  await page.unroute('**/api/transcript/**');
+  await page.keyboard.press('Escape');await page.keyboard.press('Control+z');await page.waitForTimeout(250);assert.equal((await editsOnDisk()).length,edits);
+  // A quick button then detail: Enter adds the detail to that same note, and so does clearing the selection at once.
+  const notesOnDisk=async()=>JSON.parse(await readFile(join(temp,'comments.json'),'utf8')).comments;
+  await page.locator('[data-transcript-action="clipped"]').click();await page.waitForFunction(()=>document.querySelector('#barStatus').textContent.includes('Word clipped'));
+  const count=(await notesOnDisk()).length;
+  await page.keyboard.type('keep the breath');await page.keyboard.press('Enter');await page.waitForFunction(()=>document.querySelector('#barStatus').textContent.includes('Note updated'));
+  assert.equal((await notesOnDisk()).length,count,'The detail joins the quick note instead of making a new one.');
+  assert.ok((await notesOnDisk()).at(-1).text.endsWith(' — keep the breath'));
+  await page.locator('[data-transcript-action="extend_after"]').click();await page.waitForFunction(()=>document.querySelector('#barStatus').textContent.includes('More after'));
+  await page.keyboard.type('until the laugh ends');await page.locator('#clearTranscriptSelection').click();await page.waitForTimeout(300);
+  assert.ok((await notesOnDisk()).at(-1).text.endsWith(' — until the laugh ends'),'Detail typed just before clearing the selection is still saved.');
+  await page.locator('.transcript-word').nth(8).click();
   await page.keyboard.press('Escape');assert.equal(await page.locator('#transcriptSelection').isVisible(),false,'Escape in an empty box clears the selection.');
   await page.locator('.transcript-word').nth(8).click();await page.locator('[data-transcript-action="remove"]').click();await page.waitForTimeout(250);
   assert.equal((await editsOnDisk()).length,edits+1,'The Delete button does the same.');
@@ -207,7 +234,7 @@ try{
   await mkdir('data/test-artifacts',{recursive:true});await page.screenshot({path:'data/test-artifacts/cut-preview-mobile.png',fullPage:true});
   await page.setViewportSize({width:1440,height:1040});await page.locator('.transcript-word').nth(1).click();await page.keyboard.type('Tigh');await page.screenshot({path:'data/test-artifacts/cut-preview-desktop.png'});
   assert.deepEqual(errors,[]);
-  console.log('PASS: play whole cut, both clocks, Space, join fade on and off, cut-time seeking, ask agent on a word and a frame, the edit bar (autofocus, Tab, Backspace, Ctrl+Z, no-agent line), all-removed cut, phone layout.');
+  console.log('PASS: play whole cut, both clocks, Space, join fade on and off, cut-time seeking, ask agent on a word and a frame, the edit bar (autofocus, Tab, Backspace, Delete, Ctrl+Z, no-agent line, no typed text lost), all-removed cut, phone layout.');
 }finally{
   await browser?.close();server.kill();await new Promise(r=>server.once('exit',r));assert.equal(dirname(temp),resolve(tmpdir()));assert.ok(basename(temp).startsWith('video-cut-preview-'));await rm(temp,{recursive:true,force:true});
 }
