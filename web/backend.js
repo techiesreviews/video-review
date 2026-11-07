@@ -16,6 +16,7 @@ function localBackend(){
   let videos=[],comments=[],viewTimer=null;const urls=new Map();
   return {
     mode:'local',
+    async agentConnected(){try{return !!(await api('/api/agent')).connected;}catch{return false;}},
     async load(){videos=await api('/api/videos');comments=(await api('/api/comments')).comments;},
     videos:()=>videos, comments:()=>comments,
     async apply(cmd){comments=(await api('/api/comments',cmd)).comments;return comments;},
@@ -180,5 +181,6 @@ async function browserBackend(events){
     },
     backup:()=>({schemaVersion:2,exportedAt:new Date().toISOString(),videos:state.videos,comments:state.comments,transcripts:state.transcripts||{},archivedVideos:state.archivedVideos||[]}),
     agent:relay,
+    async agentConnected(){return !!relay.status.connected&&(relay.status.agents||[]).length>0;},
   };
 }

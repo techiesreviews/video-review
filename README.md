@@ -2,7 +2,7 @@
 
 Review a video through its words: seek from the transcript, select a phrase, remove it from a reversible
 preview cut, or leave a timestamped request for an editing agent. The final editable cut can stay in
-DaVinci Resolve. [Reviewing and applying changes](docs/REVIEWING.md) explains the workflow.
+DaVinci Resolve. [Reviewing and applying changes](docs/REVIEWING.md) explains the workflow, and [Cut checks and captions](docs/video-workflow/CUT-CHECKS.md) covers the join check and caption files.
 
 The library searches video titles and transcript phrases. Removing an entry archives it without deleting
 the recording. Comments, transcripts and recordings stay private; this repository contains the app code.
@@ -142,9 +142,12 @@ The UI can use online web fonts, with system-font fallbacks. Video data and revi
 
 ## Development checks
 
+These need Bash and Node as well as Python, but no `npm install`:
+
 ```sh
-python tests/test_server.py
-python tests/test_mcp_server.py
+bash scripts/agents/run-tests.sh
+node tests/listening-browser.mjs
+node tests/cut-preview-browser.mjs
 ```
 
-The tests cover local video range requests, comment persistence, timestamp validation, origin checks and the MCP tools, using temporary data directories.
+The tests cover local video range requests, comment persistence, timestamp validation, origin checks, the MCP tools, and the transcript, cut and waveform logic, using temporary data directories. The two browser checks need ffmpeg and Playwright, make their own small test video, and outside Windows need `VIDEO_REVIEW_PYTHON=python3`; what each suite checks is in the comments and assertion messages in its file.

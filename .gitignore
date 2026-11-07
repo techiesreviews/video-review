@@ -49,3 +49,7 @@ node_modules/
 /plates/**/.hyperframes/
 /plates/**/renders/
 /plates/**/.cache/
+
+# Agent Kit scratch space and one machine's own Claude settings
+.scratch/
+.claude/settings.local.json
