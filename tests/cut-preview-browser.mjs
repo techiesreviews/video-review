@@ -191,24 +191,41 @@ try{
   await page.keyboard.press('Delete');await page.waitForTimeout(250);
   assert.equal((await editsOnDisk()).length,edits+1,'Delete in the empty box removes the selected words too.');
   await page.keyboard.press('Control+z');await page.waitForTimeout(250);assert.equal((await editsOnDisk()).length,edits);
-  // Nothing typed is lost: a note typed before clicking Delete, or while a cut is saving, stays in the box.
+  // Nothing typed is lost: a note typed before clicking Delete is saved with the cut, and comes back with Ctrl+Z.
+  const notesOnDisk=async()=>JSON.parse(await readFile(join(temp,'comments.json'),'utf8')).comments;
   await page.keyboard.type('Unsent idea');await page.locator('[data-transcript-action="remove"]').click();await page.waitForTimeout(250);
   assert.equal((await editsOnDisk()).length,edits+1);
-  assert.equal(await page.locator('#transcriptNote').inputValue(),'Unsent idea','A typed note survives clicking Delete.');
-  await page.keyboard.press('Escape');await page.keyboard.press('Control+z');await page.waitForTimeout(250);assert.equal((await editsOnDisk()).length,edits);
+  assert.ok((await notesOnDisk()).at(-1).text.endsWith(' — Unsent idea'),'A note typed before clicking Delete is saved with the cut.');
+  assert.equal(await page.locator('#transcriptNote').inputValue(),'','The note does not move on to the next words.');
+  await page.keyboard.press('Control+z');await page.waitForTimeout(250);assert.equal((await editsOnDisk()).length,edits);
+  assert.equal(await page.locator('#transcriptNote').inputValue(),'Unsent idea','Ctrl+Z brings the note back with the words.');
+  await page.keyboard.press('Escape');
+  await page.locator('.transcript-word').nth(15).click();await page.keyboard.type('end note');await page.locator('[data-transcript-action="remove"]').click();await page.waitForTimeout(250);
+  assert.ok((await notesOnDisk()).at(-1).text.endsWith(' — end note'),'A note on the last words is kept even with nothing after them to select.');
+  await page.locator('#undoTranscriptCut').click();await page.waitForTimeout(250);assert.equal((await editsOnDisk()).length,edits);
+  await page.keyboard.press('Escape');await page.keyboard.press('Escape');await page.locator('.transcript-word').nth(8).click();
   await page.route('**/api/transcript/**',async route=>{if(route.request().method()==='POST')await new Promise(r=>setTimeout(r,300));await route.continue();});
   await page.keyboard.press('Backspace');await page.keyboard.type('x');await page.waitForTimeout(600);
   assert.equal((await editsOnDisk()).length,edits+1);
   assert.equal(await page.locator('#transcriptNote').inputValue(),'x','Letters typed while a cut saves stay in the box.');
   await page.unroute('**/api/transcript/**');
   await page.keyboard.press('Escape');await page.keyboard.press('Control+z');await page.waitForTimeout(250);assert.equal((await editsOnDisk()).length,edits);
-  // A quick button then detail: Enter adds the detail to that same note, and so does clearing the selection at once.
-  const notesOnDisk=async()=>JSON.parse(await readFile(join(temp,'comments.json'),'utf8')).comments;
+  // A quick button then detail: Enter adds the detail to that same note, and so does a short pause or clearing the selection at once.
   await page.locator('[data-transcript-action="clipped"]').click();await page.waitForFunction(()=>document.querySelector('#barStatus').textContent.includes('Word clipped'));
   const count=(await notesOnDisk()).length;
   await page.keyboard.type('keep the breath');await page.keyboard.press('Enter');await page.waitForFunction(()=>document.querySelector('#barStatus').textContent.includes('Note updated'));
   assert.equal((await notesOnDisk()).length,count,'The detail joins the quick note instead of making a new one.');
   assert.ok((await notesOnDisk()).at(-1).text.endsWith(' — keep the breath'));
+  await page.locator('[data-transcript-action="clipped"]').click();await page.waitForFunction(()=>document.querySelector('#barStatus').textContent.includes('Word clipped'));
+  await page.keyboard.type('keep going');await page.waitForTimeout(700);
+  assert.ok((await notesOnDisk()).at(-1).text.endsWith(' — keep going'),'Detail is saved after a short pause in typing.');
+  await page.locator('[data-transcript-action="clipped"]').click();await page.waitForFunction(()=>document.querySelector('#barStatus').textContent.includes('Word clipped'));
+  await page.route('**/api/comments',async route=>{if(route.request().method()==='POST')await new Promise(r=>setTimeout(r,300));await route.continue();});
+  await page.keyboard.type('a');await page.keyboard.press('Enter');await page.keyboard.type('b');await page.waitForTimeout(900);
+  await page.unroute('**/api/comments');
+  assert.ok((await notesOnDisk()).at(-1).text.endsWith(' — a'),'Letters typed while the detail saves do not join that note.');
+  assert.equal(await page.locator('#transcriptNote').inputValue(),'b','They stay in the box for the next note.');
+  await page.keyboard.press('Escape');
   await page.locator('[data-transcript-action="extend_after"]').click();await page.waitForFunction(()=>document.querySelector('#barStatus').textContent.includes('More after'));
   await page.keyboard.type('until the laugh ends');await page.locator('#clearTranscriptSelection').click();await page.waitForTimeout(300);
   assert.ok((await notesOnDisk()).at(-1).text.endsWith(' — until the laugh ends'),'Detail typed just before clearing the selection is still saved.');
