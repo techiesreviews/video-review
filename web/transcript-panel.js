@@ -9,7 +9,7 @@ const stamp=ms=>`${Math.floor(ms/60000)}:${String(Math.floor(ms/1000)%60).padSta
 function element(tag,cls,text){const node=document.createElement(tag);if(cls)node.className=cls;if(text!=null)node.textContent=text;return node;}
 
 export function createTranscriptPanel({media,seek,playContext,request,updateRequest,cancelRequest=async()=>{},showError,pause=()=>{},onCutsChange=()=>{},notify=()=>{},togglePlay=()=>{},agentConnected=async()=>false}){
-  let transcript=null,selected=null,anchor=null,wordNodes=[],highlighted=-1,videoId=null,loadToken=0,dragAnchor=null,dragEnd=null,dragMoved=false,suppressClick=false,noteId=null,noteBase='',noteTimer=null,notePending=null,pendingFocus=null,sending=false;
+  let transcript=null,selected=null,anchor=null,wordNodes=[],highlighted=-1,videoId=null,loadToken=0,dragAnchor=null,dragEnd=null,dragMoved=false,suppressClick=false,noteId=null,noteBase='',noteTimer=null,notePending=null,cutNotes=new Map(),pendingFocus=null,sending=false;
   const body=$('#transcriptText');
   let backendRef=null,videoRef=null,showRemoved=false,busy=false,dragPoint=null,scrollFrame=null;
   let pauseNodes=[],currentNode=null,auditionRange=null,pauseThreshold=450,sourceAnchor=null;
@@ -166,12 +166,16 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   async function removeSelection(){
     if(!selected||busy||selected.kind==='source')return;busy=true;
     const wasWords=selected.kind==null&&selected.a!=null,first=selected.a,last=selected.b;
+    // A note typed but not sent belongs to these words, so it is saved with the cut's own note; Ctrl+Z puts it back in the box.
+    const typedRaw=noteId?'':noteBox.value,typed=typedRaw.trim();
     try{
-      const edit=makeRemoval(transcript,selected,videoRef.durationMs,videoRef.fps),saved=await request(currentRequest(selected.kind==='pause'?'pause':'remove',`Remove from cut: “${selected.quote}”`));edit.commentId=saved?.id||null;
-      const draft=await saveCuts([...(transcript.draftEdits||[]),edit]);seek(Math.max(0,edit.startMs-500));
+      const edit=makeRemoval(transcript,selected,videoRef.durationMs,videoRef.fps),saved=await request(currentRequest(selected.kind==='pause'?'pause':'remove',`Remove from cut: “${selected.quote}”`+(typed?` — ${typed}`:'')));edit.commentId=saved?.id||null;
+      if(typed&&edit.commentId)cutNotes.set(edit.commentId,typed);
+      const boxNow=await saveCuts([...(transcript.draftEdits||[]),edit]);seek(Math.max(0,edit.startMs-500));
+      const draft=boxNow.startsWith(typedRaw)?boxNow.slice(typedRaw.length).trimStart():boxNow;
       // Like a video editor: the words after the cut stay selected so the next delete or note is one key away.
       const next=wasWords?nextWordAfterDelete(transcript.words,transcript.draftEdits.flatMap(e=>e.wordIds||[]),first,last):-1;
-      if(next>=0&&!showRemoved){busy=false;refreshCuts();anchor=next;choose(next);keepDraft(draft);barStatus('Deleted. Ctrl+Z brings it back.');centre(wordNodes[next]);}
+      if(next>=0&&!showRemoved){busy=false;refreshCuts();anchor=next;choose(next);keepDraft(draft);barStatus(typed?'Deleted, with your note. Ctrl+Z brings both back.':'Deleted. Ctrl+Z brings it back.');centre(wordNodes[next]);}
     }
     catch(error){showError(error.message);}finally{busy=false;refreshCuts();}
   }
@@ -181,7 +185,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
       const draft=await saveCuts(transcript.draftEdits.slice(0,-1));if(edit.commentId)await cancelRequest(edit.commentId);seek(edit.startMs);
       // The words that came back are selected again, so a mistaken undo is one Backspace from being redone.
       const ids=edit.wordIds||[],first=transcript.words.findIndex(w=>w.id===ids[0]),last=transcript.words.findIndex(w=>w.id===ids.at(-1));
-      if(first>=0&&last>=first&&!showRemoved){busy=false;refreshCuts();anchor=first;choose(first,last,{focus:false});keepDraft(draft);barStatus('Brought back. Backspace deletes it again.');if(fromBar)focusBar();}
+      if(first>=0&&last>=first&&!showRemoved){busy=false;refreshCuts();anchor=first;choose(first,last,{focus:false});keepDraft([cutNotes.get(edit.commentId),draft].filter(Boolean).join(' '));barStatus('Brought back. Backspace deletes it again.');if(fromBar)focusBar();}
     }
     catch(error){showError(error.message);}finally{busy=false;refreshCuts();}
   }
@@ -241,7 +245,8 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   });
   noteBox.addEventListener('input',()=>{
     barStatus();ghostState();clearTimeout(noteTimer);const text=noteBox.value.trim();
-    notePending=noteId&&text?{id:noteId,text:noteBase?`${noteBase} — ${text}`:text}:null;if(notePending)noteTimer=setTimeout(flushNote,450);
+    // While Enter is still saving the detail, new letters start the next note instead.
+    notePending=noteId&&text&&!sending?{id:noteId,text:noteBase?`${noteBase} — ${text}`:text}:null;if(notePending)noteTimer=setTimeout(flushNote,450);
   });
   for(const name of ['keyup','click','focus','blur','select'])noteBox.addEventListener(name,ghostState);
   function focusAt(ms,editRequest=null,comment=null){
