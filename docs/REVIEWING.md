@@ -9,8 +9,8 @@
 4. Selecting words opens a slim edit bar with one text box, ready to type. **Delete** is the first button; after it
    come Play selection, Word clipped, More before, More after and Mistake / retake. Each request appears in the
    comment list immediately. Clicking a comment seeks the video and transcript. Esc (or the small x) clears the selection.
-5. **Delete** (or Backspace/Delete with the text box empty) makes a reversible preview decision. Ctrl+Z undoes it,
-   and the next words stay selected. Show removed exposes omitted words. This changes preview playback, not the
+5. **Delete** (or Backspace/Delete with the text box empty) makes a reversible preview decision. After a delete the next
+   words are selected; Ctrl+Z undoes it and selects the words again. A note typed but not sent stays in the box. Show removed exposes omitted words. This changes preview playback, not the
    original video file or a Resolve timeline.
 6. Connect an editing agent using the private connection prompt. Keep the tab open. The agent can read comments,
    request the transcript, and apply approved changes to its local editable project. Export the cut list when needed.
@@ -31,7 +31,8 @@ revokes the session's tokens. Never commit connection tokens, footage, transcrip
 - Backspace or Delete in an **empty** box removes the selected words from the cut, like a video editor. With text
   in the box they only edit the text. Space in an empty box plays and pauses. Esc clears the text, then the selection.
 - The bar says in one line whether an agent is attached. With none, the note is still saved and waits for it.
-  The offline app knows because `mcp_server.py` refreshes `agent-seen.json` in the data folder every few seconds while it runs.
+  The offline app knows because `mcp_server.py` refreshes `agent-seen.json` in the data folder every 15 seconds while it runs,
+  so after the agent stops the bar can still say it is attached for up to 45 seconds.
 
 ## Listen and edit through the words
 

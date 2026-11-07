@@ -9,7 +9,7 @@ const stamp=ms=>`${Math.floor(ms/60000)}:${String(Math.floor(ms/1000)%60).padSta
 function element(tag,cls,text){const node=document.createElement(tag);if(cls)node.className=cls;if(text!=null)node.textContent=text;return node;}
 
 export function createTranscriptPanel({media,seek,playContext,request,updateRequest,cancelRequest=async()=>{},showError,pause=()=>{},onCutsChange=()=>{},notify=()=>{},togglePlay=()=>{},agentConnected=async()=>false}){
-  let transcript=null,selected=null,anchor=null,wordNodes=[],highlighted=-1,videoId=null,loadToken=0,dragAnchor=null,dragEnd=null,dragMoved=false,suppressClick=false,noteId=null,noteBase='',noteTimer=null,pendingFocus=null,sending=false;
+  let transcript=null,selected=null,anchor=null,wordNodes=[],highlighted=-1,videoId=null,loadToken=0,dragAnchor=null,dragEnd=null,dragMoved=false,suppressClick=false,noteId=null,noteBase='',noteTimer=null,notePending=null,pendingFocus=null,sending=false;
   const body=$('#transcriptText');
   let backendRef=null,videoRef=null,showRemoved=false,busy=false,dragPoint=null,scrollFrame=null;
   let pauseNodes=[],currentNode=null,auditionRange=null,pauseThreshold=450,sourceAnchor=null;
@@ -34,9 +34,12 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     noteBox.dataset.suggestion=full;return full;
   }
   function barStatus(text=''){$('#barStatus').textContent=text;}
-  function noteState(id=null,text='',base=''){noteId=id;noteBase=base;noteBox.value=text;barStatus();ghostState();}
+  // A quick note's typed detail is saved after a short pause; leaving the note saves it at once instead of dropping it.
+  function flushNote(){clearTimeout(noteTimer);const pending=notePending;notePending=null;if(pending)updateRequest(pending.id,pending.text).catch(error=>showError(error.message));}
+  function keepDraft(draft){if(draft&&!$('#transcriptSelection').hidden){noteBox.value=draft;ghostState();}}
+  function noteState(id=null,text='',base=''){flushNote();noteId=id;noteBase=base;noteBox.value=text;barStatus();ghostState();}
   function focusBar(){if(!$('#transcriptSelection').hidden)noteBox.focus({preventScroll:true});}
-  function clear(){selected=null;anchor=null;sourceAnchor=null;auditionRange=null;clearTimeout(noteTimer);noteState();for(const n of body.querySelectorAll('.selected'))n.classList.remove('selected');$('#transcriptPanel').classList.remove('source-selection');$('#restoreOriginalSelection').hidden=true;$('#restoreOriginalSelection').disabled=false;$('#transcriptSelection').hidden=true;$('[data-transcript-action="pause"]').hidden=true;waveform.setRange(null);}
+  function clear(){selected=null;anchor=null;sourceAnchor=null;auditionRange=null;noteState();for(const n of body.querySelectorAll('.selected'))n.classList.remove('selected');$('#transcriptPanel').classList.remove('source-selection');$('#restoreOriginalSelection').hidden=true;$('#restoreOriginalSelection').disabled=false;$('#transcriptSelection').hidden=true;$('[data-transcript-action="pause"]').hidden=true;waveform.setRange(null);}
   function choose(a,b=a,{focus=true}={}){
     if(!transcript?.words.length)return;
     $('#transcriptPanel').classList.remove('source-selection');$('#restoreOriginalSelection').hidden=true;sourceAnchor=null;for(const n of body.querySelectorAll('.source-word.selected'))n.classList.remove('selected');
@@ -156,27 +159,29 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   }
   $('#restoreOriginalSelection').onclick=()=>{if(selected?.kind==='source')requestSourceRestore(selected,$('#restoreOriginalSelection'));};
   async function saveCuts(edits){
-    const saved=await backendRef.saveTranscript(videoRef,{...transcript,draftEdits:edits});transcript=saved;clear();refreshCuts();
+    const saved=await backendRef.saveTranscript(videoRef,{...transcript,draftEdits:edits});transcript=saved;
+    // An unsent note, including letters typed while this was saving, is handed back for the next selection.
+    const draft=noteId?'':noteBox.value;clear();refreshCuts();return draft;
   }
   async function removeSelection(){
     if(!selected||busy||selected.kind==='source')return;busy=true;
     const wasWords=selected.kind==null&&selected.a!=null,first=selected.a,last=selected.b;
     try{
       const edit=makeRemoval(transcript,selected,videoRef.durationMs,videoRef.fps),saved=await request(currentRequest(selected.kind==='pause'?'pause':'remove',`Remove from cut: “${selected.quote}”`));edit.commentId=saved?.id||null;
-      await saveCuts([...(transcript.draftEdits||[]),edit]);seek(Math.max(0,edit.startMs-500));
+      const draft=await saveCuts([...(transcript.draftEdits||[]),edit]);seek(Math.max(0,edit.startMs-500));
       // Like a video editor: the words after the cut stay selected so the next delete or note is one key away.
       const next=wasWords?nextWordAfterDelete(transcript.words,transcript.draftEdits.flatMap(e=>e.wordIds||[]),first,last):-1;
-      if(next>=0&&!showRemoved){busy=false;refreshCuts();anchor=next;choose(next);barStatus('Deleted. Ctrl+Z brings it back.');centre(wordNodes[next]);}
+      if(next>=0&&!showRemoved){busy=false;refreshCuts();anchor=next;choose(next);keepDraft(draft);barStatus('Deleted. Ctrl+Z brings it back.');centre(wordNodes[next]);}
     }
     catch(error){showError(error.message);}finally{busy=false;refreshCuts();}
   }
   async function undoCut(){
     const edit=transcript?.draftEdits?.at(-1);if(!edit||busy)return;busy=true;const fromBar=document.activeElement===noteBox;
     try{
-      await saveCuts(transcript.draftEdits.slice(0,-1));if(edit.commentId)await cancelRequest(edit.commentId);seek(edit.startMs);
+      const draft=await saveCuts(transcript.draftEdits.slice(0,-1));if(edit.commentId)await cancelRequest(edit.commentId);seek(edit.startMs);
       // The words that came back are selected again, so a mistaken undo is one Backspace from being redone.
       const ids=edit.wordIds||[],first=transcript.words.findIndex(w=>w.id===ids[0]),last=transcript.words.findIndex(w=>w.id===ids.at(-1));
-      if(first>=0&&last>=first&&!showRemoved){busy=false;refreshCuts();anchor=first;choose(first,last,{focus:false});barStatus('Brought back. Backspace deletes it again.');if(fromBar)focusBar();}
+      if(first>=0&&last>=first&&!showRemoved){busy=false;refreshCuts();anchor=first;choose(first,last,{focus:false});keepDraft(draft);barStatus('Brought back. Backspace deletes it again.');if(fromBar)focusBar();}
     }
     catch(error){showError(error.message);}finally{busy=false;refreshCuts();}
   }
@@ -212,10 +217,12 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     return {type:'change',quote:selected.quote.slice(0,3000),firstWordId:selected.firstWordId,lastWordId:selected.lastWordId,wordIds:words,cutId:selected.cutId,transcriptRevision:transcript.revision};
   }
   async function sendBar(){
-    const text=noteBox.value.trim();if(!text||!selected||sending)return;sending=true;clearTimeout(noteTimer);const selection=selected;
+    const text=noteBox.value.trim();if(!text||!selected||sending)return;sending=true;clearTimeout(noteTimer);notePending=null;const selection=selected,sent=noteBox.value;
+    // Letters typed after Enter, while the note is still saving, stay in the box.
+    const rest=()=>noteBox.value.startsWith(sent)?noteBox.value.slice(sent.length).trimStart():noteBox.value;
     try{
-      if(noteId){const saved=await updateRequest(noteId,noteBase?`${noteBase} — ${text}`:text);if(selected===selection&&saved){noteState(null,'');barStatus('Note updated.');}}
-      else{await request({...selection,endMs:selection.endMs==null?null:Math.min(selection.endMs,videoRef.durationMs),text,editRequest:selectionAsk()});if(selected===selection){noteState(null,'');barStatus(sentLine(await agentConnected()));}}
+      if(noteId){const saved=await updateRequest(noteId,noteBase?`${noteBase} — ${text}`:text);if(selected===selection&&saved){noteState(null,rest());barStatus('Note updated.');}}
+      else{await request({...selection,endMs:selection.endMs==null?null:Math.min(selection.endMs,videoRef.durationMs),text,editRequest:selectionAsk()});if(selected===selection){noteState(null,rest());barStatus(sentLine(await agentConnected()));}}
     }catch(error){showError(error.message);}finally{sending=false;focusBar();ghostState();}
   }
   $('#transcriptNoteForm').onsubmit=event=>{event.preventDefault();sendBar();};
@@ -234,7 +241,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   });
   noteBox.addEventListener('input',()=>{
     barStatus();ghostState();clearTimeout(noteTimer);const text=noteBox.value.trim();
-    if(noteId&&text){const id=noteId,base=noteBase;noteTimer=setTimeout(()=>updateRequest(id,base?`${base} — ${text}`:text).catch(error=>showError(error.message)),450);}
+    notePending=noteId&&text?{id:noteId,text:noteBase?`${noteBase} — ${text}`:text}:null;if(notePending)noteTimer=setTimeout(flushNote,450);
   });
   for(const name of ['keyup','click','focus','blur','select'])noteBox.addEventListener(name,ghostState);
   function focusAt(ms,editRequest=null,comment=null){
