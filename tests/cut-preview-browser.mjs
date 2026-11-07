@@ -230,12 +230,13 @@ try{
   await page.keyboard.type('until the laugh ends');await page.locator('#clearTranscriptSelection').click();await page.waitForTimeout(300);
   assert.ok((await notesOnDisk()).at(-1).text.endsWith(' — until the laugh ends'),'Detail typed just before clearing the selection is still saved.');
   // Undo cut while a note for other words is half typed: the note and its words stay as they are.
-  await page.locator('.transcript-word').nth(8).click();await page.keyboard.press('Backspace');await page.waitForTimeout(250);assert.equal((await editsOnDisk()).length,edits+1);
+  await page.locator('.transcript-word').nth(8).click();await page.keyboard.type('cut note');await page.locator('[data-transcript-action="remove"]').click();await page.waitForTimeout(250);assert.equal((await editsOnDisk()).length,edits+1);
   await page.locator('.transcript-word').nth(12).click();await page.keyboard.type('other words');await page.locator('#undoTranscriptCut').click();await page.waitForTimeout(250);
   assert.equal((await editsOnDisk()).length,edits);
   assert.equal(await page.locator('#transcriptNote').inputValue(),'other words','Undo does not move a half-typed note onto the words it brings back.');
   assert.equal(await page.locator('.transcript-word.selected').first().innerText(),'word12');
-  assert.equal(await text('#barStatus'),'Brought back.','The bar says the cut came back.');
+  assert.equal(await text('#barStatus'),'Brought back. Its note is under Resolved.','The bar says the cut came back and where its note is.');
+  assert.equal((await notesOnDisk()).find(n=>n.text.endsWith(' — cut note')).status,'done');
   // Shift+Enter does not send, and a suggestion too long to see in the box is not offered.
   await page.locator('#transcriptNote').focus();let count2=(await notesOnDisk()).length;await page.keyboard.press('Shift+Enter');await page.waitForTimeout(200);
   assert.equal((await notesOnDisk()).length,count2,'Shift+Enter does not send a half-written note.');

@@ -68,3 +68,7 @@ test('the status line is honest about the agent',()=>{
   assert.match(sentLine(false),/No agent connected/);assert.match(sentLine(false),/saved/);
   assert.match(sentLine(true),/Sent to your agent/);
 });
+test('a long recent note is still a suggestion; only the browser bar hides one that does not fit',()=>{
+  const long='Please keep the whole sentence here because the punchline only lands when the setup before it is complete and unhurried okay';
+  assert.equal(suggestion(long.slice(0,30),recentNotes([{text:long}])),long);
+});
