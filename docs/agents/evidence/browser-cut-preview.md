@@ -8,16 +8,16 @@ the removals from the transcript first if it has none.
 1. **Play the whole cut.** Press **Play whole cut**. It should start at the first kept moment and play straight
    through, skipping every removal. Space should pause and continue from the same place. Then click a word and
    press Space again: it should play from that word.
-2. **Read the clocks.** While it plays, **Cut** counts up steadily to the cut's length, and **Source** jumps forward
-   at each removal. The Cut length should be the file's length minus what you removed.
-3. **Listen to the joins.** Find a join where the sound runs straight across the cut. Listen with **Join fade** on,
-   then click it off and listen again. With it off you may hear a small click; with it on the click should be gone,
-   and the words on each side should sound complete. Tell us if a word sounds clipped with the fade on but not off.
+2. **Read the clock.** While it plays, the clock counts the review file's own time, so it jumps forward at each
+   removal.
+3. **Listen to the joins.** Find a join where the sound runs straight across the cut. The fade is always on and has
+   no control. There should be no click, and the words on each side should sound complete. Then turn **Cuts** off to
+   hear the original straight through, and tell us if a word sounds clipped at a join with the cuts on but not in
+   the original.
 4. **Notice any silence at a join.** A short silence may be there because the browser is finding its place in the
    file. It is not in the final cut. If it is long enough to spoil the feel, tell us: see "Known limit" below.
-5. **Switch to cut time.** Click **Source time** so it reads **Cut time**. The seek bar now covers only the cut. Drag
-   it across a removal: the picture and words should never land in removed material. Comment times now show cut
-   time too; hover one to see its source time.
+5. **Try the Cuts switch.** It reads **Cuts on** or **Cuts off**. With it off, playback runs straight through
+   every removal; turn it on while playing in a removal and it skips to the join. **Play whole cut** turns it on.
 6. **Ask the agent.** Select a few words, choose **Ask agent**, write a request and choose **Send to agent**. It
    should appear in the comment list marked **For agent**, with the quote and frames. Then ask your agent to read
    its open comments: it should repeat your request and name the same words.
@@ -26,7 +26,8 @@ the removals from the transcript first if it has none.
 
 `tests/cut-preview-browser.mjs` plays a made-up 8-second video with a steady tone through two 1-second removals and
 records the sound sample by sample, before and after the fade. All numbers are from headless Chromium on Lex's
-PC, on 2026-11-04.
+PC, on 2026-11-04, when the fade could still be switched off (TOOLS-130 removed that control; the fade is now
+always on, and the test checks only the "Fade on" column).
 
 | Measure | Fade on | Fade off |
 | --- | --- | --- |
