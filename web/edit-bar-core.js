@@ -119,3 +119,15 @@ export function cutMarks(words,edits=[]){
     return {id:edit.id,index};
   });
 }
+/** The runs of words a..b still in the cut, as [first, last] index pairs: what a Delete over kept and deleted words cuts. */
+export function keptRuns(words,a,b,gone){
+  const runs=[];
+  for(let i=a;i<=b;i++){if(gone.has(words[i].id))continue;const last=runs.at(-1);if(last&&last[1]===i-1)last[1]=i;else runs.push([i,i]);}
+  return runs;
+}
+/** How many cuts at the end came from one Delete: they share its note (commentId). Cuts without one stand alone. */
+export function lastCutGroup(edits=[]){
+  const id=edits.at(-1)?.commentId;if(!edits.length)return 0;if(!id)return 1;
+  let n=0;while(n<edits.length&&edits[edits.length-1-n].commentId===id)n++;
+  return n;
+}

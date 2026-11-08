@@ -130,10 +130,10 @@ try{
   await page.locator('#timeMode').click();
 
   // The bar opens next to the selected words: just below or above them, never on them, and inside the transcript.
-  async function nextToWords(label){
+  async function nextToWords(label,anchor=null){
     await page.waitForTimeout(50);
     const bar=await page.locator('#transcriptSelection').boundingBox(),area=await page.locator('#transcriptText').boundingBox();
-    const words=await page.locator('#transcriptText .selected').evaluateAll(nodes=>nodes.map(n=>{const r=n.getBoundingClientRect();return {top:r.top,bottom:r.bottom,left:r.left,right:r.right};}));
+    const words=await page.locator(anchor??'#transcriptText .selected').evaluateAll(nodes=>nodes.map(n=>{const r=n.getBoundingClientRect();return {top:r.top,bottom:r.bottom,left:r.left,right:r.right};}));
     assert.ok(words.length,`${label}: words are selected`);
     const top=Math.min(...words.map(r=>r.top)),bottom=Math.max(...words.map(r=>r.bottom));
     const below=bar.y-bottom,above=top-(bar.y+bar.height);
@@ -281,8 +281,23 @@ try{
   assert.deepEqual((await editsOnDisk()).map(e=>e.id),['cut-b'],'One click on a Restore mark brings that cut back.');
   await page.keyboard.press('Control+z');await page.waitForTimeout(250);assert.equal((await editsOnDisk()).length,0,'Ctrl+Z undoes the last cut that is left.');
   assert.equal(await page.locator('.transcript-word.removed-word').count(),0);
+  // Delete over kept and deleted words cuts only the kept ones, so each word stays in one cut.
+  await page.keyboard.press('Escape');await page.locator('.transcript-word').nth(5).click();await page.locator('[data-transcript-action="remove"]').click();await page.waitForTimeout(250);
+  await page.locator('.transcript-word').nth(3).click();await page.locator('.transcript-word').nth(7).click({modifiers:['Shift']});await page.locator('[data-transcript-action="remove"]').click();await page.waitForTimeout(250);
+  let mixed=await editsOnDisk();
+  assert.deepEqual(mixed.map(e=>e.wordIds),[['W5'],['W3','W4'],['W6','W7']],'Two pieces, around the word already deleted.');
+  assert.equal(mixed[1].commentId,mixed[2].commentId,'The pieces share one note.');
+  await page.locator(`.restore-cut[data-edit-id="${mixed[0].id}"]`).click();await page.waitForTimeout(250);
+  assert.equal(await page.locator('.transcript-word').nth(5).evaluate(n=>n.classList.contains('removed-word')),false,'Restoring the earlier cut really brings its word back.');
+  await page.keyboard.press('Escape');await page.locator('#transcriptText').focus();await page.keyboard.press('Control+z');await page.waitForTimeout(250);
+  assert.equal((await editsOnDisk()).length,0,'Ctrl+Z brings back both pieces of that Delete at once.');
+  // The bar also opens next to a pause, and follows the words when the transcript scrolls.
+  await page.keyboard.press('Escape');
   await writeFile(join(temp,'transcripts/tone.json'),JSON.stringify({words,cuts:[],revision:'synthetic',draftEdits:removed}));
   await page.reload();await page.waitForSelector('.transcript-word');await page.waitForFunction(()=>document.querySelector('video').readyState>=2);
+  await page.locator('.transcript-word').nth(15).click();await nextToWords('a word, before scrolling');
+  await page.locator('#transcriptText').evaluate(n=>{n.style.paddingBottom='600px';n.scrollTop+=40;});await page.waitForTimeout(100);await nextToWords('a word, after scrolling');
+  await page.locator('#transcriptText').evaluate(n=>{n.style.paddingBottom='';});await page.keyboard.press('Escape');
   // Screenshots for the PR: desktop, light and dark (the app has one light theme, so dark must not break it).
   await mkdir('data/test-artifacts',{recursive:true});
   for(const scheme of ['light','dark']){

@@ -60,7 +60,7 @@ returns to the full recording. The overview stays available while zoomed in.
 3. Drag the purple start or orange end handle, or enter the two times below the waveform. Arrow keys on a
    handle move one video frame; Shift+Arrow moves five. These adjustments replace the automatic margins.
 4. **Hear cut** plays the surrounding audio and skips the proposed removal, without saving that audition.
-5. **Remove from cut** or **Shorten pause** saves the preview decision and its review request immediately.
+5. **Delete** in the edit bar saves the preview decision (on a pause it shortens it) and its review request immediately.
    Undo restores it. Export the cut list to apply those decisions to the same editable Resolve timeline.
 
 Waveform heights are scaled for readability; this is not a loudness meter. Pauses are measured between
