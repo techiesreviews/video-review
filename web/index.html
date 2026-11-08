@@ -44,29 +44,22 @@
     </div>
     <div class="below-player" id="transcriptPanel" aria-label="Transcript">
       <span id="transcriptSummary" class="sr-only" role="status"></span>
-      <div class="transcript-tools"><label class="transcript-search"><input id="transcriptSearch" type="search" aria-label="Find in transcript" placeholder="Find a word or phrase…"></label><label class="follow-words"><input id="followTranscript" type="checkbox" checked>Follow playback</label><label class="pause-threshold">Pauses ≥ <select id="pauseThreshold" aria-label="Show pauses longer than"><option value="250">0.25 s</option><option value="450" selected>0.45 s</option><option value="650">0.65 s</option><option value="1000">1 s</option></select></label><button id="showRemovedWords" class="ghost small" type="button" aria-pressed="false">Original transcript</button><button id="importTranscript" class="ghost small" type="button">Import transcript</button></div>
-      <p id="originalTranscriptNotice" class="original-transcript-notice" hidden></p>
+      <div class="transcript-tools"><label class="transcript-search"><input id="transcriptSearch" type="search" aria-label="Find in transcript" placeholder="Find a word or phrase…"></label><label class="follow-words"><input id="followTranscript" type="checkbox" checked>Follow playback</label><label class="pause-threshold">Pauses ≥ <select id="pauseThreshold" aria-label="Show pauses longer than"><option value="250">0.25 s</option><option value="450" selected>0.45 s</option><option value="650">0.65 s</option><option value="1000">1 s</option></select></label><button id="importTranscript" class="ghost small" type="button">Import transcript</button></div>
       <div id="transcriptText" class="transcript-text" aria-label="Timed transcript" tabindex="0"><p class="transcript-empty">Your transcript will appear here. Import the existing word-timed JSON; no new transcription is needed.</p></div>
       <div id="cutPreviewBar" class="cut-preview-bar" hidden><span id="cutPreviewStatus" role="status"></span><button id="undoTranscriptCut" type="button">Undo cut</button><button id="exportTranscriptCut" type="button">Export cut list</button></div>
-      <div id="transcriptSelection" class="transcript-selection edit-bar" role="toolbar" aria-label="Edit the selected words" hidden>
+      <div id="transcriptSelection" class="transcript-selection edit-bar" role="group" aria-label="Edit the selected words" hidden>
+        <div class="edit-bar-label"><span id="selectionTime"></span><span id="selectionQuote" class="sr-only"></span><span id="barStatus" role="status" aria-live="polite"></span></div>
         <div class="edit-bar-row">
           <button type="button" id="restoreOriginalSelection" class="bar-primary" hidden>Request restore in Resolve</button>
           <button type="button" class="bar-primary bar-delete" data-transcript-action="remove" title="Remove the selected words from the cut. Backspace or Delete does the same when the box is empty. Ctrl+Z undoes.">Delete</button>
-          <button type="button" class="bar-chip" data-transcript-action="pause" hidden>Shorten pause</button>
           <form id="transcriptNoteForm" class="bar-input" autocomplete="off">
             <span id="transcriptGhost" class="bar-ghost" aria-hidden="true"></span>
             <input id="transcriptNote" type="text" maxlength="10000" autocomplete="off" spellcheck="true" aria-label="Note or request for the selected words" aria-describedby="barHint" placeholder="Tell the agent what to change…">
+            <kbd id="barTab" class="bar-tab" aria-hidden="true" hidden>Tab</kbd>
           </form>
-          <span class="bar-actions" role="group" aria-label="Quick actions for the selected words">
-            <button type="button" class="bar-chip" id="playTranscriptSelection" title="Hear the selected words with a little around them">Play selection</button>
-            <button type="button" class="bar-chip" data-transcript-action="clipped" title="This word or join is clipped">Word clipped</button>
-            <button type="button" class="bar-chip" data-transcript-action="extend_before" title="Give this more room before it starts">More before</button>
-            <button type="button" class="bar-chip" data-transcript-action="extend_after" title="Let the end finish before cutting">More after</button>
-            <button type="button" class="bar-chip" data-transcript-action="mistake" title="Mistake or retake: keep the complete take">Mistake / retake</button>
-          </span>
           <button id="clearTranscriptSelection" class="bar-x" type="button" aria-label="Clear selection (Esc)" title="Clear selection (Esc)">×</button>
         </div>
-        <div class="edit-bar-line"><span id="selectionTime"></span><span id="selectionQuote"></span><span id="barStatus" role="status" aria-live="polite"></span><span id="barHint" class="bar-hint">Enter sends · Tab completes · Esc clears</span></div>
+        <span id="barHint" class="sr-only">Enter sends it for your agent. Tab takes the grey suggestion. Esc clears.</span>
       </div>
     </div>
   </section>
