@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {registerHooks} from 'node:module';
-import {keptRanges,cutLength,fileToCut,cutToFile,jumpPlan,JOIN_FADE_MS,removedRanges} from '../web/cut-core.js';
+import {keptRanges,cutLength,fileToCut,cutToFile,jumpPlan,JOIN_FADE_MS,removedRanges,playbackRemovals,skipRemoved} from '../web/cut-core.js';
 import {wordsInSpan,normalizeTranscript} from '../web/transcript-core.js';
 import {applyChange,describe} from '../web/review-core.js';
 import {createCutPlayback} from '../web/cut-playback.js';
@@ -254,4 +254,36 @@ test('restoring a removal while a jump is waiting cancels the jump and restores 
   const playback=createCutPlayback({video,removals:()=>list,fps:()=>30,fade:{fadeOut:()=>calls.push('out'),fadeIn:()=>calls.push('in'),reset:()=>calls.push('reset')}});
   playback.tick();list.length=0;t.mock.timers.tick(50);
   assert.equal(video.currentTime,1.95);assert.deepEqual(calls,['out','reset']);
+});
+
+test('the cuts switch: on plays the removals, off plays the original',()=>{
+  assert.deepEqual(playbackRemovals(true,edits),edits);
+  assert.deepEqual(playbackRemovals(false,edits),[]);
+  assert.equal(skipRemoved(2500,playbackRemovals(true,edits)),3000,'On: a position inside a removal skips to its join.');
+  assert.equal(skipRemoved(2500,playbackRemovals(false,edits)),2500,'Off: the same position plays as it is.');
+  assert.equal(jumpPlan(1950,playbackRemovals(false,edits)),null,'Off: no jump is planned, however close the removal.');
+});
+
+test('the cuts switch never turns off a Hear cut audition, which is a removal being tried',()=>{
+  const trial={startMs:4000,endMs:4500};
+  assert.deepEqual(playbackRemovals(false,edits,trial),[trial]);
+  assert.deepEqual(playbackRemovals(true,edits,trial),[...edits,trial]);
+});
+
+test('switching the cuts off while a jump waits cancels it and restores the sound',t=>{
+  t.mock.timers.enable({apis:['setTimeout']});
+  const {video,calls}=fakePlayer(1.95);
+  let on=true;
+  const playback=createCutPlayback({video,removals:()=>playbackRemovals(on,edits),fps:()=>30,fade:{fadeOut:()=>calls.push('out'),fadeIn:()=>calls.push('in'),reset:()=>calls.push('reset')}});
+  playback.tick();on=false;playback.tick();t.mock.timers.tick(50);
+  assert.deepEqual(video.seeks,[],'Nothing jumps once the cuts are off.');
+  assert.deepEqual(calls,['out','reset']);
+});
+
+test('with the cuts off, playing straight through a removal never jumps',t=>{
+  t.mock.timers.enable({apis:['setTimeout']});
+  const {video,calls}=fakePlayer(2.5);
+  const playback=createCutPlayback({video,removals:()=>playbackRemovals(false,edits),fps:()=>30,fade:{fadeOut:()=>calls.push('out'),fadeIn:()=>calls.push('in'),reset:()=>calls.push('reset')}});
+  playback.tick();t.mock.timers.tick(50);
+  assert.deepEqual(video.seeks,[]);assert.deepEqual(calls,[]);
 });

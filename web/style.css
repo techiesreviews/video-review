@@ -47,9 +47,10 @@ video{display:block;width:100%;height:100%;object-fit:contain;background:#000;cu
 .ctl svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}#play svg{fill:currentColor;stroke:none;width:20px;height:20px}
 .ctl.text{padding:0 7px;font-size:12px;font-weight:600}
 .time{margin-left:8px;font:13px var(--mono);white-space:nowrap}.time .dim{color:#8d8d9b}.time small{margin-left:10px;color:#8d8d9b;font-size:11px}
-.clock-label{margin-right:4px;color:#8d8d9b;font-size:11px;font-family:'DM Sans','Segoe UI',sans-serif}.alt-clock{color:#b9b9c6;font-size:12px;margin-left:4px}
-.ctl.text[aria-pressed="true"]#timeMode,.ctl.text[aria-pressed="true"]#joinFade{color:#c6beff}.ctl.text[aria-pressed="false"]#joinFade{color:#8d8d9b}
-.waveform-enabled.cut-time .player .track{display:block}
+.cuts-switch{display:inline-flex;align-items:center;gap:7px;color:#8d8d9b}.cuts-switch[aria-checked="true"]{color:#c6beff}
+.switch-track{position:relative;width:26px;height:14px;border-radius:999px;background:rgba(255,255,255,.22)}.cuts-switch[aria-checked="true"] .switch-track{background:var(--accent)}
+.switch-track::after{content:"";position:absolute;top:2px;left:2px;width:10px;height:10px;border-radius:50%;background:#fff}.cuts-switch[aria-checked="true"] .switch-track::after{transform:translateX(12px)}
+@media (prefers-reduced-motion:no-preference){.switch-track,.switch-track::after{transition:transform .15s ease-out,background-color .15s ease-out}}
 .ask-badge{padding:0 7px;border-radius:999px;background:var(--accent-soft);color:var(--accent);font-size:11px;font-weight:600;white-space:nowrap}
 .ask-where{margin:2px 0 0;color:var(--muted);font-size:12px;overflow-wrap:anywhere}
 #askAgentNote{height:30px;padding:0 13px;font-size:13px}#askAgentNote:disabled{opacity:.5}
