@@ -1,5 +1,5 @@
 import {normalizeTranscript,activeWordIndex,wordSelection,originalOmissions,wordsInSpan} from './transcript-core.js';
-import {makeRemoval,removalBounds,skipRemoved,previewDuration,exportCut,removedRanges} from './cut-core.js';
+import {makeRemoval,removalBounds,skipRemoved,previewDuration,exportCut,removedRanges,playbackRemovals} from './cut-core.js';
 import {createWaveform} from './waveform-panel.js';
 import {barKey,suggestion,recentNotes,nextWordAfterDelete,sentLine,barSpotOffWords,deletedIds,cutsToRestore,cutMarks,keptRuns,lastCutGroup} from './edit-bar-core.js';
 
@@ -7,7 +7,7 @@ const $=s=>document.querySelector(s);
 const stamp=ms=>`${Math.floor(ms/60000)}:${String(Math.floor(ms/1000)%60).padStart(2,'0')}.${String(ms%1000).padStart(3,'0')}`;
 function element(tag,cls,text){const node=document.createElement(tag);if(cls)node.className=cls;if(text!=null)node.textContent=text;return node;}
 
-export function createTranscriptPanel({media,seek,playContext,request,updateRequest,cancelRequest=async()=>{},showError,pause=()=>{},onCutsChange=()=>{},notify=()=>{},togglePlay=()=>{},agentConnected=async()=>false}){
+export function createTranscriptPanel({media,seek,playContext,request,updateRequest,cancelRequest=async()=>{},showError,pause=()=>{},cutsOn=()=>true,notify=()=>{},togglePlay=()=>{},agentConnected=async()=>false}){
   let transcript=null,selected=null,anchor=null,wordNodes=[],highlighted=-1,videoId=null,loadToken=0,dragAnchor=null,dragEnd=null,dragMoved=false,suppressClick=false,noteId=null,noteBase='',noteTimer=null,notePending=null,cutNotes=new Map(),pendingFocus=null,sending=false;
   const body=$('#transcriptText');
   let backendRef=null,videoRef=null,barTarget=null,busy=false,dragPoint=null,scrollFrame=null;
@@ -143,9 +143,9 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     if(transcript)renderOriginalOmissions();
     waveform.setCuts(edits);
     $('#cutPreviewBar').hidden=!edits.length;$('#undoTranscriptCut').disabled=busy;
-    $('#cutPreviewStatus').textContent=edits.length?`Preview cut · ${stamp(previewDuration(videoRef.durationMs,edits))} · ${((videoRef.durationMs-previewDuration(videoRef.durationMs,edits))/1000).toFixed(1)} s removed · transcript shows source times`:'';
+    $('#cutPreviewStatus').textContent=edits.length?`Preview cut · ${stamp(previewDuration(videoRef.durationMs,edits))} · ${((videoRef.durationMs-previewDuration(videoRef.durationMs,edits))/1000).toFixed(1)} s removed`:'';
     if(!bar.hidden){primaryState();placeBar();}
-    search();onCutsChange();
+    search();
   }
   function sourceSelection(group,words=group.words){return {kind:'source',startMs:group.atMs,endMs:null,sourceStartMs:words.length?words[0].startMs:group.sourceStartMs,sourceEndMs:words.length?words.at(-1).endMs:group.sourceEndMs,firstWordId:words[0]?.id,lastWordId:words.at(-1)?.id,quote:words.length?words.map(w=>w.text).join(' '):'Removed pause',groupId:group.id};}
   async function requestSourceRestore(selection,button){
@@ -308,10 +308,10 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     const next=index>=0?wordNodes[index]:gap;
     if(next&&next!==currentNode){currentNode=next;if($('#followTranscript').checked&&dragAnchor==null)centre(currentNode);}
   }
-  function removals(){return [...(transcript?.draftEdits||[]),...(auditionRange?[auditionRange]:[])];}
+  function removals(){return playbackRemovals(cutsOn(),transcript?.draftEdits||[],auditionRange);}
   return {
     async load(v,backend){
-      const token=++loadToken;backendRef=backend;videoRef=v;videoId=v?.id;transcript=null;pendingFocus=null;waveform.load(v);$('#cutPreviewBar').hidden=true;$('#transcriptSummary').textContent=v?'Loading transcript…':'Open a video to read its transcript.';render();onCutsChange();
+      const token=++loadToken;backendRef=backend;videoRef=v;videoId=v?.id;transcript=null;pendingFocus=null;waveform.load(v);$('#cutPreviewBar').hidden=true;$('#transcriptSummary').textContent=v?'Loading transcript…':'Open a video to read its transcript.';render();
       if(!v)return;
       try{const data=await backend.transcript(v);if(token!==loadToken)return;transcript=data?normalizeTranscript(data,v.durationMs):null;$('#transcriptSummary').textContent=transcript?`${transcript.words.length} words · ${transcript.label} · timings approximate`:'Use your existing HappyScribe word timings';render();if(pendingFocus){const focus=pendingFocus;pendingFocus=null;focusAt(focus.ms,focus.editRequest,focus.comment);}}
       catch(error){if(token===loadToken){$('#transcriptSummary').textContent='Could not load transcript';showError(error.message);}}

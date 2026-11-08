@@ -66,10 +66,13 @@ try{
   await page.goto(base);await page.waitForSelector('.transcript-word');await page.waitForFunction(()=>document.querySelector('video').readyState>=2);
   const text=id=>page.locator(id).innerText(),video=fn=>page.locator('video').evaluate(fn);
 
-  // Both clocks and the cut length are there from the start.
-  assert.equal(await text('#clockLabel'),'Source');assert.equal(await text('#altLabel'),'Cut');
-  assert.equal(await text('#duration'),'0:08');assert.equal(await text('#altDuration'),'0:06','Cut length is the file minus the removals.');
-  assert.equal(await page.locator('#joinFade').getAttribute('aria-pressed'),'true','The fade is on by default.');
+  // One clock (the file's own), and one switch for the cuts. The old clock toggle, cut clock and join-fade control are gone.
+  assert.equal(await text('#duration'),'0:08');
+  for(const gone of ['#timeMode','#joinFade','#altTime','#altDuration','#clockLabel','#altLabel'])assert.equal(await page.locator(gone).count(),0,`${gone} is removed.`);
+  const cuts=page.locator('#cutsSwitch');
+  assert.equal(await cuts.getAttribute('role'),'switch');assert.equal(await cuts.getAttribute('aria-label'),'Cuts');
+  assert.equal(await cuts.getAttribute('aria-checked'),'true','The cuts are on by default.');assert.equal(await text('#cutsState'),'Cuts on','The state is on the control itself.');
+  assert.equal(await page.locator('#toast').evaluate(n=>n.classList.contains('show')),false,'No toast for the switch.');
 
   async function playThrough(label){
     await page.evaluate(()=>window.__spy.reset());await page.locator('#playCut').click();
@@ -80,23 +83,46 @@ try{
     const lateness=data.jumps.map(j=>{const removal=removed.find(r=>Math.abs(r.endMs-j.toMs)<1);assert.ok(removal,`${label}: jumped to ${j.toMs}, which is not the end of a removal.`);return +(j.fromMs-removal.startMs).toFixed(1);});
     return {lateness,framesShownInRemoval:data.frames.filter(inRemoval),joins:data.joins,gain:data.gain};
   }
-  const on=await playThrough('fade on');
-  await page.locator('#joinFade').click();assert.equal(await page.locator('#joinFade').getAttribute('aria-pressed'),'false');
-  const off=await playThrough('fade off');
-  await page.locator('#joinFade').click();
-  console.log(JSON.stringify({fadeOn:on,fadeOff:off}));
+  const on=await playThrough('cuts on');
+  console.log(JSON.stringify({cutsOn:on}));
   assert.ok(on.gain>.99,'The sound is fully back up after the last join.');
-  assert.ok(off.gain>.99,'With the fade off the sound is simply left alone.');
-  for(const [label,run] of [['fade on',on],['fade off',off]]){
-    for(const late of run.lateness)assert.ok(Math.abs(late)<=FRAME,`${label}: the jump was ${late} ms off the join; it must stay within one frame.`);
-    assert.ok(run.framesShownInRemoval.length<=4,`${label}: at most two removed frames show at each join, before the jump lands.`);
-  }
+  for(const late of on.lateness)assert.ok(Math.abs(late)<=FRAME,`cuts on: the jump was ${late} ms off the join; it must stay within one frame.`);
+  assert.ok(on.framesShownInRemoval.length<=4,'cuts on: at most two removed frames show at each join, before the jump lands.');
   // The tone gains a quarter cycle across each 1 s removal, so a jump without a fade is a visible step.
   const normalStep=.5*2*Math.PI*440.25/48000;
   // A busy page can leave the fade a few milliseconds short, because it never holds the jump back. Allow that, not a full click.
   const clickStep=normalStep*6;
-  for(const join of on.joins)assert.ok(join.stepAfter<=clickStep,`With the fade on, a join must not click: largest step ${join.stepAfter}, ordinary tone ${normalStep.toFixed(3)}.`);
-  assert.ok(off.joins.some(join=>join.stepAfter>clickStep),'The measurement can see a click when the fade is off; otherwise the check above proves nothing.');
+  assert.equal(on.joins.length,2,'Both joins were measured.');
+  assert.ok(on.joins.some(join=>join.stepBefore>clickStep),'The raw sound before the fade clicks at a join, so the measurement can see a click.');
+  for(const join of on.joins)assert.ok(join.stepAfter<=clickStep,`The fixed join fade must keep a join from clicking: largest step ${join.stepAfter}, ordinary tone ${normalStep.toFixed(3)}.`);
+
+  // Cuts off plays the original: the playhead runs straight through every removal, with no jump and no fade.
+  await cuts.click();
+  assert.equal(await cuts.getAttribute('aria-checked'),'false');assert.equal(await text('#cutsState'),'Cuts off');
+  await page.evaluate(()=>{window.__spy.reset();document.querySelector('video').currentTime=0;});
+  await page.waitForFunction(()=>document.querySelector('video').currentTime<.1&&!document.querySelector('video').seeking);
+  await page.evaluate(()=>window.__spy.reset());
+  await page.locator('#play').click();await page.waitForFunction(()=>document.querySelector('video').ended,{timeout:20000});
+  const original=await page.evaluate(()=>({jumps:window.__spy.jumps.length,frames:window.__spy.frames}));
+  assert.equal(original.jumps,0,'Cuts off: playback never jumps.');
+  assert.ok(original.frames.filter(inRemoval).length>30,'Cuts off: the removed passages are played.');
+  // Flipping it while playing takes effect at once: off, the playhead is let through a removal; on, it is skipped.
+  await page.evaluate(()=>{document.querySelector('video').currentTime=1.5;});
+  await page.locator('#play').click();await page.waitForFunction(()=>document.querySelector('video').currentTime>2.3);
+  assert.equal(await video(v=>v.paused),false);
+  await page.evaluate(()=>window.__spy.reset());
+  await cuts.click();assert.equal(await text('#cutsState'),'Cuts on');
+  await page.waitForFunction(()=>window.__spy.jumps.length>0);
+  const skipped=await page.evaluate(()=>({jumps:window.__spy.jumps}));
+  assert.equal(skipped.jumps.length,1,'Turning the cuts on inside a removal makes exactly one jump.');
+  assert.ok(Math.abs(skipped.jumps[0].toMs-3000)<1,'The jump lands on the join at the end of the removal.');
+  await page.keyboard.press('Escape');
+  await page.locator('#play').click();await page.waitForFunction(()=>document.querySelector('video').paused);
+  // Play whole cut is a request to hear the cut, so it turns the cuts on.
+  await cuts.click();assert.equal(await text('#cutsState'),'Cuts off');
+  await page.locator('#playCut').click();assert.equal(await text('#cutsState'),'Cuts on');assert.equal(await cuts.getAttribute('aria-checked'),'true');
+  await page.waitForFunction(()=>document.querySelector('video').currentTime>.2);
+  await page.locator('#play').click();await page.waitForFunction(()=>document.querySelector('video').paused);
 
   // Space pauses and resumes without restarting, even with focus left on the button or on a word.
   await page.locator('#playCut').click();await page.waitForFunction(()=>document.querySelector('video').currentTime>.3);
@@ -110,24 +136,18 @@ try{
   await page.keyboard.press('Enter');assert.equal(await page.locator('#transcriptSelection').isVisible(),true,'Enter still selects a focused word.');
   await page.locator('#clearTranscriptSelection').click();
 
-  // Cut time: the seek bar and clocks run on the cut, and seeking maps back through the removals.
-  assert.equal(await page.locator('#seek').isVisible(),false,'In source time the waveform stands in for the seek bar.');
-  await page.locator('#timeMode').click();
-  assert.equal(await text('#timeMode'),'Cut time');assert.equal(await page.locator('#seek').isVisible(),true,'Cut time always has its seek bar.');
-  assert.equal(await text('#clockLabel'),'Cut');assert.equal(await text('#altLabel'),'Source');
-  assert.equal(await text('#duration'),'0:06');assert.equal(await page.locator('#seek').getAttribute('max'),'6');
-  const seekTo=seconds=>page.locator('#seek').evaluate((n,value)=>{n.value=value;n.dispatchEvent(new Event('input',{bubbles:true}));},seconds);
-  await seekTo(2.5);await page.waitForFunction(()=>Math.abs(document.querySelector('video').currentTime-3.5)<.001);
-  assert.equal(await text('#currentTime'),'0:02.500');assert.equal(await text('#altTime'),'0:03.500');
-  await seekTo(2);await page.waitForFunction(()=>Math.abs(document.querySelector('video').currentTime-3)<.001);
-  assert.equal(await text('#currentTime'),'0:02.000','A seek onto a join lands after it.');
-  await page.locator('#seek').focus();await page.keyboard.press('ArrowLeft');
-  await page.locator('body').click({position:{x:2,y:2}});await page.keyboard.press(',');
-  const stepped=await video(v=>v.currentTime);assert.ok(!inRemoval(stepped*1000),'Stepping a frame back over a join skips the removal.');
+  // The switch works from the keyboard, announces its state, remembers it, and does not animate when motion is reduced.
+  await cuts.focus();await page.keyboard.press('Space');
+  assert.equal(await cuts.getAttribute('aria-checked'),'false');assert.equal(await text('#cutsState'),'Cuts off');
   await page.reload();await page.waitForSelector('.transcript-word');await page.waitForFunction(()=>document.querySelector('video').readyState>=2);
-  assert.equal(await text('#timeMode'),'Cut time','The choice survives a refresh.');
-  await page.locator('#timeMode').click();assert.equal(await text('#timeMode'),'Source time');assert.equal(await text('#duration'),'0:08');
-  await page.locator('#timeMode').click();
+  assert.equal(await cuts.getAttribute('aria-checked'),'false','The choice survives a refresh.');
+  await cuts.focus();await page.keyboard.press('Enter');
+  assert.equal(await cuts.getAttribute('aria-checked'),'true');assert.equal(await text('#cutsState'),'Cuts on');
+  assert.equal(await cuts.evaluate(n=>getComputedStyle(n).outlineStyle!=='none'||getComputedStyle(n).boxShadow!=='none'),true,'Keyboard focus is visible.');
+  assert.match(await page.locator('.switch-track').evaluate(n=>getComputedStyle(n,'::after').transitionDuration),/0\.15s/,'With no preference, the switch slides.');
+  await page.emulateMedia({reducedMotion:'reduce'});
+  assert.equal(await page.locator('.switch-track').evaluate(n=>getComputedStyle(n,'::after').transitionDuration),'0s','Reduced motion: the switch jumps rather than slides.');
+  await page.emulateMedia({reducedMotion:'no-preference'});
 
   // The bar opens next to the selected words: just below or above them, never on them, and inside the transcript.
   async function nextToWords(label,anchor=null){
@@ -262,7 +282,7 @@ try{
   assert.match(await page.locator('.transcript-word.removed-word').first().evaluate(n=>getComputedStyle(n).textDecorationLine),/line-through/,'Deleted words are struck through.');
   assert.equal(await page.locator('.transcript-word').nth(4).getAttribute('aria-label'),'Deleted: word4, 0:02.050','A screen reader hears that the word is deleted.');
   assert.equal(await page.locator('.restore-cut:visible').count(),2,'Each cut has its Restore mark.');
-  assert.equal(await text(await text('#clockLabel')==='Cut'?'#duration':'#altDuration'),'0:06','The cut still skips the deleted words.');
+  assert.match(await text('#cutPreviewStatus'),/Preview cut · 0:06\.000 · 2\.0 s removed$/,'The cut still skips the deleted words.');
   // Selecting deleted words turns Delete into Restore; Backspace never cuts them twice.
   await page.locator('.transcript-word').nth(4).click();await nextToWords('a deleted word');
   assert.equal((await page.locator('#transcriptSelection button:visible').first().innerText()).trim(),'Restore','On deleted words the first button brings them back.');
@@ -322,14 +342,24 @@ try{
 
   // Everything removed: nothing to play, and the page says so.
   await writeFile(join(temp,'transcripts/tone.json'),JSON.stringify({words,cuts:[],revision:'all-gone',draftEdits:[{id:'all',startMs:0,endMs:8000,wordIds:words.map(w=>w.id),quote:'all',kind:'words'}]}));
-  await page.reload();await page.waitForSelector('.transcript-word',{state:'attached'});await page.waitForFunction(()=>document.querySelector('#duration').textContent==='0:00');
+  await page.reload();await page.waitForSelector('.transcript-word',{state:'attached'});await page.waitForFunction(()=>document.querySelector('#cutPreviewStatus').textContent.includes('0:00.000 · 8.0 s removed'));
   await page.locator('#playCut').click();await page.waitForFunction(()=>document.querySelector('#toastText').textContent.includes('no cut to play'));
   assert.equal(await video(v=>v.paused),true);
   await writeFile(join(temp,'transcripts/tone.json'),JSON.stringify({words,cuts:[],revision:'synthetic',draftEdits:removed}));
   await page.reload();await page.waitForSelector('.transcript-word');
 
+  // Evidence of the switch in both states, at desktop and phone width.
+  await mkdir('data/test-artifacts',{recursive:true});
+  async function switchShots(size){
+    for(const [state,label] of [['true','on'],['false','off']]){
+      if(await cuts.getAttribute('aria-checked')!==state)await cuts.click();
+      await page.waitForTimeout(300);await page.locator('#player').screenshot({path:`data/test-artifacts/cuts-switch-${size}-${label}.png`});
+    }
+    if(await cuts.getAttribute('aria-checked')!=='true')await cuts.click();
+  }
+  await switchShots('desktop');
   // The new controls fit a phone without sideways scrolling.
-  await page.setViewportSize({width:390,height:844});await page.waitForTimeout(100);
+  await page.setViewportSize({width:390,height:844});await page.waitForTimeout(100);await switchShots('phone');
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'No sideways scrolling on a phone.');
   await page.locator('.transcript-word').nth(1).click();assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'The edit bar fits a phone without sideways scrolling.');
   await nextToWords('phone');
@@ -341,7 +371,7 @@ try{
   await page.emulateMedia({colorScheme:'light'});
   await page.setViewportSize({width:1440,height:1040});await page.locator('.transcript-word').nth(1).click();await page.keyboard.type('Tigh');await page.screenshot({path:'data/test-artifacts/cut-preview-desktop.png'});
   assert.deepEqual(errors,[]);
-  console.log('PASS: play whole cut, both clocks, Space, join fade on and off, cut-time seeking, ask agent on a word and a frame, the edit bar (next to the words, autofocus, Tab, Backspace, Delete, Ctrl+Z, no-agent line, no typed text lost, deleted words shown and restored), all-removed cut, phone layout.');
+  console.log('PASS: play whole cut, the one cuts switch (on plays the cut, off plays the original, mouse, Space, Enter, remembered, reduced motion), the fixed join fade, one clock, ask agent on a word and a frame, the edit bar (next to the words, autofocus, Tab, Backspace, Delete, Ctrl+Z, no-agent line, no typed text lost, deleted words shown and restored), all-removed cut, phone layout.');
 }finally{
   await browser?.close();server.kill();await new Promise(r=>server.once('exit',r));assert.equal(dirname(temp),resolve(tmpdir()));assert.ok(basename(temp).startsWith('video-cut-preview-'));await rm(temp,{recursive:true,force:true});
 }
