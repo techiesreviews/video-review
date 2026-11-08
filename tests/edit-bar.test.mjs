@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {barKey,suggestion,recentNotes,nextWordAfterDelete,sentLine,QUICK_PHRASES,barSpot,barSpotOffWords,deletedIds,cutsToRestore,cutMarks} from '../web/edit-bar-core.js';
+import {barKey,suggestion,recentNotes,nextWordAfterDelete,sentLine,QUICK_PHRASES,barSpot,barSpotOffWords,deletedIds,cutsToRestore,cutMarks,keptRuns,lastCutGroup} from '../web/edit-bar-core.js';
 
 const key=(k,extra={})=>({key:k,...extra});
 
@@ -90,8 +90,8 @@ test('with no room for a clear line it sits right above the words',()=>{
   assert.equal(spot.y,160-8-60);
 });
 test('when the words fill the window the bar goes to the end with more room, still on screen',()=>{
-  const spot=barSpot({...room,first:box(90,300),last:box(870,300)});
-  assert.ok(spot.y>=room.top+8&&spot.y+room.h<=room.vh-8);
+  assert.equal(barSpot({...room,first:box(90,300),last:box(870,300)}).y,room.top+8,'more room above: at the top');
+  assert.equal(barSpot({...room,first:box(130,300),last:box(800,300)}).y,room.vh-8-room.h,'more room below: at the bottom');
 });
 test('the bar never leaves the window sideways or goes under the header',()=>{
   assert.equal(barSpot({...room,first:box(200,1400),last:box(200,1400)}).x,1440-420-8,'pulled back from the right edge');
@@ -122,4 +122,17 @@ test('where each cut is marked: the first of its words still in the transcript, 
   const words=['a','b','c','d','e'].map((id,i)=>({id,startMs:i*1000}));
   assert.deepEqual(cutMarks(words,[{id:'e1',wordIds:['c','b'],startMs:1000,kind:'words'},{id:'p',wordIds:[],startMs:2500,kind:'pause'}]),[{id:'e1',index:1},{id:'p',index:3}]);
   assert.deepEqual(cutMarks(words,[{id:'x',wordIds:['gone'],startMs:9000,kind:'words'}]),[{id:'x',index:4}],'after the last word: marked on the last word');
+});
+test('Delete over kept and deleted words cuts only the runs of kept words, so no word ends up in two cuts',()=>{
+  const words=['a','b','c','d','e','f'].map(id=>({id}));
+  assert.deepEqual(keptRuns(words,0,5,new Set(['c','d'])),[[0,1],[4,5]]);
+  assert.deepEqual(keptRuns(words,1,3,new Set(['c','d'])),[[1,1]],'deleted words at the end are left out');
+  assert.deepEqual(keptRuns(words,2,3,new Set(['c','d'])),[],'all deleted: nothing to cut');
+  assert.deepEqual(keptRuns(words,0,2,new Set()),[[0,2]],'nothing deleted: the whole selection');
+});
+test('the pieces of one Delete share its note, so Ctrl+Z brings them all back at once',()=>{
+  assert.equal(lastCutGroup([{commentId:'x'},{commentId:'y'},{commentId:'y'}]),2);
+  assert.equal(lastCutGroup([{commentId:'y'},{commentId:null},{commentId:null}]),1,'cuts without a note are undone one by one');
+  assert.equal(lastCutGroup([{commentId:'x'}]),1);
+  assert.equal(lastCutGroup([]),0);
 });

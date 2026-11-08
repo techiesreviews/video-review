@@ -1,7 +1,7 @@
 import {normalizeTranscript,activeWordIndex,wordSelection,originalOmissions,wordsInSpan} from './transcript-core.js';
 import {makeRemoval,removalBounds,skipRemoved,previewDuration,exportCut,removedRanges} from './cut-core.js';
 import {createWaveform} from './waveform-panel.js';
-import {barKey,suggestion,recentNotes,nextWordAfterDelete,sentLine,barSpotOffWords,deletedIds,cutsToRestore,cutMarks} from './edit-bar-core.js';
+import {barKey,suggestion,recentNotes,nextWordAfterDelete,sentLine,barSpotOffWords,deletedIds,cutsToRestore,cutMarks,keptRuns,lastCutGroup} from './edit-bar-core.js';
 
 const $=s=>document.querySelector(s);
 const stamp=ms=>`${Math.floor(ms/60000)}:${String(Math.floor(ms/1000)%60).padStart(2,'0')}.${String(ms%1000).padStart(3,'0')}`;
@@ -192,9 +192,15 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     // A note typed but not sent belongs to these words, so it is saved with the cut's own note; Ctrl+Z puts it back in the box.
     const typedRaw=noteId?'':noteBox.value,typed=typedRaw.trim();
     try{
-      const edit=makeRemoval(transcript,selected,videoRef.durationMs,videoRef.fps),saved=await request(currentRequest(selected.kind==='pause'?'pause':'remove',`Remove from cut: “${selected.quote}”`+(typed?` — ${typed}`:'')));edit.commentId=saved?.id||null;
-      if(typed&&edit.commentId)cutNotes.set(edit.commentId,typed);
-      const boxNow=await saveCuts([...(transcript.draftEdits||[]),edit]);seek(Math.max(0,edit.startMs-500));
+      // Words already deleted stay in their own cut: only the runs of kept words are cut, one piece each, sharing one note.
+      const gone=deletedIds(transcript.draftEdits),runs=wasWords&&!selected.precise&&transcript.words.slice(first,last+1).some(w=>gone.has(w.id))?keptRuns(transcript.words,first,last,gone):null;
+      const parts=runs?runs.map(([i,j])=>wordSelection(transcript.words,i,j)):[selected],pieces=[];
+      for(const part of parts)pieces.push(makeRemoval({...transcript,draftEdits:[...(transcript.draftEdits||[]),...pieces]},part,videoRef.durationMs,videoRef.fps));
+      const quote=parts.map(p=>p.quote).join(' … ');
+      const saved=await request(currentRequest(selected.kind==='pause'?'pause':'remove',`Remove from cut: “${quote}”`+(typed?` — ${typed}`:'')));
+      for(const piece of pieces)piece.commentId=saved?.id||null;
+      if(typed&&saved?.id)cutNotes.set(saved.id,typed);
+      const edit=pieces[0],boxNow=await saveCuts([...(transcript.draftEdits||[]),...pieces]);seek(Math.max(0,edit.startMs-500));
       const draft=boxNow.startsWith(typedRaw)?boxNow.slice(typedRaw.length).trimStart():boxNow;
       // Like a video editor: the words after the cut stay selected so the next delete or note is one key away.
       const next=wasWords?nextWordAfterDelete(transcript.words,transcript.draftEdits.flatMap(e=>e.wordIds||[]),first,last):-1;
@@ -203,16 +209,18 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     catch(error){showError(error.message);}finally{busy=false;refreshCuts();}
   }
   async function undoCut(){
-    const edit=transcript?.draftEdits?.at(-1);if(!edit||busy)return;busy=true;const fromBar=document.activeElement===noteBox;
+    const count=lastCutGroup(transcript?.draftEdits);if(!count||busy)return;busy=true;const fromBar=document.activeElement===noteBox;
+    // One Delete can make several pieces (it skips words already deleted); they come back together.
+    const undone=transcript.draftEdits.slice(-count),edit=undone[0];
     // A half-typed note belongs to what it was typed on, so that selection and the note stay untouched.
     const stay=hasDraft();
     try{
-      const draft=await saveCuts(transcript.draftEdits.slice(0,-1),{keep:stay});if(edit.commentId)await cancelRequest(edit.commentId);
+      const draft=await saveCuts(transcript.draftEdits.slice(0,-count),{keep:stay});if(edit.commentId)await cancelRequest(edit.commentId);
       const note=cutNotes.get(edit.commentId);cutNotes.delete(edit.commentId);
       if(stay){barStatus(note?'Brought back. Its note is under Resolved.':'Brought back.');return;}
       seek(edit.startMs);
       // The words that came back are selected again, so a mistaken undo is one Backspace from being redone.
-      const ids=edit.wordIds||[],first=transcript.words.findIndex(w=>w.id===ids[0]),last=transcript.words.findIndex(w=>w.id===ids.at(-1));
+      const ids=undone.flatMap(e=>e.wordIds||[]),first=transcript.words.findIndex(w=>w.id===ids[0]),last=transcript.words.findIndex(w=>w.id===ids.at(-1));
       if(first>=0&&last>=first){busy=false;refreshCuts();anchor=first;choose(first,last,{focus:false});keepDraft([note,draft].filter(Boolean).join(' '));barStatus('Brought back. Backspace deletes it again.');if(fromBar)focusBar();}
     }
     catch(error){showError(error.message);}finally{busy=false;refreshCuts();}
@@ -220,8 +228,12 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   async function restoreCut(ids,{fromBar=false}={}){
     const back=transcript?.draftEdits?.filter(e=>ids.includes(e.id))||[];if(!back.length||busy)return;busy=true;pause();
     const stay=fromBar||hasDraft();
-    try{await saveCuts(transcript.draftEdits.filter(e=>!ids.includes(e.id)),{keep:stay});for(const edit of back)if(edit.commentId)await cancelRequest(edit.commentId);if(stay)barStatus('Brought back.');else seek(back[0].startMs);}
-    catch(error){showError(error.message);}finally{busy=false;refreshCuts();}
+    try{
+      await saveCuts(transcript.draftEdits.filter(e=>!ids.includes(e.id)),{keep:stay});
+      // A note shared with pieces still cut stays open; once its last piece is back it is resolved.
+      for(const id of new Set(back.map(e=>e.commentId).filter(Boolean)))if(!transcript.draftEdits.some(e=>e.commentId===id)){await cancelRequest(id);cutNotes.delete(id);}
+      if(stay)barStatus('Brought back.');else seek(back[0].startMs);
+    }catch(error){showError(error.message);}finally{busy=false;refreshCuts();}
   }
   $('#undoTranscriptCut').onclick=undoCut;
   $('#exportTranscriptCut').onclick=()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(exportCut(transcript,videoRef),null,2)],{type:'application/json'})),link=document.createElement('a');link.href=url;link.download=videoId+'-cut.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
