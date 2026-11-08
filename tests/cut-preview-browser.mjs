@@ -92,6 +92,8 @@ try{
   const normalStep=.5*2*Math.PI*440.25/48000;
   // A busy page can leave the fade a few milliseconds short, because it never holds the jump back. Allow that, not a full click.
   const clickStep=normalStep*6;
+  assert.equal(on.joins.length,2,'Both joins were measured.');
+  assert.ok(on.joins.some(join=>join.stepBefore>clickStep),'The raw sound before the fade clicks at a join, so the measurement can see a click.');
   for(const join of on.joins)assert.ok(join.stepAfter<=clickStep,`The fixed join fade must keep a join from clicking: largest step ${join.stepAfter}, ordinary tone ${normalStep.toFixed(3)}.`);
 
   // Cuts off plays the original: the playhead runs straight through every removal, with no jump and no fade.
@@ -108,9 +110,12 @@ try{
   await page.evaluate(()=>{document.querySelector('video').currentTime=1.5;});
   await page.locator('#play').click();await page.waitForFunction(()=>document.querySelector('video').currentTime>2.3);
   assert.equal(await video(v=>v.paused),false);
+  await page.evaluate(()=>window.__spy.reset());
   await cuts.click();assert.equal(await text('#cutsState'),'Cuts on');
-  await page.waitForFunction(()=>document.querySelector('video').currentTime>=3);
-  assert.ok(await video(v=>v.currentTime*1000>=3000),'Turning the cuts on inside a removal skips to its join.');
+  await page.waitForFunction(()=>window.__spy.jumps.length>0);
+  const skipped=await page.evaluate(()=>({jumps:window.__spy.jumps,frames:window.__spy.frames}));
+  assert.equal(skipped.jumps.length,1,'Turning the cuts on inside a removal makes exactly one jump.');
+  assert.ok(Math.abs(skipped.jumps[0].toMs-3000)<1,'The jump lands on the join at the end of the removal.');
   await page.keyboard.press('Escape');
   await page.locator('#play').click();await page.waitForFunction(()=>document.querySelector('video').paused);
   // Play whole cut is a request to hear the cut, so it turns the cuts on.
@@ -139,6 +144,7 @@ try{
   await cuts.focus();await page.keyboard.press('Enter');
   assert.equal(await cuts.getAttribute('aria-checked'),'true');assert.equal(await text('#cutsState'),'Cuts on');
   assert.equal(await cuts.evaluate(n=>getComputedStyle(n).outlineStyle!=='none'||getComputedStyle(n).boxShadow!=='none'),true,'Keyboard focus is visible.');
+  assert.match(await page.locator('.switch-track').evaluate(n=>getComputedStyle(n,'::after').transitionDuration),/0\.15s/,'With no preference, the switch slides.');
   await page.emulateMedia({reducedMotion:'reduce'});
   assert.equal(await page.locator('.switch-track').evaluate(n=>getComputedStyle(n,'::after').transitionDuration),'0s','Reduced motion: the switch jumps rather than slides.');
   await page.emulateMedia({reducedMotion:'no-preference'});
