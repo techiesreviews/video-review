@@ -1,7 +1,7 @@
 // Rules for the edit bar that appears when words are selected: what a key does, what the ghost text suggests,
 // and which words stay selected after a delete. Pure functions, so they can be tested without a browser.
 
-// The marker types the bar's small buttons make, written as short notes you can type and complete.
+// Short notes the bar's grey autocomplete offers once their first letters are typed.
 export const QUICK_PHRASES=[
   'Word clipped, recover the missing beginning or ending',
   'Give this more room before it starts',
@@ -70,4 +70,64 @@ export function nextWordAfterDelete(words,removedIds,a,b){
 /** The one plain line shown after a request is saved. */
 export function sentLine(agentConnected){
   return agentConnected?'Sent to your agent. It shows in the comment list.':'No agent connected: your note is saved and waits for it.';
+}
+
+/* Where the bar goes (TOOLS-129). Lex (2026-11-08): it appears where the words are selected, as in the script editor,
+   so it follows the same rules: never on the selected words or the line above them when that can be avoided. */
+const EDGE=8,GAP=8;
+const clamp=(n,low,high)=>Math.max(low,Math.min(n,high));
+/**
+ * The bar's place on a wide screen, in window pixels: below the words if it fits; else above them with one line clear;
+ * else right above them; else, when the words fill the window, at the end with more room. Always on screen.
+ * first, last: the boxes of the first and last selected word; w, h: the bar; top: where the header ends;
+ * vw, vh: the window; line: the height of a line of text.
+ */
+export function barSpot({first,last,w,h,top,vw,vh,line=0}){
+  const low=top+EDGE,high=Math.max(low,vh-EDGE-h);
+  const below=last.bottom+GAP,clearAbove=first.top-line-GAP-h,above=first.top-GAP-h;
+  let y,from=first;
+  if(below+h<=vh-EDGE){y=below;from=last;}
+  else if(clearAbove>=low)y=clearAbove;
+  else if(above>=low)y=above;
+  else y=vh-last.bottom>=first.top-top?high:low;
+  return {x:Math.max(EDGE,Math.min(from.left-4,vw-w-EDGE)),y:clamp(y,low,high)};
+}
+/** barSpot inside the words area (which ends at end); when that would put the bar on the selected words, as in a short
+ *  transcript on a phone, the bar may reach down to the end of what is seen (seenEnd) instead. */
+export function barSpotOffWords({end,seenEnd,...place}){
+  const spot=barSpot({...place,vh:end});
+  if(seenEnd<=end||spot.y>=place.last.bottom||spot.y+place.h<=place.first.top)return spot;
+  return barSpot({...place,vh:seenEnd});
+}
+
+/* Deleted words stay in the transcript, marked, so the original text is always there to read. */
+/** The ids of every deleted word. */
+export function deletedIds(edits=[]){return new Set(edits.flatMap(e=>e.wordIds||[]));}
+/** The cuts that bring a selection back, when every selected word is deleted. Any word still in the cut: none. */
+export function cutsToRestore(edits=[],wordIds=[]){
+  if(!wordIds.length)return [];
+  const gone=deletedIds(edits);if(!wordIds.every(id=>gone.has(id)))return [];
+  const ids=new Set(wordIds);return edits.filter(e=>(e.wordIds||[]).some(id=>ids.has(id)));
+}
+/** Where each cut's Restore mark goes: before the first of its words in the transcript, else before the first word at or
+ *  after its start (a pause), else on the last word. */
+export function cutMarks(words,edits=[]){
+  return edits.map(edit=>{
+    const ids=new Set(edit.wordIds||[]);let index=words.findIndex(w=>ids.has(w.id));
+    if(index<0)index=words.findIndex(w=>w.startMs>=edit.startMs);
+    if(index<0)index=words.length-1;
+    return {id:edit.id,index};
+  });
+}
+/** The runs of words a..b still in the cut, as [first, last] index pairs: what a Delete over kept and deleted words cuts. */
+export function keptRuns(words,a,b,gone){
+  const runs=[];
+  for(let i=a;i<=b;i++){if(gone.has(words[i].id))continue;const last=runs.at(-1);if(last&&last[1]===i-1)last[1]=i;else runs.push([i,i]);}
+  return runs;
+}
+/** How many cuts at the end came from one Delete: they share its note (commentId). Cuts without one stand alone. */
+export function lastCutGroup(edits=[]){
+  const id=edits.at(-1)?.commentId;if(!edits.length)return 0;if(!id)return 1;
+  let n=0;while(n<edits.length&&edits[edits.length-1-n].commentId===id)n++;
+  return n;
 }

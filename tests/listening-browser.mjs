@@ -71,8 +71,10 @@ try{
  await page.locator('#pauseThreshold').selectOption('1000');assert.equal(await page.locator('.transcript-pause').count(),0);
  await page.locator('#pauseThreshold').selectOption('450');assert.ok(await page.locator('.transcript-pause').count()>0);
  await page.locator('.transcript-pause').first().click();assert.equal(await page.locator('video').evaluate(v=>v.paused),true);
+ {const bar=await page.locator('#transcriptSelection').boundingBox(),gap=await page.locator('.transcript-pause').first().boundingBox(),below=bar.y-(gap.y+gap.height),above=gap.y-(bar.y+bar.height);
+  assert.ok((below>=0&&below<=80)||(above>=0&&above<=80),`The bar opens next to a selected pause (gap below ${below}, above ${above}).`);}
  const start=await page.locator('#waveformStart').boundingBox();await page.mouse.move(start.x+start.width/2,start.y+start.height/2);await page.mouse.down();await page.mouse.move(start.x+start.width/2+15,start.y+start.height/2,{steps:5});await page.mouse.up();
- await page.locator('[data-transcript-action="pause"]').click();await page.waitForFunction(()=>!document.querySelector('#cutPreviewBar').hidden);
+ await page.locator('[data-transcript-action="remove"]').click();await page.waitForFunction(()=>!document.querySelector('#cutPreviewBar').hidden);
  saved=JSON.parse(await readFile(join(temp,'transcripts/listening.json'),'utf8')).draftEdits;assert.deepEqual(saved[0].wordIds,[],'A manually adjusted pause leaves adjacent transcript words intact.');
  await page.locator('#undoTranscriptCut').click();
  // Restore an earlier preview cut without undoing the later one.
@@ -80,8 +82,9 @@ try{
  await centred(28);await page.locator('[data-transcript-action="remove"]').click();await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===2);
  let edits=JSON.parse(await readFile(join(temp,'transcripts/listening.json'),'utf8')).draftEdits;assert.equal(edits.length,2);
  const firstEdit=edits[0].id,lastEdit=edits[1].id;
- await page.locator('#showRemovedWords').click();await page.waitForSelector('.source-removal');
- assert.equal(await page.locator('.source-word').count(),2,'Original view includes words already missing from the rendered cut.');
+ await page.waitForSelector('.source-removal');
+ assert.equal(await page.locator('.source-word').count(),2,'The transcript always includes words already missing from the rendered cut.');
+ assert.equal(await page.locator('.transcript-word.removed-word:visible').count(),2,'Deleted words stay in the transcript, marked.');
  await page.locator(`.restore-cut[data-edit-id="${firstEdit}"]`).click();
  await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===1);
  edits=JSON.parse(await readFile(join(temp,'transcripts/listening.json'),'utf8')).draftEdits;assert.equal(edits.length,1);assert.equal(edits[0].id,lastEdit);
@@ -93,10 +96,9 @@ try{
  const notes=JSON.parse(await readFile(join(temp,'comments.json'),'utf8')).comments,restore=notes.find(c=>c.editRequest?.type==='restore');
  assert.equal(restore.editRequest.firstWordId,'raw-after');assert.equal(restore.sourceSpans[0].sourceStartMs,35100);assert.equal(restore.startMs,24000,'Restore request is pinned to the review join, with separate original-clock anchors.');
  await page.locator('#clearTranscriptSelection').click();await page.locator('#undoTranscriptCut').click();
- await page.locator('#showRemovedWords').click();
  await page.locator('#toggleTranscriptView').click();assert.equal(await page.locator('video').isVisible(),true);
  await page.reload();await page.waitForSelector('.transcript-word');assert.equal(await page.locator('body').evaluate(n=>n.classList.contains('transcript-only')),false);
- await page.locator('#showRemovedWords').click();assert.equal(await page.locator('.source-word').count(),2,'Full original transcript survives reload.');await page.locator('#showRemovedWords').click();
+ assert.equal(await page.locator('.source-word').count(),2,'Full original transcript survives reload.');
  await page.locator('#toggleTranscriptView').click();await page.setViewportSize({width:390,height:844});await centred(30);
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'Listening mode has no horizontal overflow on mobile.');
  await mkdir('data/test-artifacts',{recursive:true});await page.screenshot({path:'data/test-artifacts/listening-mobile.png',fullPage:true});

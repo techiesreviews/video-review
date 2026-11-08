@@ -169,7 +169,10 @@ video{display:block;width:100%;height:100%;object-fit:contain;background:#000;cu
 #videoSelect[hidden]+#saveState::before{content:none}
 /* The app owns mouse range selection, including whitespace and wrapped lines. */
 .transcript-word{user-select:none;-webkit-user-select:none;touch-action:pan-y}
-.transcript-word.removed-word{text-decoration:line-through;color:var(--faint);background:#fff0f0}
+/* A deleted word stays in place (TOOLS-129): struck through in a soft red, dimmed, on a faint red ground. */
+.transcript-word.removed-word{text-decoration:line-through 1.5px #c4705f;color:var(--faint);background:#fff0f0}
+.transcript-word.removed-word.selected{background:#f6e3e0;color:#8a5a52;box-shadow:0 1px 0 #e3b9b1}
+.transcript-pause.removed-pause{border-style:dashed}
 .cut-preview-bar{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:10px 20px;border-top:1px solid var(--line);font-size:12px;flex-shrink:0}
 .cut-preview-bar span{flex:1;min-width:180px;color:var(--muted)}
 .cut-preview-bar button{font-weight:600;color:var(--accent);padding:4px}
@@ -223,38 +226,37 @@ video{display:block;width:100%;height:100%;object-fit:contain;background:#000;cu
 .controls .waveform-wrap{background:#1b1923}
 .waveform-overview{position:relative;height:24px;margin-top:5px;background:#1b1923;border-radius:4px;overflow:hidden}
 .waveform-overview[hidden]{display:none}.waveform-overview canvas{display:block;width:100%;height:24px;cursor:crosshair;touch-action:none}
-.restore-cut{display:inline-flex;align-items:center;gap:4px;border:1px solid #d2cceb;border-radius:5px;padding:3px 6px;margin:0 5px;background:#f3f0ff;color:#6254b2;font:600 11px/1.4 'DM Sans',sans-serif;vertical-align:middle;white-space:nowrap}
-.restore-cut:hover{background:#e9e2ff;border-color:var(--accent)}.restore-cut:disabled{color:var(--faint)}
-#showRemovedWords[aria-pressed="true"]{background:var(--accent-soft);border-color:#c8bff5;color:var(--accent)}
-.original-transcript .transcript-word.removed-word.spoken{background:#a34535;color:#fff}
-.original-transcript-notice{font-size:11px;line-height:1.45;color:var(--muted);margin:0;padding:0 20px 10px;flex-shrink:0}
+.restore-cut{display:inline-flex;align-items:center;gap:4px;border:1px solid #ecd3ce;border-radius:5px;padding:3px 6px;margin:0 5px;background:#fff7f5;color:#9a5a4d;font:600 11px/1.4 'DM Sans',sans-serif;vertical-align:middle;white-space:nowrap}
+.restore-cut:hover{background:#fdeae6;border-color:#c4705f;color:#7a3f33}.restore-cut:disabled{color:var(--faint)}
+.transcript-word.removed-word.spoken,.transcript-only .transcript-word.removed-word.spoken{background:#a34535;color:#fff}
 .source-removal{display:block;margin:18px 0;padding:12px 14px;background:#fff6f0;border-left:3px solid #c68365;border-radius:0 8px 8px 0;font-size:16px;line-height:1.9}
 .source-removal-head{display:block;font:10px/1.6 var(--mono);color:#8b5840;margin-bottom:6px}
 .source-removal-words{display:block;color:#8a6459}.source-word{border-radius:3px;padding:1px;cursor:pointer;text-decoration:line-through;user-select:none}
 .source-word:hover,.source-word.selected{background:#ead6cb;color:#643b2b}.source-removal .source-restore{margin:8px 0 0;background:white}
 .source-word.found{background:#fff0b3}
-.source-selection .bar-delete,.source-selection .bar-actions,.source-selection #transcriptNoteForm{display:none}
+.source-selection .bar-delete,.source-selection #transcriptNoteForm{display:none}
 .restore-cut{min-height:28px}.transcript-only .source-removal{font-size:22px;line-height:1.8}
-@media(max-width:650px){.transcript-only .source-removal{font-size:20px}.original-transcript-notice{padding-left:12px;padding-right:12px}}
+@media(max-width:650px){.transcript-only .source-removal{font-size:20px}}
 
-/* Edit bar: appears under the transcript when words are selected. One text box, Delete first. Its height never changes. */
-.transcript-selection.edit-bar{border-top:1px solid var(--line);background:var(--surface);padding:8px 20px 6px;box-shadow:0 -6px 18px #14142810;overflow:visible!important;max-height:none!important}
-.edit-bar-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-.edit-bar button{min-height:34px;border-radius:6px;font-size:13px;font-weight:600;white-space:nowrap}
-.bar-primary{padding:0 14px;background:var(--accent);color:#fff}.bar-primary:hover:not(:disabled){background:var(--accent-hover)}.bar-primary:disabled{background:#d9d8ef}
-.bar-chip{padding:0 9px;background:transparent;color:var(--muted);border:1px solid transparent}.bar-chip:hover:not(:disabled){background:var(--canvas);color:var(--text)}.bar-chip:disabled{color:var(--faint)}
-.bar-actions{display:flex;align-items:center;gap:2px;flex-wrap:wrap}
-.bar-x{width:34px;padding:0;font-size:22px;line-height:1;color:var(--muted);margin-left:auto}.bar-x:hover{background:var(--canvas);color:var(--text)}
+/* Edit bar (TOOLS-129): floats next to the selected words, placed like the script editor's bar; the script sets --bar-x
+   and --bar-y. A small label on top (the time, or what just happened); under it Delete, the text box and the close x. */
+.transcript-selection.edit-bar{position:fixed;z-index:20;top:var(--bar-y,0);left:var(--bar-x,0);display:flex;flex-direction:column;align-items:flex-start;width:min(30rem,calc(100vw - 16px));padding:0;border:0;background:none;box-shadow:none;overflow:visible!important;max-height:none!important}
+.edit-bar-label{position:relative;z-index:1;display:flex;align-items:center;gap:8px;max-width:100%;height:24px;margin-bottom:-1px;padding:0 10px;border:1px solid var(--line);border-bottom:0;border-radius:8px 8px 0 0;background:var(--surface);color:var(--muted);font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden}
+.edit-bar-label>span{overflow:hidden;text-overflow:ellipsis}
+#selectionTime{font:11px var(--mono);color:var(--accent)}#barStatus{color:var(--text);font-weight:500}#barStatus:empty{display:none}.edit-bar-label:has(#barStatus:not(:empty)) #selectionTime{display:none}
+.edit-bar-row{display:flex;align-items:center;gap:6px;width:100%;padding:6px;border:1px solid var(--line);border-radius:0 12px 12px 12px;background:var(--surface);box-shadow:0 1px 2px rgba(20,20,40,.06),0 10px 30px rgba(20,20,40,.14)}
+.edit-bar button{min-height:36px;border-radius:8px;font-size:13px;font-weight:600;white-space:nowrap}
+.bar-primary{padding:0 14px;background:var(--accent);color:#fff}.bar-primary:hover:not(:disabled){background:var(--accent-hover)}.bar-primary:active:not(:disabled){transform:scale(.97)}.bar-primary:disabled{background:#d9d8ef}
+.bar-x{width:36px;flex:none;padding:0;font-size:22px;line-height:1;color:var(--muted)}.bar-x:hover{background:var(--canvas);color:var(--text)}
 .edit-bar :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.bar-input{position:relative;flex:1 1 220px;min-width:180px;height:36px;margin:0;border-radius:6px;background:var(--canvas);border:1px solid var(--line)}
+.bar-input{position:relative;flex:1 1 auto;min-width:0;height:36px;margin:0;border-radius:8px;background:var(--canvas);border:1px solid var(--line)}
 .bar-input:focus-within{box-shadow:0 0 0 2px var(--accent);border-color:var(--accent)}
-.bar-input input,.bar-ghost{position:absolute;inset:0;width:100%;height:100%;padding:0 10px;border:0;margin:0;font:14px/34px 'DM Sans','Segoe UI',sans-serif;letter-spacing:normal;white-space:pre;overflow:hidden}
-.bar-input input{background:transparent;color:var(--text);outline:none;font-size:14px}
+/* The grey rest of the suggestion sits right after the typed words, which are drawn here too, unseen, to push it into place.
+   Both leave room on the right for the Tab key, which shows only while there is a suggestion. */
+.bar-input input,.bar-ghost{position:absolute;inset:0;width:100%;height:100%;padding:0 46px 0 10px;border:0;margin:0;font:14px/34px 'DM Sans','Segoe UI',sans-serif;letter-spacing:normal;white-space:pre;overflow:hidden}
+.bar-input input{background:transparent;color:var(--text);outline:none}
 .bar-ghost{color:var(--faint);pointer-events:none;text-overflow:clip}.bar-ghost b{font-weight:400;visibility:hidden}
-.edit-bar-line{display:flex;align-items:baseline;gap:10px;height:20px;padding-top:3px;font-size:12px;color:var(--muted);overflow:hidden;white-space:nowrap}
-#selectionTime{font:11px var(--mono);color:var(--accent);flex:none}
-#selectionQuote{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
-#barStatus{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--text);font-weight:600}
-#barStatus:empty{display:none}#barStatus:not(:empty)~#selectionQuote,.edit-bar-line:has(#barStatus:not(:empty)) #selectionQuote{display:none}
-.bar-hint{flex:none;color:var(--faint);font-size:11px}.edit-bar-line:has(#barStatus:not(:empty)) .bar-hint{display:none}
-@media(max-width:650px){.transcript-selection.edit-bar{padding:6px 12px 4px}.bar-hint{display:none}.bar-primary{order:1}.bar-input{order:2;flex:1 1 0;min-width:0}.bar-x{order:3;margin-left:0}.bar-actions{order:4;flex:0 0 100%;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}.edit-bar-line{height:18px;padding-top:2px}}
+.bar-tab{position:absolute;right:7px;top:50%;translate:0 -50%;pointer-events:none}
+/* On a phone the bar spans the width, docked at the bottom of the words (or the top when it would cover them). 16px text stops the zoom on focus. */
+@media(max-width:650px){.transcript-selection.edit-bar{width:calc(100vw - 16px)}.bar-input input,.bar-ghost{font-size:16px}.bar-primary{padding:0 12px}}
+@media(pointer:coarse){.edit-bar button,.bar-input{min-height:44px;height:44px}.bar-input input,.bar-ghost{line-height:42px}.bar-x{width:44px}}

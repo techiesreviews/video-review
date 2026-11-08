@@ -129,10 +129,24 @@ try{
   await page.locator('#timeMode').click();assert.equal(await text('#timeMode'),'Source time');assert.equal(await text('#duration'),'0:08');
   await page.locator('#timeMode').click();
 
+  // The bar opens next to the selected words: just below or above them, never on them, and inside the transcript.
+  async function nextToWords(label,anchor=null){
+    await page.waitForTimeout(50);
+    const bar=await page.locator('#transcriptSelection').boundingBox(),area=await page.locator('#transcriptText').boundingBox();
+    const words=await page.locator(anchor??'#transcriptText .selected').evaluateAll(nodes=>nodes.map(n=>{const r=n.getBoundingClientRect();return {top:r.top,bottom:r.bottom,left:r.left,right:r.right};}));
+    assert.ok(words.length,`${label}: words are selected`);
+    const top=Math.min(...words.map(r=>r.top)),bottom=Math.max(...words.map(r=>r.bottom));
+    const below=bar.y-bottom,above=top-(bar.y+bar.height);
+    assert.ok((below>=0&&below<=80)||(above>=0&&above<=80),`${label}: the bar is right next to the words (gap below ${below}, above ${above}).`);
+    assert.ok(bar.y>=area.y-1&&bar.y+bar.height<=await page.evaluate(()=>innerHeight)+1,`${label}: the bar never goes above the transcript or off screen.`);
+    assert.ok(bar.x>=0&&bar.x+bar.width<=await page.evaluate(()=>innerWidth)+1,`${label}: the bar stays on screen.`);
+  }
+
   // Ask agent on a selected word.
   await page.locator('.transcript-word').nth(1).click();
   await page.locator('.transcript-word').nth(2).click({modifiers:['Shift']});
   assert.equal(await page.evaluate(()=>document.activeElement.id),'transcriptNote','Selecting words puts the cursor in the edit bar.');
+  await nextToWords('a Shift-click range');
   await page.keyboard.type('Tighten this and keep the laugh');await page.keyboard.press('Enter');
   await page.waitForFunction(()=>document.querySelector('#barStatus').textContent.includes('No agent connected'));
   assert.match(await text('#barStatus'),/saved and waits for it/,'With no agent attached the bar says so and keeps the note.');
@@ -164,9 +178,13 @@ try{
   await page.locator('.transcript-word').nth(8).click();
   assert.equal(await page.evaluate(()=>document.activeElement.id),'transcriptNote');
   assert.equal((await page.locator('#transcriptSelection button:visible').first().innerText()).trim(),'Delete','Delete is the first button.');
+  assert.deepEqual(await page.locator('#transcriptSelection button:visible').allInnerTexts(),['Delete','×'],'Only Delete and the close x: the quick buttons are gone.');
+  await nextToWords('a click on one word');
+  assert.equal(await page.locator('#barTab').isVisible(),false,'The Tab key shows only while there is a suggestion.');
   const before=await page.locator('#transcriptSelection').boundingBox(),boxBefore=await page.locator('#transcriptNote').boundingBox();
   await page.keyboard.type('Tigh');
   assert.ok((await page.locator('#transcriptGhost').textContent()).endsWith('ten this and keep the laugh'),'A grey suggestion appears, from the note sent a moment ago.');
+  assert.equal(await page.locator('#barTab').isVisible(),true,'The Tab key shows on the box while a suggestion is there.');
   await page.keyboard.press('Tab');
   assert.equal(await page.locator('#transcriptNote').inputValue(),'Tighten this and keep the laugh','Tab takes the suggestion.');
   assert.equal(await page.evaluate(()=>document.activeElement.id),'transcriptNote','Tab does not leave the box when it completes.');
@@ -210,25 +228,6 @@ try{
   assert.equal(await page.locator('#transcriptNote').inputValue(),'x','Letters typed while a cut saves stay in the box.');
   await page.unroute('**/api/transcript/**');
   await page.keyboard.press('Escape');await page.keyboard.press('Control+z');await page.waitForTimeout(250);assert.equal((await editsOnDisk()).length,edits);
-  // A quick button then detail: Enter adds the detail to that same note, and so does a short pause or clearing the selection at once.
-  await page.locator('[data-transcript-action="clipped"]').click();await page.waitForFunction(()=>document.querySelector('#barStatus').textContent.includes('Word clipped'));
-  const count=(await notesOnDisk()).length;
-  await page.keyboard.type('keep the breath');await page.keyboard.press('Enter');await page.waitForFunction(()=>document.querySelector('#barStatus').textContent.includes('Note updated'));
-  assert.equal((await notesOnDisk()).length,count,'The detail joins the quick note instead of making a new one.');
-  assert.ok((await notesOnDisk()).at(-1).text.endsWith(' — keep the breath'));
-  await page.locator('[data-transcript-action="clipped"]').click();await page.waitForFunction(()=>document.querySelector('#barStatus').textContent.includes('Word clipped'));
-  await page.keyboard.type('keep going');await page.waitForTimeout(700);
-  assert.ok((await notesOnDisk()).at(-1).text.endsWith(' — keep going'),'Detail is saved after a short pause in typing.');
-  await page.locator('[data-transcript-action="clipped"]').click();await page.waitForFunction(()=>document.querySelector('#barStatus').textContent.includes('Word clipped'));
-  await page.route('**/api/comments',async route=>{if(route.request().method()==='POST')await new Promise(r=>setTimeout(r,300));await route.continue();});
-  await page.keyboard.type('a');await page.keyboard.press('Enter');await page.keyboard.type('b');await page.waitForTimeout(900);
-  await page.unroute('**/api/comments');
-  assert.ok((await notesOnDisk()).at(-1).text.endsWith(' — a'),'Letters typed while the detail saves do not join that note.');
-  assert.equal(await page.locator('#transcriptNote').inputValue(),'b','They stay in the box for the next note.');
-  await page.keyboard.press('Escape');
-  await page.locator('[data-transcript-action="extend_after"]').click();await page.waitForFunction(()=>document.querySelector('#barStatus').textContent.includes('More after'));
-  await page.keyboard.type('until the laugh ends');await page.locator('#clearTranscriptSelection').click();await page.waitForTimeout(300);
-  assert.ok((await notesOnDisk()).at(-1).text.endsWith(' — until the laugh ends'),'Detail typed just before clearing the selection is still saved.');
   // Undo cut while a note for other words is half typed: the note and its words stay as they are.
   await page.locator('.transcript-word').nth(8).click();await page.keyboard.type('cut note');await page.locator('[data-transcript-action="remove"]').click();await page.waitForTimeout(250);assert.equal((await editsOnDisk()).length,edits+1);
   await page.locator('.transcript-word').nth(12).click();await page.keyboard.type('other words');await page.locator('#undoTranscriptCut').click();await page.waitForTimeout(250);
@@ -257,6 +256,68 @@ try{
   await page.locator('.transcript-word').nth(8).click();await page.locator('[data-transcript-action="remove"]').click();await page.waitForTimeout(250);
   assert.equal((await editsOnDisk()).length,edits+1,'The Delete button does the same.');
   await page.locator('#undoTranscriptCut').click();await page.waitForTimeout(250);assert.equal((await editsOnDisk()).length,edits);
+  // Deleted words stay in the transcript, struck through, with a Restore mark; the cut still skips them.
+  assert.equal(await page.locator('.transcript-word.removed-word:visible').count(),4,'The words of both cuts are still shown.');
+  assert.deepEqual(await page.locator('.transcript-word.removed-word').allInnerTexts(),['word4','word5','word10','word11']);
+  assert.match(await page.locator('.transcript-word.removed-word').first().evaluate(n=>getComputedStyle(n).textDecorationLine),/line-through/,'Deleted words are struck through.');
+  assert.equal(await page.locator('.transcript-word').nth(4).getAttribute('aria-label'),'Deleted: word4, 0:02.050','A screen reader hears that the word is deleted.');
+  assert.equal(await page.locator('.restore-cut:visible').count(),2,'Each cut has its Restore mark.');
+  assert.equal(await text(await text('#clockLabel')==='Cut'?'#duration':'#altDuration'),'0:06','The cut still skips the deleted words.');
+  // Selecting deleted words turns Delete into Restore; Backspace never cuts them twice.
+  await page.locator('.transcript-word').nth(4).click();await nextToWords('a deleted word');
+  assert.equal((await page.locator('#transcriptSelection button:visible').first().innerText()).trim(),'Restore','On deleted words the first button brings them back.');
+  await page.keyboard.press('Backspace');await page.waitForTimeout(250);assert.equal((await editsOnDisk()).length,edits,'Backspace does not cut deleted words again.');
+  await page.locator('[data-transcript-action="remove"]').click();await page.waitForTimeout(250);
+  assert.deepEqual((await editsOnDisk()).map(e=>e.id),['cut-b'],'Restore brings back only that cut.');
+  assert.equal(await page.locator('.transcript-word').nth(4).evaluate(n=>n.classList.contains('removed-word')),false);
+  assert.equal(await page.locator('.transcript-word.selected').first().innerText(),'word4','The words stay selected.');
+  assert.equal((await page.locator('#transcriptSelection button:visible').first().innerText()).trim(),'Delete','and the button is Delete again.');
+  assert.equal(await text('#barStatus'),'Brought back.');assert.equal(await page.evaluate(()=>document.activeElement.id),'transcriptNote');
+  await page.locator('.transcript-word').nth(5).click({modifiers:['Shift']});await page.locator('[data-transcript-action="remove"]').click();await page.waitForTimeout(250);
+  assert.equal((await editsOnDisk()).length,edits,'Delete cuts them again.');
+  await page.keyboard.press('Escape');
+  const cutA=(await editsOnDisk()).find(e=>e.wordIds.includes('W4')).id;
+  await page.locator(`.restore-cut[data-edit-id="${cutA}"]`).click();await page.waitForTimeout(250);
+  assert.deepEqual((await editsOnDisk()).map(e=>e.id),['cut-b'],'One click on a Restore mark brings that cut back.');
+  await page.keyboard.press('Control+z');await page.waitForTimeout(250);assert.equal((await editsOnDisk()).length,0,'Ctrl+Z undoes the last cut that is left.');
+  assert.equal(await page.locator('.transcript-word.removed-word').count(),0);
+  // Delete over kept and deleted words cuts only the kept ones, so each word stays in one cut.
+  await page.keyboard.press('Escape');await page.locator('.transcript-word').nth(5).click();await page.locator('[data-transcript-action="remove"]').click();await page.waitForTimeout(250);
+  await page.locator('.transcript-word').nth(3).click();await page.locator('.transcript-word').nth(7).click({modifiers:['Shift']});await page.locator('[data-transcript-action="remove"]').click();await page.waitForTimeout(250);
+  let mixed=await editsOnDisk();
+  assert.deepEqual(mixed.map(e=>e.wordIds),[['W5'],['W3','W4'],['W6','W7']],'Two pieces, around the word already deleted.');
+  assert.equal(mixed[1].commentId,mixed[2].commentId,'The pieces share one note.');
+  const pieceNote=async()=>(await notesOnDisk()).find(n=>n.id===mixed[1].commentId);
+  assert.deepEqual((({quote,firstWordId,lastWordId})=>({quote,firstWordId,lastWordId}))((await pieceNote()).editRequest),{quote:'word3 word4 … word6 word7',firstWordId:'W3',lastWordId:'W7'},'The note names only the cut words.');
+  await page.keyboard.press('Escape');await page.locator(`.restore-cut[data-edit-id="${mixed[2].id}"]`).click();await page.waitForTimeout(250);
+  assert.deepEqual((await editsOnDisk()).map(e=>e.id),[mixed[0].id,mixed[1].id],'One piece comes back on its own.');
+  assert.equal((await pieceNote()).status,'open','Its note stays open while the other piece is still cut.');
+  await page.locator(`.restore-cut[data-edit-id="${mixed[1].id}"]`).click();await page.waitForTimeout(250);
+  assert.equal((await pieceNote()).status,'done','Once the last piece is back the note is resolved.');
+  await page.locator('.transcript-word').nth(5).click();await page.locator('.transcript-word').nth(7).click({modifiers:['Shift']});await page.locator('[data-transcript-action="remove"]').click();await page.waitForTimeout(250);
+  let fromDeleted=await editsOnDisk();assert.deepEqual(fromDeleted.at(-1).wordIds,['W6','W7'],'Starting on a deleted word: only the kept words are cut.');
+  assert.equal((await notesOnDisk()).find(n=>n.id===fromDeleted.at(-1).commentId).startMs,fromDeleted.at(-1).startMs,'and the note starts where the cut starts.');
+  await page.locator('#transcriptText').focus();await page.keyboard.press('Control+z');await page.waitForTimeout(250);assert.equal((await editsOnDisk()).length,1);
+  await page.locator('.transcript-word').nth(3).click();await page.locator('.transcript-word').nth(7).click({modifiers:['Shift']});await page.locator('[data-transcript-action="remove"]').click();await page.waitForTimeout(250);
+  mixed=await editsOnDisk();assert.equal(mixed.length,3);
+  await page.locator(`.restore-cut[data-edit-id="${mixed[0].id}"]`).click();await page.waitForTimeout(250);
+  assert.equal(await page.locator('.transcript-word').nth(5).evaluate(n=>n.classList.contains('removed-word')),false,'Restoring the earlier cut really brings its word back.');
+  await page.keyboard.press('Escape');await page.locator('#transcriptText').focus();await page.keyboard.press('Control+z');await page.waitForTimeout(250);
+  assert.equal((await editsOnDisk()).length,0,'Ctrl+Z brings back both pieces of that Delete at once.');
+  // The bar also opens next to a pause, and follows the words when the transcript scrolls.
+  await page.keyboard.press('Escape');
+  await writeFile(join(temp,'transcripts/tone.json'),JSON.stringify({words,cuts:[],revision:'synthetic',draftEdits:removed}));
+  await page.reload();await page.waitForSelector('.transcript-word');await page.waitForFunction(()=>document.querySelector('video').readyState>=2);
+  await page.locator('.transcript-word').nth(15).click();await nextToWords('a word, before scrolling');
+  await page.locator('#transcriptText').evaluate(n=>{n.style.paddingBottom='600px';n.scrollTop+=40;});await page.waitForTimeout(100);await nextToWords('a word, after scrolling');
+  await page.locator('#transcriptText').evaluate(n=>{n.style.paddingBottom='';});await page.keyboard.press('Escape');
+  // Screenshots for the PR: desktop, light and dark (the app has one light theme, so dark must not break it).
+  await mkdir('data/test-artifacts',{recursive:true});
+  for(const scheme of ['light','dark']){
+    await page.emulateMedia({colorScheme:scheme});await page.locator('.transcript-word').nth(7).click();await page.keyboard.type('Tigh');await nextToWords(`desktop ${scheme}`);
+    await page.screenshot({path:`data/test-artifacts/edit-bar-desktop-${scheme}.png`});await page.keyboard.press('Escape');await page.keyboard.press('Escape');
+  }
+  await page.emulateMedia({colorScheme:'light'});
   await rm(join(temp,'agent-seen.json'),{force:true});
 
   // Everything removed: nothing to play, and the page says so.
@@ -271,10 +332,16 @@ try{
   await page.setViewportSize({width:390,height:844});await page.waitForTimeout(100);
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'No sideways scrolling on a phone.');
   await page.locator('.transcript-word').nth(1).click();assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'The edit bar fits a phone without sideways scrolling.');
+  await nextToWords('phone');
   await mkdir('data/test-artifacts',{recursive:true});await page.screenshot({path:'data/test-artifacts/cut-preview-mobile.png',fullPage:true});
+  for(const scheme of ['light','dark']){
+    await page.emulateMedia({colorScheme:scheme});await page.locator('.transcript-word').nth(4).click();await nextToWords(`phone ${scheme}`);
+    await page.screenshot({path:`data/test-artifacts/edit-bar-phone-${scheme}.png`});
+  }
+  await page.emulateMedia({colorScheme:'light'});
   await page.setViewportSize({width:1440,height:1040});await page.locator('.transcript-word').nth(1).click();await page.keyboard.type('Tigh');await page.screenshot({path:'data/test-artifacts/cut-preview-desktop.png'});
   assert.deepEqual(errors,[]);
-  console.log('PASS: play whole cut, both clocks, Space, join fade on and off, cut-time seeking, ask agent on a word and a frame, the edit bar (autofocus, Tab, Backspace, Delete, Ctrl+Z, no-agent line, no typed text lost), all-removed cut, phone layout.');
+  console.log('PASS: play whole cut, both clocks, Space, join fade on and off, cut-time seeking, ask agent on a word and a frame, the edit bar (next to the words, autofocus, Tab, Backspace, Delete, Ctrl+Z, no-agent line, no typed text lost, deleted words shown and restored), all-removed cut, phone layout.');
 }finally{
   await browser?.close();server.kill();await new Promise(r=>server.once('exit',r));assert.equal(dirname(temp),resolve(tmpdir()));assert.ok(basename(temp).startsWith('video-cut-preview-'));await rm(temp,{recursive:true,force:true});
 }
