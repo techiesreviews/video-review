@@ -13,6 +13,8 @@ export function removedRanges(edits=[]){
   const result=[];for(const edit of [...edits].sort((a,b)=>a.startMs-b.startMs)){const last=result.at(-1);if(last&&edit.startMs<=last[1])last[1]=Math.max(last[1],edit.endMs);else result.push([edit.startMs,edit.endMs]);}return result;
 }
 export function skipRemoved(ms,edits=[]){const range=removedRanges(edits).find(([a,b])=>ms>=a&&ms<b);return range?range[1]:ms;}
+/** What playback skips: the cut's removals while the cuts switch is on; a Hear cut audition is a removal being tried and always plays skipped. */
+export function playbackRemovals(cutsOn,edits=[],audition=null){return [...(cutsOn?edits:[]),...(audition?[audition]:[])];}
 export function previewDuration(durationMs,edits=[]){return durationMs-removedRanges(edits).reduce((n,[a,b])=>n+b-a,0);}
 export const JOIN_FADE_MS=15;
 /** The review-file ranges left after the removals, in playback order. */

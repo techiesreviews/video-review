@@ -7,7 +7,7 @@ export function createWaveform({media,seek,pause,onRange,onAudition}){
   let visible=true;try{visible=localStorage.getItem('techies-review-waveform')!=='false';}catch{}
   let zoomView=null;
   const zoomed=()=>view.endMs-view.startMs<duration-1;
-  function positionPins(){const pins=$('#pins'),parent=visible&&!document.body.classList.contains('cut-time')?(range||zoomed()?overviewWrap:wrap):$('.track');if(pins&&pins.parentElement!==parent)parent.append(pins);}
+  function positionPins(){const pins=$('#pins'),parent=visible?(range||zoomed()?overviewWrap:wrap):$('.track');if(pins&&pins.parentElement!==parent)parent.append(pins);}
   function visibility(){panel.hidden=!visible;document.body.classList.toggle('waveform-enabled',visible);$('#waveformToggle').setAttribute('aria-pressed',String(visible));positionPins();if(visible)draw();}
   visibility();
   $('#waveformToggle').onclick=()=>{visible=!visible;try{localStorage.setItem('techies-review-waveform',String(visible));}catch{}visibility();};

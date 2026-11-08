@@ -2,7 +2,7 @@ import { openBackend, pickVideoFile, canRememberFiles } from './backend.js';
 import { sourceSpans, thread } from './review-core.js';
 import { createTranscriptPanel } from './transcript-panel.js';
 import { createLibraryPanel } from './library-panel.js';
-import { fileToCut, cutToFile, cutLength } from './cut-core.js';
+import { cutToFile, cutLength } from './cut-core.js';
 import { createJoinFade } from './join-fade.js';
 import { createCutPlayback } from './cut-playback.js';
 
@@ -21,7 +21,7 @@ function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className
 function download(name,data){const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=el('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 
 let previewStop=null;
-const transcriptPanel=createTranscriptPanel({media:video,seek:ms=>{if(video.readyState>=1)seek(ms);else pendingSeek=ms;},pause:()=>video.pause(),playContext:(start,end)=>{seek(start);previewStop=end;video.play().catch(error=>showToastError(error.message));},showError:showToastError,onCutsChange:cutsChanged,notify:text=>toast(text),togglePlay:()=>togglePlay(),agentConnected:async()=>{try{return !!(await backend.agentConnected?.());}catch{return false;}},
+const transcriptPanel=createTranscriptPanel({media:video,seek:ms=>{if(video.readyState>=1)seek(ms);else pendingSeek=ms;},pause:()=>video.pause(),playContext:(start,end)=>{seek(start);previewStop=end;video.play().catch(error=>showToastError(error.message));},showError:showToastError,cutsOn:()=>cutsOn,notify:text=>toast(text),togglePlay:()=>togglePlay(),agentConnected:async()=>{try{return !!(await backend.agentConnected?.());}catch{return false;}},
   request:async selection=>{if(!active)return;video.pause();const videoId=active.id,createdAt=new Date().toISOString();setSaveState('Saving…');const list=await backend.apply({action:'add',videoId,startMs:selection.startMs,endMs:selection.endMs,text:selection.text,editRequest:selection.editRequest,createdAt});setNotes(list);if(filter!=='open')setFilter('open');setSaveState(savedLabel());return list.findLast(n=>n.videoId===videoId&&n.createdAt===createdAt&&n.text===selection.text);},
   updateRequest:async(id,text)=>{const list=await backend.apply({action:'update',id,text});setNotes(list);setSaveState(savedLabel());return list.find(n=>n.id===id);},
   cancelRequest:async id=>{setNotes(await backend.apply({action:'reply',id,author:'you',text:'Undid this preview removal; keep the passage.',status:'done'}));}});
@@ -31,21 +31,17 @@ const libraryPanel=createLibraryPanel({getBackend:()=>backend,showError:showToas
   remove:async(id,title)=>{if(!confirm(`Remove “${title}” from the library? The recording and review notes are kept in Removed videos.`))return false;await backend.removeVideo(id);await loadNotes();toast('Removed from the library.',async()=>{await backend.restoreVideo(id);await loadNotes();selectVideo(id);});return true;},
   restore:async id=>{await backend.restoreVideo(id);await loadNotes();selectVideo(id);toast('Video and review notes restored.');}});
 
-// Two clocks: source time is the review file's own, cut time is what remains after the preview removals.
-let cutTime=false;try{cutTime=localStorage.getItem('techies-review-time-mode')==='cut';}catch{}
-const cutOf=ms=>fileToCut(ms,active.durationMs,transcriptPanel.edits());
+// The cuts switch: on plays the removals skipped, off plays the original. The clocks always read the review file's own time.
+let cutsOn=true;try{cutsOn=localStorage.getItem('techies-review-cuts')!=='off';}catch{}
 const fileAt=ms=>cutToFile(ms,active.durationMs,transcriptPanel.edits());
 const cutEnd=()=>cutLength(active.durationMs,transcriptPanel.edits());
-const shown=ms=>cutTime?cutOf(ms):ms;
-function setTimeMode(on){cutTime=on;try{localStorage.setItem('techies-review-time-mode',on?'cut':'source');}catch{}document.body.classList.toggle('cut-time',on);$('#timeMode').textContent=on?'Cut time':'Source time';$('#timeMode').setAttribute('aria-pressed',String(on));$('#clockLabel').textContent=on?'Cut':'Source';$('#altLabel').textContent=on?'Source':'Cut';transcriptPanel.reflow();if(!active)return;renderDuration();renderTime();if(editing)drawPins(mine());else drawNotes();}
-function cutsChanged(){if(!active)return;renderDuration();renderTime();if(cutTime){if(editing)drawPins(mine());else drawNotes();}}
+function setCuts(on){cutsOn=on;try{localStorage.setItem('techies-review-cuts',on?'on':'off');}catch{}$('#cutsSwitch').setAttribute('aria-checked',String(on));$('#cutsState').textContent=on?'Cuts on':'Cuts off';}
 
 // Playback
 const joinFade=createJoinFade(video),cutPlayback=createCutPlayback({video,removals:()=>transcriptPanel.removals(),fps:()=>active?.fps||30,fade:joinFade});
-function setJoinFade(on){joinFade.setEnabled(on);$('#joinFade').setAttribute('aria-pressed',String(on));}
 function clamp(ms){return Math.max(0,Math.min(active.durationMs,ms));}
 function currentMs(){return explicitTime??Math.round((video.paused||document.body.classList.contains('transcript-only')?video.currentTime:presented)*1000);}
-function renderTime(){if(!active)return;const ms=currentMs(),cut=cutOf(ms);$('#currentTime').textContent=precise(cutTime?cut:ms);$('#altTime').textContent=precise(cutTime?ms:cut);$('#frameInfo').textContent=`frame ${frameOf(ms)}`;$('#seek').value=(cutTime?cut:ms)/1000;$('#playIcon').setAttribute('d',video.paused?PLAY:PAUSE);$('#play').setAttribute('aria-label',video.paused?'Play':'Pause');renderStamp();highlightActive(ms);transcriptPanel.tick(ms,!video.paused);}
+function renderTime(){if(!active)return;const ms=currentMs();$('#currentTime').textContent=precise(ms);$('#frameInfo').textContent=`frame ${frameOf(ms)}`;$('#seek').value=ms/1000;$('#playIcon').setAttribute('d',video.paused?PLAY:PAUSE);$('#play').setAttribute('aria-label',video.paused?'Play':'Pause');renderStamp();highlightActive(ms);transcriptPanel.tick(ms,!video.paused);}
 function enforcePreview(){if(video.paused)return;cutPlayback.tick();if(previewStop!==null&&video.currentTime*1000>=previewStop){video.pause();previewStop=null;}}
 function frameCallback(now,metadata){enforcePreview();presented=metadata.mediaTime;if(!video.paused)explicitTime=null;renderTime();video.requestVideoFrameCallback(frameCallback);}
 if(video.requestVideoFrameCallback)video.requestVideoFrameCallback(frameCallback);
@@ -64,19 +60,19 @@ video.addEventListener('loadedmetadata',()=>{$('#loading').style.display='none';
 video.addEventListener('pause',()=>reportView());video.addEventListener('seeked',()=>reportView());
 // A file replaced on disk stops playing; reloadIfChanged then picks up the new render.
 video.addEventListener('error',()=>{if(!video.getAttribute('src'))return;$('#loading').style.display='grid';$('#loading').textContent=backend?.mode==='local'?'Could not load this video. Check that the original file is still available.':'This browser cannot play this file. Try Chrome or Edge, or an MP4 (H.264) export.';clearTimeout(reloadTimer);reloadTimer=setTimeout(()=>reloadIfChanged().catch(()=>{}),3000);});
-function renderDuration(){const length=cutEnd();$('#duration').textContent=short(cutTime?length:active.durationMs);$('#altDuration').textContent=short(cutTime?active.durationMs:length);$('#seek').max=(cutTime?length:active.durationMs)/1000;}
+function renderDuration(){$('#duration').textContent=short(active.durationMs);$('#seek').max=active.durationMs/1000;}
 // An older local file must never overwrite the new render's declared cut/map.
 function syncDuration(){const ms=Math.round(video.duration*1000);if(!active||!isFinite(ms))return false;if(Math.abs(ms-active.durationMs)<=Math.max(60,1000/active.fps))return true;
   video.pause();video.removeAttribute('src');video.load();gate('Choose the updated video',`This file is ${short(ms)}, while this review is ${short(active.durationMs)}. Choose the updated render; your transcript and comments are kept.`,'Choose updated '+active.fileName+'…',()=>attachFile(active));return false;}
 function seek(ms,snap=false){if(!active)return;previewStop=null;video.pause();$('#bigPlay').hidden=true;ms=clamp(ms);if(snap)ms=Math.round(ms*active.fps/1000)*1000/active.fps;explicitTime=Math.round(ms);video.currentTime=ms/1000;renderTime();}
-function step(direction){const frame=direction*1000/active.fps;if(cutTime)seek(fileAt(cutOf(currentMs())+frame));else seek((frameOf(currentMs())+direction)*1000/active.fps);}
-function jumpBy(ms){seek(cutTime?fileAt(cutOf(currentMs())+ms):currentMs()+ms);}
+function step(direction){seek((frameOf(currentMs())+direction)*1000/active.fps);}
+function jumpBy(ms){seek(currentMs()+ms);}
 async function togglePlay(){if(!video.getAttribute('src'))return;previewStop=null;try{if(video.paused){const ms=video.currentTime*1000,next=transcriptPanel.skip(ms);if(next!==ms)video.currentTime=next/1000;await video.play();}else video.pause();}catch(e){showError(e.message);}}
-async function playWholeCut(){if(!active||!video.getAttribute('src'))return;if(cutEnd()<=0){showToastError('Everything is removed, so there is no cut to play. Restore a passage first.');return;}transcriptPanel.showCut();seek(fileAt(0));try{await video.play();}catch(e){showError(e.message);}}
+async function playWholeCut(){if(!active||!video.getAttribute('src'))return;if(cutEnd()<=0){showToastError('Everything is removed, so there is no cut to play. Restore a passage first.');return;}setCuts(true);transcriptPanel.showCut();seek(fileAt(0));try{await video.play();}catch(e){showError(e.message);}}
 
 // Composer: the comment is pinned to the playhead unless a start or range has been set.
 const startMs=()=>pinnedStart??currentMs();
-function renderStamp(){if(!active)return;const start=startMs(),label=pinnedEnd!==null?`${short(shown(start))} – ${short(shown(pinnedEnd))}`:short(shown(start));$('#stamp').textContent=pinnedEnd!==null?`${precise(shown(start))} – ${precise(shown(pinnedEnd))}`:precise(shown(start));$('#saveNote').textContent='Comment at '+label;$('#clearRange').hidden=pinnedStart===null&&pinnedEnd===null;if(!$('#rangeEditor').hidden&&!$('#rangeEditor').contains(document.activeElement)){$('#noteStart').value=precise(start);$('#noteEnd').value=pinnedEnd===null?'':precise(pinnedEnd);}}
+function renderStamp(){if(!active)return;const start=startMs(),label=pinnedEnd!==null?`${short(start)} – ${short(pinnedEnd)}`:short(start);$('#stamp').textContent=pinnedEnd!==null?`${precise(start)} – ${precise(pinnedEnd)}`:precise(start);$('#saveNote').textContent='Comment at '+label;$('#clearRange').hidden=pinnedStart===null&&pinnedEnd===null;if(!$('#rangeEditor').hidden&&!$('#rangeEditor').contains(document.activeElement)){$('#noteStart').value=precise(start);$('#noteEnd').value=pinnedEnd===null?'':precise(pinnedEnd);}}
 function openComposer(){if(!active)return;video.pause();$('#composer').classList.add('open');$('#noteText').focus();renderStamp();}
 function resetComposer(){$('#noteText').value='';pinnedStart=pinnedEnd=null;pendingEditRequest=null;$('#rangeEditor').hidden=true;$('#composer').classList.remove('open');autosize();updateSend();showError('');renderStamp();}
 function autosize(){const t=$('#noteText');t.style.height='auto';t.style.height=Math.min(t.scrollHeight,200)+'px';}
@@ -92,7 +88,7 @@ function setSaveState(text){$('#saveState').textContent=text;}
 const savedLabel=()=>backend?.mode==='local'?'Saved on this computer':'Saved in this browser';
 function setNotes(list){notes=list;lastSnapshot=JSON.stringify(list);drawNotes();}
 function mine(){return active?notes.filter(n=>n.videoId===active.id).sort((a,b)=>a.startMs-b.startMs):[];}
-function drawPins(all){const pins=$('#pins'),scale=cutTime?cutEnd():active.durationMs;pins.replaceChildren();if(!(scale>0))return;for(const n of all){const pin=el('button','pin'+(n.status==='done'?' done':'')+(n.endMs!==null?' range':''));pin.style.left=`${shown(n.startMs)/scale*100}%`;if(n.endMs!==null)pin.style.width=`${(shown(n.endMs)-shown(n.startMs))/scale*100}%`;pin.setAttribute('aria-label','Jump to comment at '+short(shown(n.startMs)));const tip=el('span','pin-tip');tip.append(el('b',null,short(shown(n.startMs))),document.createTextNode(' '+n.text));pin.append(tip);pin.onclick=()=>focusNote(n);pins.append(pin);}}
+function drawPins(all){const pins=$('#pins'),scale=active.durationMs;pins.replaceChildren();if(!(scale>0))return;for(const n of all){const pin=el('button','pin'+(n.status==='done'?' done':'')+(n.endMs!==null?' range':''));pin.style.left=`${n.startMs/scale*100}%`;if(n.endMs!==null)pin.style.width=`${(n.endMs-n.startMs)/scale*100}%`;pin.setAttribute('aria-label','Jump to comment at '+short(n.startMs));const tip=el('span','pin-tip');tip.append(el('b',null,short(n.startMs)),document.createTextNode(' '+n.text));pin.append(tip);pin.onclick=()=>focusNote(n);pins.append(pin);}}
 function drawNotes(){const list=$('#comments');list.replaceChildren();$('#pins').replaceChildren();
   if(!active){$('#count').textContent='0';$('#countLabel').textContent='comments';return;}
   const all=mine(),open=all.filter(n=>n.status==='open').length,shown=all.filter(n=>n.status===filter);$('#count').textContent=filter==='open'?open:shown.length;$('#countLabel').textContent=(filter==='open'?'open ':'resolved ')+((filter==='open'?open:shown.length)===1?'comment':'comments');drawPins(all);
@@ -102,7 +98,7 @@ const WHO={you:['Y','You',''],ai:['AI','AI editor',' ai']};
 function person(author){const [initials,name,cls]=WHO[author]||WHO.you;return [el('span','avatar'+cls,initials),name];}
 function inlineBox(value,placeholder,label,onSave){const box=el('textarea','edit-box');box.value=value;box.rows=value?3:2;box.placeholder=placeholder;const save=el('button','primary small',label),cancel=el('button','link','Cancel');const done=()=>{editing=null;drawNotes();};save.onclick=async()=>{const text=box.value.trim();if(text){editing=null;await onSave(text);}};cancel.onclick=done;box.onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();save.click();}if(e.key==='Escape')done();};const row=el('div','edit-row');row.append(cancel,save);setTimeout(()=>{box.focus();box.setSelectionRange(box.value.length,box.value.length);});return [box,row];}
 function card(n){const c=el('article','comment'+(n.status==='done'?' done':''));c.dataset.id=n.id;c.dataset.start=n.startMs;c.dataset.end=n.endMs??n.startMs;const author=n.author||'you',[avatar,name]=person(author);
-  const main=el('div','comment-main'),meta=el('div','comment-meta');const time=el('button','ts',n.endMs!==null?`${short(shown(n.startMs))} – ${short(shown(n.endMs))}`:short(shown(n.startMs)));time.title=`Source ${format(n.startMs)}${n.endMs!==null?' → '+format(n.endMs):''} · frame ${frameOf(n.startMs)}`;time.onclick=()=>focusNote(n);meta.append(el('b',null,name),time);if(n.editRequest?.type==='change')meta.append(el('span','ask-badge','For agent'));meta.append(el('span','ago',ago(n.createdAt)));
+  const main=el('div','comment-main'),meta=el('div','comment-meta');const time=el('button','ts',n.endMs!==null?`${short(n.startMs)} – ${short(n.endMs)}`:short(n.startMs));time.title=`Source ${format(n.startMs)}${n.endMs!==null?' → '+format(n.endMs):''} · frame ${frameOf(n.startMs)}`;time.onclick=()=>focusNote(n);meta.append(el('b',null,name),time);if(n.editRequest?.type==='change')meta.append(el('span','ask-badge','For agent'));meta.append(el('span','ago',ago(n.createdAt)));
   const resolve=el('button','resolve');resolve.title=n.status==='done'?'Reopen':'Resolve';resolve.setAttribute('aria-label',resolve.title);resolve.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.5 2.5L16 9.5"/></svg>';resolve.onclick=()=>update(n,{status:n.status==='done'?'open':'done'});meta.append(resolve);main.append(meta);
   if(editing?.id===n.id&&editing.mode==='edit')main.append(...inlineBox(n.text,'','Save',text=>update(n,{text})));else main.append(el('p','text',n.text));
   if(n.editRequest?.type==='change'){const r=n.editRequest,frames=r.endFrame!=null?`frames ${r.startFrame}–${r.endFrame}`:`frame ${r.startFrame}`;main.append(el('p','ask-where',r.quote?`On “${r.quote}” · ${frames}`:`On ${frames}`));}
@@ -215,9 +211,9 @@ $('#stamp').onclick=()=>{const editor=$('#rangeEditor');editor.hidden=!editor.hi
 for(const id of ['#noteStart','#noteEnd']){$(id).addEventListener('change',()=>{try{readRangeEditor();showError('');seek(pinnedStart);}catch(e){showError(e.message);}});$(id).addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();$(id).dispatchEvent(new Event('change'));$('#noteText').focus();}});}
 $('#clearRange').onclick=()=>{pinnedStart=pinnedEnd=null;$('#rangeEditor').hidden=true;renderStamp();};
 $('#importTranscript').onclick=()=>{if(!active)return showToastError('Open a video first.');const selected=active,input=Object.assign(el('input'),{type:'file',accept:'application/json,.json'});input.onchange=async()=>{if(!input.files[0])return;try{await transcriptPanel.import(selected,backend,input.files[0]);toast('Transcript attached. No transcription credits used.');}catch(error){showToastError(error.message);}};input.click();};
-$('#playCut').onclick=playWholeCut;$('#timeMode').onclick=()=>setTimeMode(!cutTime);$('#joinFade').onclick=()=>setJoinFade(!joinFade.enabled);$('#askAgentNote').onclick=()=>submit(null,true);$('#joinFade').setAttribute('aria-pressed',String(joinFade.enabled));setTimeMode(cutTime);
+$('#playCut').onclick=playWholeCut;$('#cutsSwitch').onclick=()=>setCuts(!cutsOn);$('#askAgentNote').onclick=()=>submit(null,true);setCuts(cutsOn);
 $('#play').onclick=togglePlay;$('#bigPlay').onclick=togglePlay;video.onclick=togglePlay;
-$('#prevFrame').onclick=()=>active&&step(-1);$('#nextFrame').onclick=()=>active&&step(1);$('#seek').oninput=e=>{const ms=Number(e.target.value)*1000;seek(cutTime?fileAt(ms):ms);};
+$('#prevFrame').onclick=()=>active&&step(-1);$('#nextFrame').onclick=()=>active&&step(1);$('#seek').oninput=e=>{const ms=Number(e.target.value)*1000;seek(ms);};
 $('#speed').onclick=()=>{const next=SPEEDS[(SPEEDS.indexOf(video.playbackRate)+1)%SPEEDS.length];video.playbackRate=next;$('#speed').textContent=next+'×';};
 $('#mute').onclick=()=>{video.muted=!video.muted;$('#mute').textContent=video.muted?'Muted':'Sound';};
 $('#fullscreen').onclick=()=>document.fullscreenElement?document.exitFullscreen():$('#player').requestFullscreen();
@@ -229,7 +225,7 @@ $('#importBtn').onclick=()=>{toggleMenu(null,false);const input=Object.assign(el
 $('#removeVideo').onclick=async()=>{toggleMenu(null,false);if(!active||!confirm(`Remove "${active.label}" and its comments from this browser? The video file itself is not touched.`))return;await backend.removeVideo(active.id);syncVideos();await loadNotes();};
 $('#addVideo').onclick=chooseNewVideo;
 $('#localVideoForm').onsubmit=async event=>{if(event.submitter?.value!=='add')return;event.preventDefault();$('#localVideoConfirm').disabled=true;try{const added=await backend.addPath($('#localVideoPath').value,$('#localVideoTitle').value);await backend.refresh();syncVideos();await selectVideo(added.id);$('#localVideoDialog').close();toast('Added a reference to the recording.');}catch(error){$('#localVideoError').textContent=error.message;}finally{$('#localVideoConfirm').disabled=false;}};
-document.addEventListener('keydown',e=>{const onWords=e.key===' '&&!e.shiftKey&&(e.target.id==='transcriptText'||e.target.classList.contains('transcript-word'));if(['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName)||(e.target.closest('dialog,#transcriptText')&&!onWords)||e.ctrlKey||e.metaKey||e.altKey||!active||!video.getAttribute('src'))return;const actions={' ':togglePlay,k:togglePlay,ArrowLeft:()=>step(-1),',':()=>step(-1),ArrowRight:()=>step(1),'.':()=>step(1),j:()=>jumpBy(-5000),l:()=>jumpBy(5000),c:openComposer,n:openComposer,i:markStart,o:markEnd,Escape:()=>{pinnedStart=pinnedEnd=null;renderStamp();}};const action=actions[e.key.length===1?e.key.toLowerCase():e.key];if(action){e.preventDefault();action();}});
+document.addEventListener('keydown',e=>{const onWords=e.key===' '&&!e.shiftKey&&(e.target.id==='transcriptText'||e.target.classList.contains('transcript-word'));if(['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName)||(e.key===' '&&e.target.id==='cutsSwitch')||(e.target.closest('dialog,#transcriptText')&&!onWords)||e.ctrlKey||e.metaKey||e.altKey||!active||!video.getAttribute('src'))return;const actions={' ':togglePlay,k:togglePlay,ArrowLeft:()=>step(-1),',':()=>step(-1),ArrowRight:()=>step(1),'.':()=>step(1),j:()=>jumpBy(-5000),l:()=>jumpBy(5000),c:openComposer,n:openComposer,i:markStart,o:markEnd,Escape:()=>{pinnedStart=pinnedEnd=null;renderStamp();}};const action=actions[e.key.length===1?e.key.toLowerCase():e.key];if(action){e.preventDefault();action();}});
 // Drop a video anywhere to add it (hosted app).
 let dragDepth=0;
 document.addEventListener('dragenter',e=>{if(backend?.mode!=='browser'||!e.dataTransfer.types.includes('Files'))return;dragDepth++;$('#dropHint').hidden=false;});

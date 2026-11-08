@@ -75,17 +75,16 @@ not touched. These controls let you hear and feel the result first.
 - **Play whole cut** plays from the first kept frame with every removal skipped. If you are in the Original
   transcript view, it switches back to the edited one. **Space** plays and pauses wherever you are, including
   after clicking a word. Enter selects a focused word, and Shift+Space extends a selection.
-- **Two clocks** sit beside the frame buttons: **Cut** (time in the cut, then the cut's length) and **Source**
-  (time in the review file, then its length). Source time here means the review file's own clock, not the
-  original recording's.
-- **Source time / Cut time** chooses which clock the seek bar and timecodes use, and is remembered. In cut time the
-  seek bar is always shown, even with the waveform on, and it runs over the cut only. Dragging it, the frame
-  buttons and J/L all skip removals. A seek onto a join lands just after it. Comment times and pins follow the
-  choice too; hover a comment's time to see its source time. Transcript times, the waveform and the exact-time
-  fields in the comment box stay in source time, and comments are always saved in source time.
-- **Join fade** (on by default) fades the sound for 15 ms out and back in at each join, like the native audio fades
-  in the Resolve cut. It applies to every jump, including Hear cut. The fade starts early, so it does not hold back
-  the jump, and it only hides clicks. It cannot repair a clipped word. Switch it off to compare.
+- **Cuts** is one on/off switch among the player controls. On (the default) plays the cut: removals are skipped.
+  Off plays the original, straight through every removal. It reads **Cuts on** or **Cuts off** and is remembered.
+  It works from the keyboard (Space or Enter) and takes effect while playing. **Play whole cut** switches it on.
+  **Hear cut** always skips the range you are trying. The words you removed stay struck through in the transcript
+  either way.
+- The timecodes, seek bar, comment times and pins all use the review file's own clock, which is not the
+  original recording's. Comments are always saved in that time.
+- Every join is faded for 15 ms out and back in, like the native audio fades in the Resolve cut. It applies to
+  every jump, including Hear cut. The fade starts early, so it does not hold back the jump, and it only hides
+  clicks. It cannot repair a clipped word. It is fixed and has no control.
 
 A short silence at a join is the browser finding its place in the file, and it is not in the final cut. The picture can
 also show a removed frame or two just before the jump. Review copies with frequent keyframes cut that silence

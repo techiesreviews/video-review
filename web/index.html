@@ -29,11 +29,9 @@
           <button id="prevFrame" class="ctl" title="Previous frame (←)" aria-label="Previous frame"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
           <button id="nextFrame" class="ctl" title="Next frame (→)" aria-label="Next frame"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
           <button id="playCut" class="ctl text" type="button" title="Play from the start of the cut, skipping every removal">Play whole cut</button>
-          <span class="time"><span id="clockLabel" class="clock-label">Source</span><span id="currentTime">0:00.000</span><span class="dim"> / <span id="duration">0:00</span></span><small id="frameInfo"></small></span>
-          <span class="time alt-clock"><span id="altLabel" class="clock-label">Cut</span><span id="altTime">0:00.000</span><span class="dim"> / <span id="altDuration">0:00</span></span></span>
+          <span class="time"><span id="currentTime">0:00.000</span><span class="dim"> / <span id="duration">0:00</span></span><small id="frameInfo"></small></span>
           <span class="spacer"></span>
-          <button id="timeMode" class="ctl text" type="button" aria-pressed="false" title="Choose which clock the seek bar and timecodes use. Source time is the review file's own clock.">Source time</button>
-          <button id="joinFade" class="ctl text" type="button" aria-pressed="true" title="Fade the sound for 15 ms at each join while previewing">Join fade</button>
+          <button id="cutsSwitch" class="ctl text cuts-switch" type="button" role="switch" aria-checked="true" aria-label="Cuts"><span class="switch-track" aria-hidden="true"></span><span id="cutsState">Cuts on</span></button>
           <button id="toggleTranscriptView" class="ctl text" type="button" aria-pressed="true">Show video</button>
           <button id="waveformToggle" class="ctl text" type="button" aria-pressed="true">Waveform</button>
           <button id="speed" class="ctl text" title="Playback speed" aria-label="Playback speed">1×</button>
