@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {barKey,suggestion,recentNotes,nextWordAfterDelete,sentLine,QUICK_PHRASES} from '../web/edit-bar-core.js';
+import {barKey,suggestion,recentNotes,nextWordAfterDelete,sentLine,QUICK_PHRASES,barSpot,barSpotOffWords,deletedIds,cutsToRestore,cutMarks} from '../web/edit-bar-core.js';
 
 const key=(k,extra={})=>({key:k,...extra});
 
@@ -71,4 +71,55 @@ test('the status line is honest about the agent',()=>{
 test('a long recent note is still a suggestion; only the browser bar hides one that does not fit',()=>{
   const long='Please keep the whole sentence here because the punchline only lands when the setup before it is complete and unhurried okay';
   assert.equal(suggestion(long.slice(0,30),recentNotes([{text:long}])),long);
+});
+
+// Where the bar goes (TOOLS-129): next to the selected words, like the script editor's bar, and always on screen.
+const box=(top,left,height=30,width=60)=>({top,left,bottom:top+height,right:left+width,height,width});
+const room={w:420,h:60,top:80,vw:1440,vh:900,line:40};
+test('the bar sits just below the selected words when there is room, lined up with the last line',()=>{
+  const spot=barSpot({...room,first:box(200,300),last:box(240,120)});
+  assert.deepEqual(spot,{x:116,y:278});
+});
+test('near the bottom it goes above the words, one line clear so the line above stays readable',()=>{
+  const spot=barSpot({...room,first:box(800,300),last:box(820,300)});
+  assert.equal(spot.y,800-40-8-60,'above the words with one line of room');
+  assert.equal(spot.x,296,'lined up with the first line');
+});
+test('with no room for a clear line it sits right above the words',()=>{
+  const spot=barSpot({...room,first:box(160,300),last:box(850,300)});
+  assert.equal(spot.y,160-8-60);
+});
+test('when the words fill the window the bar goes to the end with more room, still on screen',()=>{
+  const spot=barSpot({...room,first:box(90,300),last:box(870,300)});
+  assert.ok(spot.y>=room.top+8&&spot.y+room.h<=room.vh-8);
+});
+test('the bar never leaves the window sideways or goes under the header',()=>{
+  assert.equal(barSpot({...room,first:box(200,1400),last:box(200,1400)}).x,1440-420-8,'pulled back from the right edge');
+  assert.equal(barSpot({...room,first:box(200,0),last:box(200,0)}).x,8,'kept off the left edge');
+  assert.ok(barSpot({...room,first:box(20,300),last:box(30,300),vh:120}).y>=room.top+8,'never under the header');
+});
+test('when the transcript is too short to keep the bar off the words, it may reach past the transcript to the window end',()=>{
+  // A phone: the words area ends at 366 and the window at 844.
+  const words={first:box(259,113,35,69),last:box(259,113,35,69),w:374,h:73,top:188,vw:390,line:44};
+  const inside=barSpot({...words,vh:366});
+  assert.ok(inside.y<294&&inside.y+73>259,'inside the words area alone it would cover the word');
+  assert.deepEqual(barSpotOffWords({...words,end:366,seenEnd:844}),{x:8,y:302},'so it goes just below the word instead');
+  assert.deepEqual(barSpotOffWords({...room,first:box(200,300),last:box(240,120),end:900,seenEnd:900}),{x:116,y:278},'with room, nothing changes');
+});
+// Deleted words stay in the transcript, marked; a selection of only deleted words can be brought back.
+const edits=[{id:'e1',wordIds:['b','c'],kind:'words'},{id:'e2',wordIds:[],kind:'pause'},{id:'e3',wordIds:['e'],kind:'words'}];
+test('deletedIds lists every deleted word once',()=>{
+  assert.deepEqual([...deletedIds(edits)].sort(),['b','c','e']);
+  assert.equal(deletedIds([]).size,0);
+});
+test('a selection of only deleted words names the cuts that bring it back; any kept word means nothing to restore',()=>{
+  assert.deepEqual(cutsToRestore(edits,['b','c']).map(e=>e.id),['e1']);
+  assert.deepEqual(cutsToRestore(edits,['c','e']).map(e=>e.id),['e1','e3'],'two cuts, both come back');
+  assert.deepEqual(cutsToRestore(edits,['b','d']),[],'d is still in the cut, so this is a selection to delete');
+  assert.deepEqual(cutsToRestore(edits,[]),[],'a pause or join selection has no words to restore');
+});
+test('where each cut is marked: the first of its words still in the transcript, a pause cut by its start time',()=>{
+  const words=['a','b','c','d','e'].map((id,i)=>({id,startMs:i*1000}));
+  assert.deepEqual(cutMarks(words,[{id:'e1',wordIds:['c','b'],startMs:1000,kind:'words'},{id:'p',wordIds:[],startMs:2500,kind:'pause'}]),[{id:'e1',index:1},{id:'p',index:3}]);
+  assert.deepEqual(cutMarks(words,[{id:'x',wordIds:['gone'],startMs:9000,kind:'words'}]),[{id:'x',index:4}],'after the last word: marked on the last word');
 });
