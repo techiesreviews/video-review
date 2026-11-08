@@ -294,6 +294,10 @@ try{
   assert.equal((await pieceNote()).status,'open','Its note stays open while the other piece is still cut.');
   await page.locator(`.restore-cut[data-edit-id="${mixed[1].id}"]`).click();await page.waitForTimeout(250);
   assert.equal((await pieceNote()).status,'done','Once the last piece is back the note is resolved.');
+  await page.locator('.transcript-word').nth(5).click();await page.locator('.transcript-word').nth(7).click({modifiers:['Shift']});await page.locator('[data-transcript-action="remove"]').click();await page.waitForTimeout(250);
+  let fromDeleted=await editsOnDisk();assert.deepEqual(fromDeleted.at(-1).wordIds,['W6','W7'],'Starting on a deleted word: only the kept words are cut.');
+  assert.equal((await notesOnDisk()).find(n=>n.id===fromDeleted.at(-1).commentId).startMs,fromDeleted.at(-1).startMs,'and the note starts where the cut starts.');
+  await page.locator('#transcriptText').focus();await page.keyboard.press('Control+z');await page.waitForTimeout(250);assert.equal((await editsOnDisk()).length,1);
   await page.locator('.transcript-word').nth(3).click();await page.locator('.transcript-word').nth(7).click({modifiers:['Shift']});await page.locator('[data-transcript-action="remove"]').click();await page.waitForTimeout(250);
   mixed=await editsOnDisk();assert.equal(mixed.length,3);
   await page.locator(`.restore-cut[data-edit-id="${mixed[0].id}"]`).click();await page.waitForTimeout(250);

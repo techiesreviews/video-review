@@ -199,8 +199,8 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
       for(const part of parts)pieces.push(makeRemoval({...transcript,draftEdits:[...(transcript.draftEdits||[]),...pieces]},part,videoRef.durationMs,videoRef.fps));
       const quote=parts.map(p=>p.quote).join(' … ');
       const ask=currentRequest(selected.kind==='pause'?'pause':'remove',`Remove from cut: “${quote}”`+(typed?` — ${typed}`:''));
-      // The note names only the words this Delete cut: the joined pieces, from the first cut word to the last.
-      if(runs)Object.assign(ask.editRequest,{quote,firstWordId:parts[0].firstWordId,lastWordId:parts.at(-1).lastWordId});
+      // The note names only the words this Delete cut: the joined pieces, from the first cut word to the last, and their times.
+      if(runs){Object.assign(ask.editRequest,{quote,firstWordId:parts[0].firstWordId,lastWordId:parts.at(-1).lastWordId});Object.assign(ask,{startMs:pieces[0].startMs,endMs:pieces.at(-1).endMs});}
       const saved=await request(ask);
       for(const piece of pieces)piece.commentId=saved?.id||null;
       if(typed&&saved?.id)cutNotes.set(saved.id,typed);
