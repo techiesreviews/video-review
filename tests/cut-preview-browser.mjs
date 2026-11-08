@@ -287,6 +287,15 @@ try{
   let mixed=await editsOnDisk();
   assert.deepEqual(mixed.map(e=>e.wordIds),[['W5'],['W3','W4'],['W6','W7']],'Two pieces, around the word already deleted.');
   assert.equal(mixed[1].commentId,mixed[2].commentId,'The pieces share one note.');
+  const pieceNote=async()=>(await notesOnDisk()).find(n=>n.id===mixed[1].commentId);
+  assert.deepEqual((({quote,firstWordId,lastWordId})=>({quote,firstWordId,lastWordId}))((await pieceNote()).editRequest),{quote:'word3 word4 … word6 word7',firstWordId:'W3',lastWordId:'W7'},'The note names only the cut words.');
+  await page.keyboard.press('Escape');await page.locator(`.restore-cut[data-edit-id="${mixed[2].id}"]`).click();await page.waitForTimeout(250);
+  assert.deepEqual((await editsOnDisk()).map(e=>e.id),[mixed[0].id,mixed[1].id],'One piece comes back on its own.');
+  assert.equal((await pieceNote()).status,'open','Its note stays open while the other piece is still cut.');
+  await page.locator(`.restore-cut[data-edit-id="${mixed[1].id}"]`).click();await page.waitForTimeout(250);
+  assert.equal((await pieceNote()).status,'done','Once the last piece is back the note is resolved.');
+  await page.locator('.transcript-word').nth(3).click();await page.locator('.transcript-word').nth(7).click({modifiers:['Shift']});await page.locator('[data-transcript-action="remove"]').click();await page.waitForTimeout(250);
+  mixed=await editsOnDisk();assert.equal(mixed.length,3);
   await page.locator(`.restore-cut[data-edit-id="${mixed[0].id}"]`).click();await page.waitForTimeout(250);
   assert.equal(await page.locator('.transcript-word').nth(5).evaluate(n=>n.classList.contains('removed-word')),false,'Restoring the earlier cut really brings its word back.');
   await page.keyboard.press('Escape');await page.locator('#transcriptText').focus();await page.keyboard.press('Control+z');await page.waitForTimeout(250);

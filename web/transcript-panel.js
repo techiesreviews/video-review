@@ -193,11 +193,15 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     const typedRaw=noteId?'':noteBox.value,typed=typedRaw.trim();
     try{
       // Words already deleted stay in their own cut: only the runs of kept words are cut, one piece each, sharing one note.
+      // A span set with the waveform handles (precise) is an exact time span, so it is cut as it is.
       const gone=deletedIds(transcript.draftEdits),runs=wasWords&&!selected.precise&&transcript.words.slice(first,last+1).some(w=>gone.has(w.id))?keptRuns(transcript.words,first,last,gone):null;
       const parts=runs?runs.map(([i,j])=>wordSelection(transcript.words,i,j)):[selected],pieces=[];
       for(const part of parts)pieces.push(makeRemoval({...transcript,draftEdits:[...(transcript.draftEdits||[]),...pieces]},part,videoRef.durationMs,videoRef.fps));
       const quote=parts.map(p=>p.quote).join(' … ');
-      const saved=await request(currentRequest(selected.kind==='pause'?'pause':'remove',`Remove from cut: “${quote}”`+(typed?` — ${typed}`:'')));
+      const ask=currentRequest(selected.kind==='pause'?'pause':'remove',`Remove from cut: “${quote}”`+(typed?` — ${typed}`:''));
+      // The note names only the words this Delete cut: the joined pieces, from the first cut word to the last.
+      if(runs)Object.assign(ask.editRequest,{quote,firstWordId:parts[0].firstWordId,lastWordId:parts.at(-1).lastWordId});
+      const saved=await request(ask);
       for(const piece of pieces)piece.commentId=saved?.id||null;
       if(typed&&saved?.id)cutNotes.set(saved.id,typed);
       const edit=pieces[0],boxNow=await saveCuts([...(transcript.draftEdits||[]),...pieces]);seek(Math.max(0,edit.startMs-500));
