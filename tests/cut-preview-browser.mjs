@@ -113,7 +113,7 @@ try{
   await page.evaluate(()=>window.__spy.reset());
   await cuts.click();assert.equal(await text('#cutsState'),'Cuts on');
   await page.waitForFunction(()=>window.__spy.jumps.length>0);
-  const skipped=await page.evaluate(()=>({jumps:window.__spy.jumps,frames:window.__spy.frames}));
+  const skipped=await page.evaluate(()=>({jumps:window.__spy.jumps}));
   assert.equal(skipped.jumps.length,1,'Turning the cuts on inside a removal makes exactly one jump.');
   assert.ok(Math.abs(skipped.jumps[0].toMs-3000)<1,'The jump lands on the join at the end of the removal.');
   await page.keyboard.press('Escape');
