@@ -1,0 +1,22 @@
+# The unit tests on every pull request and on every push to dev (`bash scripts/agents/run-tests.sh` runs the same files locally).
+# Python and Node tests only: no npm install, no secrets, no deploy, nothing published.
+name: checks
+on:
+  push:
+    branches: [dev]
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: checks-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: bash scripts/agents/run-tests.sh
