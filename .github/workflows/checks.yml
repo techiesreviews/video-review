@@ -2,6 +2,7 @@
 # (`bash scripts/agents/run-tests.sh` runs the same files locally).
 # Python and Node tests only: no npm install, no secrets, no deploy, nothing published.
 # Python is the one on the ubuntu-latest image on purpose; Node is pinned to 24.
+name: checks
 on:
   push:
     branches: [dev]
