@@ -18,8 +18,9 @@ file wins.
   moves them first: [windows-pc-setup.md](windows-pc-setup.md).
 - **Checks:** `checks.test` runs `scripts/agents/run-tests.sh`: the Python tests (`unittest discover -s
   tests`, plus `tests/test_server.py` and `tests/test_mcp_server.py`, which are plain scripts discovery
-  does not collect) and the Node tests (`tests/*.test.mjs`), with no installs. The repo has
-  no GitHub CI workflow, so `kit pr` runs them here for a code change, then lands after the review. A
+  does not collect) and the Node tests (`tests/*.test.mjs`), with no installs. GitHub runs the same
+  script (`.github/workflows/checks.yml`: Node 24, no secrets, no deploy) on every pull request and on
+  every push to `dev`; `kit pr` also runs them here for a code change, then lands after the review. A
   CSS-only change gets a review but no tests. A docs-only change (`paths.docs`) gets neither, as in every
   project.
   `tests/listening-browser.mjs` needs Playwright and is run by hand.
