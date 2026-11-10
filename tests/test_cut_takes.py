@@ -62,9 +62,9 @@ def plan(transcript=TRANSCRIPT, script=SCRIPT_TEXT, demos=DEMO):
 SUNDAY = plan()
 
 
-def kept_starts(result):
+def kept_starts(result, words=WORDS):
     timeline = cut_timeline.load_cutlist(result['cutlist'])
-    return {round(piece.word.start, 3) for piece in cut_timeline.retained_words(WORDS, timeline)
+    return {round(piece.word.start, 3) for piece in cut_timeline.retained_words(words, timeline)
             if not piece.is_partial}
 
 
@@ -473,6 +473,8 @@ class RestartTests(unittest.TestCase):
         self.assertEqual(removed_texts(result), [])
         flag, = flags(result, 'possible-restart')
         self.assertIn('I think this is', flag['text'])
+        self.assertEqual(flag['start'], 1.0)
+        self.assertIn('6.00', flag['message'])
 
     def test_a_short_sentence_and_a_longer_different_one_that_open_alike_are_asked_about_not_cut(self):
         words = [['This', 1.0, 1.2], ['is', 1.24, 1.4], ['the', 1.44, 1.6], ['tool.', 1.64, 2.0], ['This', 3.8, 4.0],
@@ -502,8 +504,8 @@ class RestartTests(unittest.TestCase):
 
     def test_an_unscripted_line_that_only_opens_like_the_take_is_an_ad_lib(self):
         script = 'Setting up the AI took three tries.'
-        words = [['Setting', 1.0, 1.3], ['up', 1.34, 1.5], ['the', 1.54, 1.7], ['lights', 1.74, 2.1], ['was', 2.14, 2.3],
-                 ['a', 2.34, 2.4], ['real', 2.44, 2.7], ['pain', 2.74, 3.0], ['today.', 3.04, 3.5],
+        words = [['Setting', 1.0, 1.3], ['up', 1.34, 1.5], ['the', 1.54, 1.7], ['lights', 1.74, 2.1],
+                 ['was', 2.14, 2.3], ['a', 2.34, 2.4], ['real', 2.44, 2.7], ['pain', 2.74, 3.0], ['today.', 3.04, 3.5],
                  ['Setting', 5.5, 5.8], ['up', 5.84, 6.0], ['the', 6.04, 6.2], ['AI', 6.24, 6.5], ['took', 6.54, 6.8],
                  ['three', 6.84, 7.1], ['tries.', 7.14, 7.6]]
         result = plan_words(words, script)
@@ -528,6 +530,37 @@ class RestartTests(unittest.TestCase):
         result = plan_words(words)
         self.assertEqual([(item['text'], item['keeps']) for item in result['paperEdit']['removed']],
                          [('So the new tool', 2.6), ('Then the robot ships', 7.0)])
+
+    def test_a_stray_word_after_a_short_breath_still_leaves_a_restart(self):
+        words = [['So', 1.0, 1.2], ['the', 1.24, 1.4], ['new', 1.44, 1.6], ['tool', 1.64, 1.8], ['and', 2.3, 2.5],
+                 ['So', 3.0, 3.2], ['the', 3.24, 3.4], ['new', 3.44, 3.6], ['tool', 3.64, 3.8], ['works.', 3.84, 4.3]]
+        result = plan_words(words)
+        self.assertEqual([(item['text'], item['keeps']) for item in result['paperEdit']['removed']],
+                         [('So the new tool and', 3.0)])
+
+    def test_no_removal_reaches_across_a_marked_demo(self):
+        words = [['So', 1.0, 1.2], ['the', 1.24, 1.4], ['new', 1.44, 1.7], ['and', 2.1, 2.2], ['here', 2.24, 2.4],
+                 ['is', 2.44, 2.5], ['the', 2.54, 2.7], ['screen', 2.74, 2.9], ['So', 4.0, 4.2], ['the', 4.24, 4.4],
+                 ['new', 4.44, 4.6], ['tool', 4.64, 4.9], ['So', 6.0, 6.2], ['the', 6.24, 6.4], ['new', 6.44, 6.6],
+                 ['tool', 6.64, 6.8], ['works.', 6.84, 7.3]]
+        result = plan_words(words, demos=[(2.0, 3.0)])
+        self.assertEqual([(item['text'], item['keeps']) for item in result['paperEdit']['removed']],
+                         [('So the new tool', 6.0)])
+        kept = kept_starts(result, cut_timeline.load_words(words))
+        self.assertTrue({1.0, 2.1, 2.74} <= kept, 'the words before and inside the demo stay')
+
+    def test_a_far_take_of_a_line_with_none_complete_is_never_removed(self):
+        script = 'The board shows every task.'
+        words = []
+        for start in (1.0, 10.0, 200.0):
+            words += [['The', start, start + 0.2], ['board', start + 0.24, start + 0.5], ['shows.', start + 0.54,
+                      start + 0.9]]
+        result = plan_words(words, script)
+        self.assertIn(200.0, kept_starts(result, cut_timeline.load_words(words)))
+        self.assertEqual(removed_texts(result), ['The board shows.'])  # the near pair: the last one stays
+        far, = [item for item in flags(result, 'no-complete-take') if 'far apart' in item['message']]
+        for start in ('1.00', '10.00', '200.00'):
+            self.assertIn(start, far['message'])
 
     def test_a_long_pause_inside_a_sentence_without_a_restart_stays(self):
         words = [['So', 1.0, 1.2], ['I', 1.24, 1.3], ['click', 1.34, 1.6], ['here', 1.64, 1.9], ['and', 4.0, 4.2],
