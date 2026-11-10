@@ -45,6 +45,8 @@ SETTINGS = {
     'nearTakeSeconds': 60,
     'scriptMatch': 0.5,
     'nearTakeMatch': 0.6,
+    'nearTakeRest': 0.5,
+    'restartRepeat': 0.6,
     'completeCoverage': 0.8,
     'worseCoverageDrop': 0.15,
     'worseStumbles': 2,
@@ -219,6 +221,8 @@ class Cutter:
                 continue
             if ends_sentence(self.words[first[-1]]):
                 pairs.append((first[0], second[0]))
+            elif not self.mostly_repeated(first, second):
+                continue
             elif TRAILING_MARK.search(self.words[first[-1]].text) and not self.repeats_whole(first, second):
                 # "The tool is fast, the tool is cheap." repeats on purpose; a dropped start usually just stops.
                 self.flag('possible-restart', first[0], second[size - 1],
@@ -232,6 +236,32 @@ class Cutter:
         """True when the later phrase starts with every word of the earlier one."""
         return len(second) >= len(first) and all(loose_equal(self.norms[a], self.norms[b])
                                                  for a, b in zip(first, second))
+
+    def mostly_repeated(self, first, second):
+        """True when the later phrase starts by repeating most of the earlier one, as a restart does."""
+        matched = 0
+        for a, b in zip(first, second):
+            if not loose_equal(self.norms[a], self.norms[b]):
+                break
+            matched += 1
+        return matched >= SETTINGS['restartRepeat'] * len(first)
+
+    def same_line(self, first, second):
+        """True when two sentences say the same line: the same script sentence, or (no script) a near copy."""
+        if self.script:
+            (score, line), (other_score, other_line) = self.best_line(first), self.best_line(second)
+            return line == other_line and min(score, other_score) >= SETTINGS['scriptMatch']
+        names = [self.norms[index] for index in first]
+        other = [self.norms[index] for index in second]
+        if dice(names, other) < SETTINGS['nearTakeMatch']:
+            return False
+        # Sentences that only open alike ("This is the tool." / "This is the price.") are two lines: what follows
+        # the shared opening must match too, unless one take simply stops where the other goes on.
+        shared = 0
+        while shared < min(len(names), len(other)) and loose_equal(names[shared], other[shared]):
+            shared += 1
+        rest, other_rest = names[shared:], other[shared:]
+        return not rest or not other_rest or dice(rest, other_rest) >= SETTINGS['nearTakeRest']
 
     def stumbles(self, sentence):
         names = [self.norms[index] for index in sentence]
@@ -277,7 +307,8 @@ class Cutter:
             parent[root(second)] = root(first)
 
         for earlier, later in pairs:
-            if earlier in owner and later in owner:
+            if earlier in owner and later in owner \
+                    and self.same_line(sentences[owner[earlier]], sentences[owner[later]]):
                 join(owner[earlier], owner[later])
         lines = {}
         if self.script:
@@ -296,10 +327,9 @@ class Cutter:
                     later = sentences[other]
                     if self.words[later[0]].start - self.words[sentence[-1]].end > SETTINGS['nearTakeSeconds']:
                         break
-                    names = [self.norms[index] for index in sentence]
-                    other_names = [self.norms[index] for index in later]
-                    if min(len(names), len(other_names)) >= 4 and loose_equal(names[0], other_names[0]) \
-                            and dice(names, other_names) >= SETTINGS['nearTakeMatch']:
+                    if min(len(sentence), len(later)) >= 4 \
+                            and loose_equal(self.norms[sentence[0]], self.norms[later[0]]) \
+                            and self.same_line(sentence, later):
                         join(number, other)
         groups = {}
         for number in range(len(sentences)):
@@ -352,7 +382,8 @@ class Cutter:
 
     def possible_restarts(self):
         """Flag a two-word run repeated within a few words of a kept sentence: often a restart without a pause."""
-        flagged = [(item['start'], item['end']) for item in self.flags if item['code'] == 'possible-restart']
+        flagged = [(item['start'], item['end']) for item in self.flags
+                   if item['code'] in ('possible-restart', 'demo-protected')]
         for sentence in self.sentences():
             span = self.words[sentence[0]].start, self.words[sentence[-1]].end
             if any(start < span[1] and end > span[0] for start, end in flagged):
@@ -647,7 +678,7 @@ def main():
     parser.add_argument('--source', help='the recording path to write as sourcePath in the cut list')
     parser.add_argument('--name', help='timeline name (default: the transcript file name)')
     args = parser.parse_args()
-    targets = [args.out_dir / name for name in ('cutlist.json', 'paper-edit.md', 'paper-edit.json')]
+    targets = [args.out_dir / name for name in ('paper-edit.md', 'paper-edit.json', 'cutlist.json')]
     for target in targets:
         if target.exists():
             sys.exit(f'{target} already exists. Choose a new folder; older proposals stay as they are.')
@@ -665,17 +696,18 @@ def main():
         sys.exit(f'Cutter stopped: {error}')
     try:
         args.out_dir.mkdir(parents=True, exist_ok=True)
+        # The cut list goes last, so a failed write never leaves a cut list without its paper edit.
         with targets[0].open('x', encoding='utf-8', newline='\n') as output:
-            json.dump(result['cutlist'], output, ensure_ascii=False, indent=2)
-        with targets[1].open('x', encoding='utf-8', newline='\n') as output:
             output.write(render_paper_edit(result['paperEdit']))
-        with targets[2].open('x', encoding='utf-8', newline='\n') as output:
+        with targets[1].open('x', encoding='utf-8', newline='\n') as output:
             json.dump(result['paperEdit'], output, ensure_ascii=False, indent=2)
+        with targets[2].open('x', encoding='utf-8', newline='\n') as output:
+            json.dump(result['cutlist'], output, ensure_ascii=False, indent=2)
     except OSError as error:
         sys.exit(f'Cutter stopped: {error}')
     summary = result['paperEdit']['summary']
     print(f'Proposal only, nothing rendered: {summary["removedPassages"]} passages removed, {summary["flags"]} '
-          f'things for Lex to decide. Lex approves {targets[1]} before anything is built or rendered.')
+          f'things for Lex to decide. Lex approves {targets[0]} before anything is built or rendered.')
 
 
 if __name__ == '__main__':
