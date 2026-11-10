@@ -508,6 +508,8 @@ class Cutter:
         self.flags = [item for item in self.flags if item['code'] not in ('possible-restart', 'possible-retake-cue')
                       or not any(item['start'] - TOLERANCE <= at <= item['end'] for at in removed)]
         for attempt, take in asks:
+            if not all(self.keep[index] for index in attempt):
+                continue  # A later step removed part of it already.
             self.flag('possible-restart', attempt[0], attempt[-1],
                       f'Possible unfinished start before the take at {self.words[take].start:.2f}: '
                       f'"{self.text(attempt)}". Left in; listen and cut by hand if it is one.')
