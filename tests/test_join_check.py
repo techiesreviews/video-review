@@ -32,7 +32,7 @@ def cutlist(*ranges, **extra):
 
 # hello world | um (removed) | next thing, with 100 ms of room either side of the join.
 WORDS = [['hello', 1.0, 1.4], ['world', 1.5, 1.9], ['um', 2.5, 2.7], ['next', 4.0, 4.4], ['thing', 4.5, 4.9]]
-CLEAN = ((24, 60), (117, 150))
+CLEAN = ((26, 60), (117, 150))
 
 
 def check(words, *ranges):
@@ -49,7 +49,7 @@ class CleanJoinTests(unittest.TestCase):
         self.assertEqual(report['summary']['joins'], 1)
         self.assertEqual(report['summary']['problems'] + report['summary']['checks'], 0)
         join = report['joins'][0]
-        self.assertEqual(join['timelineFrame'], 36)
+        self.assertEqual(join['timelineFrame'], 34)
         self.assertEqual(join['gapMs'], 200)
         self.assertEqual(join['gapKind'], 'linked')
         self.assertEqual((join['lastWord'], join['firstWord']), ('world', 'next'))
@@ -167,14 +167,19 @@ class RetakeCueTests(unittest.TestCase):
 class OpeningAndEndingTests(unittest.TestCase):
     def test_preferred_lead_in_and_ending(self):
         report = check(WORDS, *CLEAN)
-        self.assertEqual(report['opening']['leadInMs'], 200)
+        self.assertEqual(report['opening']['leadInMs'], 133)
         self.assertEqual(report['opening']['flags'], [])
+        # Lex's choice of 2026-11-10: 100-150 ms before the first word, the same room the cutter leaves.
+        for start_frame, lead_in in ((27, 100), (26, 133)):
+            opening = check(WORDS, (start_frame, 60), (117, 150))['opening']
+            self.assertEqual((opening['leadInMs'], opening['flags']), (lead_in, []))
         self.assertEqual(report['ending']['tailMs'], 100)
         self.assertEqual(report['ending']['flags'], [])
 
     def test_long_and_short_lead_in(self):
         self.assertEqual(check(WORDS, (0, 60), (117, 150))['opening']['flags'][0]['code'], 'lead-in-too-long')
-        self.assertEqual(check(WORDS, (27, 60), (117, 150))['opening']['flags'][0]['code'], 'lead-in-too-short')
+        self.assertEqual(check(WORDS, (25, 60), (117, 150))['opening']['flags'][0]['code'], 'lead-in-too-long')
+        self.assertEqual(check(WORDS, (28, 60), (117, 150))['opening']['flags'][0]['code'], 'lead-in-too-short')
 
     def test_short_ending_is_flagged(self):
         self.assertEqual(check(WORDS, (24, 60), (117, 148))['ending']['flags'][0]['code'], 'tight-speech-edge')
@@ -208,7 +213,7 @@ class ReportTests(unittest.TestCase):
         self.assertIn('approximate', text)
         self.assertIn('cut-inside-word', text)
         self.assertIn('00:00.900', text)  # timeline time of the join
-        self.assertIn('180-250', text)
+        self.assertIn('Before the first word: 100-150 ms', text)
 
     def test_count_of_splits_reads_properly(self):
         text = join_check.render_markdown(check(WORDS, (24, 50), (50, 60), (117, 150)))
