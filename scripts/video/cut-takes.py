@@ -247,7 +247,8 @@ class Cutter:
         return matched >= SETTINGS['restartRepeat'] * len(first)
 
     def same_line(self, first, second):
-        """True when two sentences say the same line: the same script sentence, or (no script) a near copy."""
+        """True when two sentences say the same line: the same script sentence, or a near copy when neither
+        sentence is in the script (or there is no script)."""
         if self.script:
             (score, line), (other_score, other_line) = self.best_line(first), self.best_line(second)
             if max(score, other_score) >= SETTINGS['scriptMatch']:
