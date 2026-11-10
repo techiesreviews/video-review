@@ -63,7 +63,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   function noteState(id=null,text='',base=''){flushNote();noteId=id;noteBase=base;noteBox.value=text;barStatus();ghostState();}
   // With the bar closed (the box that had the focus is hidden), the focus goes to the words, as Escape does, not to the page.
   function focusWords(index,isWord=true){
-    const active=document.activeElement;if(active&&active!==document.body&&active!==noteBox)return;
+    const active=document.activeElement;if(active&&active!==document.body&&!bar.contains(active))return;
     const target=isWord?wordNodes[index]:null;if(target&&!target.hidden)target.focus({preventScroll:true});else body.focus({preventScroll:true});
   }
   function focusBar(){if(!$('#transcriptSelection').hidden)noteBox.focus({preventScroll:true});}
@@ -234,7 +234,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
       seek(edit.startMs);
       // The words that came back are selected again, so a mistaken undo is one Backspace from being redone.
       const ids=undone.flatMap(e=>e.wordIds||[]),first=transcript.words.findIndex(w=>w.id===ids[0]),last=transcript.words.findIndex(w=>w.id===ids.at(-1));
-      if(first>=0&&last>=first){busy=false;refreshCuts();anchor=first;choose(first,last,{focus:false});keepDraft([note,draft].filter(Boolean).join(' '));barStatus(broughtBackLine({selectedAgain:true}));if(fromBar)focusBar();}
+      if(first>=0&&last>=first){busy=false;refreshCuts();anchor=first;choose(first,last,{focus:false});keepDraft([note,draft].filter(Boolean).join(' '));barStatus(broughtBackLine({selectedAgain:!noteBox.value}));if(fromBar)focusBar();}
     }
     catch(error){showError(error.message);}finally{busy=false;refreshCuts();}
   }
@@ -246,7 +246,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
       // A note shared with pieces still cut stays open; once its last piece is back it is resolved.
       let noteResolved=false;
       for(const id of new Set(back.map(e=>e.commentId).filter(Boolean)))if(!transcript.draftEdits.some(e=>e.commentId===id)){await cancelRequest(id);noteResolved||=cutNotes.has(id);cutNotes.delete(id);}
-      if(stay)barStatus(broughtBackLine({noteResolved,selectedAgain:fromBar}));else seek(back[0].startMs);
+      if(stay)barStatus(broughtBackLine({noteResolved,selectedAgain:fromBar&&!noteBox.value}));else seek(back[0].startMs);
     }catch(error){showError(error.message);}finally{busy=false;refreshCuts();}
   }
   $('#undoTranscriptCut').onclick=undoCut;
