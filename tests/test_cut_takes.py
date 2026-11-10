@@ -316,12 +316,15 @@ class WithoutScriptTests(unittest.TestCase):
             for word in take_from(take):
                 self.assertTrue(any(run.source_start <= word.start and word.end <= run.source_end
                                     for run in timeline.runs), f'"{word.text}" in the take at {take}')
-            attempt = words_between(start, end)
             asked = [item for item in flags(result, 'possible-restart') if start - TOLERANCE <= item['end']
                      and item['start'] <= end + TOLERANCE]
-            # Without a script some starts may be meant: each attempt is removed whole or asked about.
-            self.assertTrue(not [word for word in attempt if round(word.start, 3) in kept] or asked,
-                            f'{start}-{end} is removed or flagged')
+            if start in (324.17, 362.15):
+                self.assertFalse([word for word in words_between(start, end) if round(word.start, 3) in kept])
+                self.assertEqual(asked, [], f'{start}-{end}')
+            else:
+                # Without a script nothing says these are one line said twice: exactly one flag, nothing cut.
+                self.assertEqual(len(asked), 1, f'{start}-{end}')
+                self.assertFalse([item for item in result['paperEdit']['removed'] if start <= item['start'] <= end])
         spans = sorted((item['start'], item['end']) for item in result['paperEdit']['removed'])
         self.assertFalse([pair for pair in zip(spans, spans[1:]) if pair[1][0] < pair[0][1]], 'removals overlap')
         self.assertEqual(result['paperEdit']['adLibs'], [])
@@ -345,6 +348,16 @@ class CueTests(unittest.TestCase):
         removal, = plan_words(words)['paperEdit']['removed']
         self.assertEqual((removal['text'], removal['reason'], removal['keeps']),
                          ('The picture from, from start again', 'retake-cue', 98.0))
+
+    def test_a_real_cue_is_still_a_cue_when_the_script_says_again_elsewhere(self):
+        script = 'So, again, keep it short.'
+        words = [['keep', 1.0, 1.2], ['it', 1.24, 1.4], ['long', 1.44, 1.8], ['again', 2.6, 2.9], ['keep', 3.6, 3.8],
+                 ['it', 3.84, 4.0], ['short.', 4.04, 4.5]]
+        self.assertEqual(removed_texts(plan_words(words, script)), ['keep it long again'])
+        # An "again" the script says, even as the first word, is speech.
+        words = [['Again,', 1.0, 1.3], ['keep', 1.9, 2.1], ['it', 2.14, 2.3], ['short.', 2.34, 2.8]]
+        result = plan_words(words, script)
+        self.assertEqual((removed_texts(result), result['paperEdit']['flags']), ([], []))
 
     def test_again_with_pauses_both_sides_is_a_retake_cue(self):
         words = [['Start', 1.0, 1.3], ['the', 1.34, 1.5], ['show', 1.54, 1.9], ['again', 2.6, 2.9],
@@ -458,7 +471,8 @@ class RestartTests(unittest.TestCase):
         self.assertEqual(removed_texts(plan_words(words, script)), [])
         result = plan_words(words)
         self.assertEqual(removed_texts(result), [])
-        self.assertEqual(len(flags(result, 'possible-restart')), 1)
+        flag, = flags(result, 'possible-restart')
+        self.assertIn('I think this is', flag['text'])
 
     def test_a_short_sentence_and_a_longer_different_one_that_open_alike_are_asked_about_not_cut(self):
         words = [['This', 1.0, 1.2], ['is', 1.24, 1.4], ['the', 1.44, 1.6], ['tool.', 1.64, 2.0], ['This', 3.8, 4.0],
@@ -485,6 +499,35 @@ class RestartTests(unittest.TestCase):
             result = plan_words(words, text, demos=[(0.5, 7.0)])
             self.assertEqual(removed_texts(result), [], text)
             self.assertEqual([item['code'] for item in result['paperEdit']['flags']], ['demo-protected'], text)
+
+    def test_an_unscripted_line_that_only_opens_like_the_take_is_an_ad_lib(self):
+        script = 'Setting up the AI took three tries.'
+        words = [['Setting', 1.0, 1.3], ['up', 1.34, 1.5], ['the', 1.54, 1.7], ['lights', 1.74, 2.1], ['was', 2.14, 2.3],
+                 ['a', 2.34, 2.4], ['real', 2.44, 2.7], ['pain', 2.74, 3.0], ['today.', 3.04, 3.5],
+                 ['Setting', 5.5, 5.8], ['up', 5.84, 6.0], ['the', 6.04, 6.2], ['AI', 6.24, 6.5], ['took', 6.54, 6.8],
+                 ['three', 6.84, 7.1], ['tries.', 7.14, 7.6]]
+        result = plan_words(words, script)
+        self.assertEqual(removed_texts(result), [])
+        self.assertEqual([item['text'] for item in result['paperEdit']['adLibs']],
+                         ['Setting up the lights was a real pain today.'])
+
+    def test_an_ad_lib_followed_by_a_different_line_that_opens_alike_is_still_listed(self):
+        script = 'And then I look again at the timeline.'
+        words = [['And', 1.0, 1.2], ['then', 1.24, 1.4], ['I', 1.44, 1.5], ['spilled', 1.54, 1.9], ['my', 1.94, 2.1],
+                 ['coffee.', 2.14, 2.6], ['And', 4.0, 4.2], ['then', 4.24, 4.4], ['I', 4.44, 4.5], ['look', 4.54, 4.8],
+                 ['again', 4.84, 5.1], ['at', 5.14, 5.2], ['the', 5.24, 5.4], ['timeline.', 5.44, 5.9]]
+        result = plan_words(words, script)
+        self.assertEqual(removed_texts(result), [])
+        self.assertEqual([item['text'] for item in result['paperEdit']['adLibs']], ['And then I spilled my coffee.'])
+
+    def test_failed_tries_for_different_takes_stay_separate_removals(self):
+        words = [['So', 1.0, 1.2], ['the', 1.24, 1.4], ['new', 1.44, 1.6], ['tool', 1.64, 1.8], ['So', 2.6, 2.8],
+                 ['the', 2.84, 3.0], ['new', 3.04, 3.2], ['tool', 3.24, 3.4], ['works.', 3.44, 3.9],
+                 ['Then', 5.0, 5.2], ['the', 5.24, 5.4], ['robot', 5.44, 5.7], ['ships', 5.74, 6.0], ['Then', 7.0, 7.2],
+                 ['the', 7.24, 7.4], ['robot', 7.44, 7.7], ['ships', 7.74, 8.0], ['it.', 8.04, 8.4]]
+        result = plan_words(words)
+        self.assertEqual([(item['text'], item['keeps']) for item in result['paperEdit']['removed']],
+                         [('So the new tool', 2.6), ('Then the robot ships', 7.0)])
 
     def test_a_long_pause_inside_a_sentence_without_a_restart_stays(self):
         words = [['So', 1.0, 1.2], ['I', 1.24, 1.3], ['click', 1.34, 1.6], ['here', 1.64, 1.9], ['and', 4.0, 4.2],
