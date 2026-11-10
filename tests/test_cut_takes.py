@@ -322,6 +322,7 @@ class RestartTests(unittest.TestCase):
         result = plan_words(words, 'This is the tool.')
         self.assertEqual([(item['text'], item['reason']) for item in result['paperEdit']['removed']],
                          [('Quick note on pricing.', 'earlier-take')])
+        self.assertEqual([item['text'] for item in result['paperEdit']['adLibs']], ['Quick note on pricing.'])
 
     def test_repeating_on_purpose_after_a_comma_is_flagged_not_cut(self):
         words = [['The', 1.0, 1.2], ['tool', 1.24, 1.5], ['is', 1.54, 1.7], ['fast,', 1.74, 2.1],
