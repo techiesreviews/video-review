@@ -13,7 +13,9 @@ What it does, in order:
    better take stays and Lex is told.
 4. Unfinished starts that the transcript ran into other words (no full stop, a stray word between attempts, or a
    restart part way through a phrase) go too: every attempt before a complete take that opens with the take's
-   first two words, back to a sentence that says something else.
+   first two words, back to a sentence that says something else. The whole run of failed tries goes up to the take
+   that stays, never into it; a breath inside a take does not start a new one. A dropped start of under four words
+   is only listed, as the paper edit's "inspect" restarts are. An "again" the script itself says is speech.
 5. Joins keep room around speech and a whole silence in Lex's ranges; long pauses are shortened, a breath inside a
    linked phrase stays, and a cut never lands inside a word.
 A marked screen demo is never cut: what would have been removed there is listed for Lex instead.
@@ -54,15 +56,20 @@ SETTINGS = {
     'worseCoverageDrop': 0.15,
     'worseStumbles': 2,
     'worseKeptPoint': 0.6,
+    # A dropped start shorter than this is listed, not cut: the paper edit only asks to inspect "And then I—".
+    'shortStartWords': 4,
+    'adLibMainWords': 0.5,
 }
 SENTENCE_END = re.compile(r'[.!?]["\')\]]*$')
 TRAILING_MARK = re.compile(r'[,;:.!?–—-]["\')\]]*$')
+BROKEN_OFF = re.compile(r'[–—-]["\')\]]*$')
 FILLERS = {'um', 'uh', 'uhm', 'er', 'erm', 'ah', 'hmm', 'mm'}
 REASONS = {
     'retake-cue': 'a quiet "again" marks a retake',
     'abandoned-start': 'a sentence begun, dropped and restarted',
     'earlier-take': 'an earlier take of the same line',
     'worse-later-take': 'a later take that is worse than the one kept',
+    'retake-run': 'failed tries before the take that stays',
 }
 TOLERANCE = cut_timeline.WORD_EDGE_TOLERANCE
 
@@ -106,6 +113,7 @@ class Cutter:
         self.script = script_sentences(script_text) if script_text else None
         # Lines the script itself says more than once: never treated as takes of one line.
         self.repeated = {line for line, count in Counter(map(tuple, self.script or ())).items() if count > 1}
+        self.script_words = [word for line in self.script or () for word in line]
         self.removed = []
         self.flags = []
 
@@ -175,6 +183,11 @@ class Cutter:
                 return start, True
         return first, False
 
+    def script_says(self, first, end):
+        """True when the script has these words in a row ("So, again, you see" is speech, not a retake cue)."""
+        names, words = self.norms[max(first, 0):end], self.script_words
+        return bool(names) and any(words[at:at + len(names)] == names for at in range(len(words) - len(names) + 1))
+
     def possible_cue(self, index):
         self.flag('possible-retake-cue', index, index,
                   f'"{self.words[index].text}" after a pause may be a retake cue. Left in; listen.')
@@ -182,7 +195,7 @@ class Cutter:
     def retake_cues(self):
         lower = 0
         for index, name in enumerate(self.norms[:-1]):
-            if name != 'again' or not self.keep[index]:
+            if name != 'again' or not self.keep[index] or self.script_says(index - 1, index + 2):
                 continue
             before = index == 0 or self.gap_ms(index - 1, index) >= SETTINGS['cuePauseMs'] \
                 or bool(TRAILING_MARK.search(self.words[index - 1].text))
@@ -244,6 +257,8 @@ class Cutter:
                 self.flag('possible-restart', first[0], second[size - 1],
                           f'Possible restart: "{self.text(first)}" then "{self.text(second[:size])}". Left in; '
                           'listen and cut by hand if it is one.')
+            elif len(first) < SETTINGS['shortStartWords']:
+                self.ask_restart(first, second[size - 1])
             else:
                 self.drop(first, 'abandoned-start', second[0])
         # A stray word or two between a sentence and its redo ("So," or "and then") still makes a pair.
@@ -251,6 +266,11 @@ class Cutter:
             if ends_sentence(self.words[first[-1]]) and len(between) <= 2 and self.opens_alike(first, second):
                 pairs.append((first[0], second[0]))
         return pairs
+
+    def ask_restart(self, first, through):
+        self.flag('possible-restart', first[0], through,
+                  f'Possible restart: "{self.text(range(first[0], through + 1))}". A short start, so left in; listen '
+                  'and cut by hand if it is one.')
 
     def repeats_whole(self, first, second):
         """True when the later phrase starts with every word of the earlier one."""
@@ -385,6 +405,13 @@ class Cutter:
                       'All left in; pick one after checking the picture.')
             return
         complete = [number for number, take in enumerate(takes) if self.complete(take, line)]
+        far = self.words[takes[-1][0]].start - self.words[takes[0][-1]].end > SETTINGS['nearTakeSeconds']
+        if not complete and far:
+            times = ', '.join(f'{self.words[take[0]].start:.2f}' for take in takes)
+            self.flag('no-complete-take', takes[0][0], takes[0][-1],
+                      f'{len(takes)} sentences far apart ({times}) may say the same line, but none looks complete. '
+                      'All left in; cut one by hand if it is a retake.')
+            return
         if not complete:
             chosen = len(takes) - 1
             self.flag('no-complete-take', takes[chosen][0], takes[chosen][-1],
@@ -423,7 +450,11 @@ class Cutter:
                 continue
             rest = take[cut:]
             others = [take[:cut]] + [other for other in takes if other is not take]
-            if len(rest) >= 3 and self.complete(rest, line) and any(self.opens_alike(rest, other) for other in others):
+            if len(rest) < 3 or not self.complete(rest, line):
+                continue
+            # With a script the rest already says the whole line, so a start broken off before the pause adds nothing.
+            broken = line is not None and BROKEN_OFF.search(self.words[take[cut - 1]].text)
+            if broken or any(self.opens_alike(rest, other) for other in others):
                 return take[:cut], rest
         return [], take
 
@@ -452,6 +483,24 @@ class Cutter:
         return sum(all(loose_equal(a, b) for a, b in zip(words[at:at + 2], opening))
                    for at in range(len(words) - 1)) == 1
 
+    def find_opening(self, indices, opening):
+        """Where these words hold the take's first two words, or None."""
+        indices = [index for index in indices if self.keep[index]]
+        return next((at for at in range(len(indices) - 1) if all(
+            loose_equal(self.norms[a], b) for a, b in zip(indices[at:at + 2], opening))), None)
+
+    def goes_on(self, first):
+        """True when this word may carry on the speech before it after a short breath: no sentence end, broken-off
+        word, comma or removal before it, and a pause under the attempt break."""
+        before = first - 1
+        return before >= 0 and self.keep[before] and not TRAILING_MARK.search(self.words[before].text) \
+            and self.gap_ms(before, first) < SETTINGS['attemptBreakMs']
+
+    def other_line(self, first, second):
+        """True when the script has the first sentence as a line of its own, not the line of the second."""
+        (score, line), (_, other) = self.best_line(first), self.best_line(second)
+        return score >= SETTINGS['scriptMatch'] and line != other
+
     def restarted_lines(self):
         """Remove the attempts before a complete take that open with the take's first two words, even when the
         transcript ran them into other words; stop at a sentence that says something else."""
@@ -460,36 +509,48 @@ class Cutter:
             take = self.take_at(pieces[number][0]) if self.keep[pieces[number][0]] else None
             if not take or len(take) < 3:
                 continue
+            opening = self.norms[take[0]:take[0] + 2]
+            if self.goes_on(take[0]) and self.find_opening(pieces[number - 1], opening) is None:
+                continue  # A breath inside a take ("I am | working on"), not a new take.
             if self.script:
                 score, line = self.best_line(take)
                 if score >= SETTINGS['scriptMatch'] and tuple(self.script[line]) in self.repeated:
                     continue  # The script says this line twice on purpose.
-            opening, start, passed, unsure = self.norms[take[0]:take[0] + 2], None, [], False
+            start, passed, unsure = None, [], False
             for piece in reversed(pieces[:number]):
                 kept = [index for index in piece if self.keep[index]]
                 if not kept:
                     continue
                 if self.words[take[0]].start - self.words[kept[0]].start > SETTINGS['attemptMaxSeconds']:
                     break
-                at = next((at for at in range(len(kept) - 1) if all(
-                    loose_equal(self.norms[a], b) for a, b in zip(kept[at:at + 2], opening))), None)
+                at = self.find_opening(kept, opening)
                 finished = ends_sentence(self.words[kept[-1]])
                 if at is None:
                     if finished and len(kept) >= 3:
                         break
                     passed.append(kept)
                     continue
-                # A finished sentence before the take must be the same line said shorter, not a different line.
-                # Without a script, one that only repeats the take's opening and stops is asked about, not cut.
+                # A finished sentence before the take that opens the same way is a failed try, unless the script
+                # has it as a different line. Without a script, one that only repeats the opening is asked about.
                 if finished and not self.same_line(kept[at:], take):
-                    if self.script or not self.stops_short(kept[at:], take):
+                    if self.script:
+                        if self.other_line(kept[at:], take):
+                            break
+                    elif self.stops_short(kept[at:], take):
+                        unsure = True
+                    else:
                         break
-                    unsure = True
                 # One word before the opening ("So next, the ...") belongs to the attempt.
                 start = kept[0] if at <= 1 else kept[at]
             if start is None:
                 continue
             attempt = [index for index in range(start, take[0]) if self.keep[index]]
+            if len(attempt) < SETTINGS['shortStartWords'] and all(self.keep[max(start - 1, 0):take[0]]):
+                # A short stutter with nothing removed around it: list it, like the paper edit's inspect items.
+                if not any(item['code'] == 'possible-restart' and item['start'] <= self.words[attempt[-1]].end
+                           and item['end'] >= self.words[attempt[0]].start for item in self.flags):
+                    self.ask_restart(attempt, take[min(1, len(take) - 1)])
+                continue
             if TRAILING_MARK.search(self.words[attempt[-1]].text) \
                     and self.gap_ms(attempt[-1], take[0]) < SETTINGS['attemptBreakMs'] \
                     and not self.script_says_once(attempt, take):
@@ -533,12 +594,29 @@ class Cutter:
                               'by hand if it is one.')
                     break
 
+    def main_words_in_script(self, sentence):
+        """True when most of the sentence's main words (four letters or more) are in its closest script line: a short
+        take of a long line is the script, not an ad-lib."""
+        main = [self.norms[index] for index in sentence if len(self.norms[index]) >= 4]
+        line = self.best_line(sentence)[1]
+        return bool(main) and overlap(main, self.script[line]) > SETTINGS['adLibMainWords'] * len(main)
+
+    def take_follows(self, sentence, later):
+        """True when a kept sentence opening the same way follows soon: this one is a failed try, not an ad-lib."""
+        end = self.words[sentence[-1]].end
+        return any(self.opens_alike(sentence, other) for other in later
+                   if self.words[other[0]].start - end <= SETTINGS['attemptMaxSeconds'])
+
     def ad_libs(self):
         if not self.script:
             return []
         chosen = []
-        for sentence in self.sentences():
-            if len(sentence) >= 3 and self.best_line(sentence)[0] < SETTINGS['scriptMatch']:
+        sentences = self.sentences()
+        for number, sentence in enumerate(sentences):
+            # Not in the script, and no take of the same line follows it (then it is a failed try).
+            if len(sentence) >= 3 and self.best_line(sentence)[0] < SETTINGS['scriptMatch'] \
+                    and not self.main_words_in_script(sentence) \
+                    and not self.take_follows(sentence, sentences[number + 1:]):
                 chosen.append({'start': round(self.words[sentence[0]].start, 3),
                                'end': round(self.words[sentence[-1]].end, 3), 'text': self.text(sentence)})
         return chosen
@@ -686,14 +764,27 @@ def plan(words, fps, script_text=None, demos=(), name='Take cut proposal', sourc
                     'segments': segments})
 
     keep = cutter.keep
-    removed = []
+    # Removals side by side that keep the same take are one passage: the whole run of failed tries before it.
+    passages = []
     for item in sorted(cutter.removed, key=lambda item: item['first']):
         keeps = next((index for index in range(item['keeps'], len(words)) if keep[index]), None)
+        previous = passages[-1] if passages else None
+        if previous and previous['keeps'] == keeps and not any(keep[previous['last'] + 1:item['first']]):
+            previous['last'] = item['last']
+            previous['reasons'].add(item['reason'])
+        else:
+            passages.append({'first': item['first'], 'last': item['last'], 'reasons': {item['reason']},
+                             'keeps': keeps})
+    removed = []
+    for item in passages:
         first, last = words[item['first']], words[item['last']]
+        reason = next(iter(item['reasons'])) if len(item['reasons']) == 1 else 'retake-run'
+        gaps = [words[index + 1].start - words[index].end for index in range(item['first'], item['last'])]
         removed.append({'start': round(first.start, 3), 'end': round(last.end, 3),
-                        'seconds': round(last.end - first.start, 2), 'reason': item['reason'],
-                        'why': REASONS[item['reason']], 'text': cutter.text(range(item['first'], item['last'] + 1)),
-                        'keeps': round(words[keeps].start, 3) if keeps is not None else None})
+                        'seconds': round(last.end - first.start, 2), 'reason': reason, 'why': REASONS[reason],
+                        'text': cutter.text(range(item['first'], item['last'] + 1)),
+                        'keeps': round(words[item['keeps']].start, 3) if item['keeps'] is not None else None,
+                        'longestSilence': round(max(gaps, default=0.0), 2)})
     join_entries = []
     for number, join in enumerate(joins, 1):
         before, after = words[join['before']], words[join['after']]
@@ -739,14 +830,16 @@ def render_paper_edit(paper):
         '**Proposal. Not approved by Lex yet. Nothing is cut or rendered.** Read it, say what to change, then approve '
         'it before anyone builds the timeline or renders.', '',
         f'Kept {summary["keptSeconds"]} s of the {summary["recordingSeconds"]} s from the first word to the last. '
-        f'Removed {summary["removedPassages"]} passages ({summary["removedSeconds"]} s of speech). '
+        f'Removed {summary["removedPassages"]} passages ({summary["removedSeconds"]} s). '
         f'{summary["flags"]} things for Lex to decide. '
         f'{summary["adLibs"]} ad-libs kept. All times are seconds in the original recording.', '',
         '## Removed', '',
     ]
     for item in paper['removed']:
         keeps = f'; the take at {seconds(item["keeps"])} stays' if item['keeps'] is not None else ''
-        lines.append(f'- **{seconds(item["start"])}-{seconds(item["end"])}** ({item["seconds"]} s), '
+        silence = f', includes a {item["longestSilence"]:.1f} s silence' \
+            if item['longestSilence'] * 1000 >= limits['longSilenceMs'] else ''
+        lines.append(f'- **{seconds(item["start"])}-{seconds(item["end"])}** ({item["seconds"]} s{silence}), '
                      f'{item["why"]}{keeps}: "{item["text"]}"')
     if not paper['removed']:
         lines.append('- Nothing.')
@@ -775,7 +868,9 @@ def render_paper_edit(paper):
         f'{limits["longSilenceMs"] // 1000} s or more stays and is listed above.',
         f'- {limits["audioFadeMs"]} ms audio fade at every cut.',
         f'- A quiet "again" counts as a retake cue when a pause of {limits["cuePauseMs"]} ms or more sits on both '
-        'sides, or on one side when the restart repeats the attempt\'s opening words.',
+        'sides, or on one side when the restart repeats the attempt\'s opening words; not when the script says the '
+        'same words ("So, again, you see").',
+        f'- A dropped start of fewer than {limits["shortStartWords"]} words ("And then I—") is listed, not cut.',
         f'- A later take counts as clearly worse when it has {limits["worseStumbles"]} or more extra stumbles, '
         f'leaves out over {round(limits["worseCoverageDrop"] * 100)}% more of the script line, or (without a script) '
         f'keeps under {round(limits["worseKeptPoint"] * 100)}% of the earlier take\'s main words.',
