@@ -1,7 +1,8 @@
-# Cut checks and captions
+# Take cutter, cut checks and captions
 
-Two scripts read a word-timed transcript and a cut list. They read only those two JSON files, touch no
-media, call no paid service, and never overwrite: point `--out-dir` at a new folder each time.
+The take cutter reads a word-timed transcript (and, if given, the script) and proposes a cut. The join check and
+the caption builder read a word-timed transcript and a cut list. None of them touches media or calls a paid
+service, and none overwrites: point `--out-dir` at a new folder each time.
 
 Use the raw HappyScribe export as the transcript when you have it. Word times must be on the original
 recording's clock. `[text, start, end]` arrays are read as original-recording seconds, so only use them from a
@@ -12,6 +13,42 @@ SHA-256 value, it must match the cut list's `sourceSha256`. The cut list needs `
 
 What each script checks: the comments and assertions in `tests/test_join_check.py` and
 `tests/test_build_captions.py`.
+
+## Take cutter: propose the cut, Lex approves the paper edit
+
+```powershell
+python scripts\video\cut-takes.py <words.json> --fps 30 --script <script.md> --demo 410-418 --out-dir <new-folder>
+```
+
+It reads the same transcripts as the two scripts below and writes three files into a new folder. It renders
+nothing and touches no media.
+
+| File | What it holds |
+| --- | --- |
+| `paper-edit.md` | For Lex: what was removed and why, what he must decide, the ad-libs, the timing used and every join |
+| `cutlist.json` | The proposed cut in the usual cut-list shape (`fps`, `segments`), marked `"status": "proposal"` |
+| `paper-edit.json` | The same paper edit for tools |
+
+Lex reads and approves `paper-edit.md` before anyone builds a timeline or renders. After that, run the join check
+on `cutlist.json` and listen.
+
+What it does:
+
+- **Retakes.** A quiet "again" with a pause around it marks a retake: the failed attempt and the word itself are
+  removed. "Again and again" and an "again" inside a sentence stay. A sentence begun, dropped and restarted after
+  a pause loses the dropped start.
+- **Takes of one line.** The last complete take stays: the same restart, the same script sentence however far
+  apart, or a near copy within a minute when there is no script. When the last take is clearly worse (more
+  stumbles, or more of the script line missing), the better earlier take stays and the paper edit says so.
+- **Timing (Lex, 2026-11-10).** 100-150 ms of room before and after speech at every cut, the start of the clip
+  too; a whole silence of 150-250 ms between linked phrases (it aims for 200) and 250-450 ms before a new thought
+  (it aims for 300); a breath inside a linked phrase stays; 15 ms fade at every cut. No cut lands inside a word.
+- **Left in and listed for Lex:** anything inside a `--demo` range (start-end in source seconds, repeat it for
+  more), a silence of 3 s or more (a screen demo or a pause?), a possible restart without a pause, a possible
+  retake cue, and lines not in the script (ad-libs). Without `--script`, ad-libs are not checked.
+
+The working values it uses beyond Lex's numbers are listed in each paper edit. The join check still prefers
+180-250 ms before the first word, so it shows the cutter's shorter opening as a check.
 
 ## After every fix to a cut
 
