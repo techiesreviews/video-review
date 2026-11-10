@@ -55,8 +55,8 @@ What it does:
 - **Takes of one line.** The last complete take stays: the same restart, the same script sentence however far
   apart, or a near copy within a minute when there is no script. When the last take is clearly worse (more
   stumbles, or more of the script line missing), the better earlier take stays and the paper edit says so. A
-  line the script itself says more than once is never treated as takes of one line. Sentences more than a minute
-  apart that only look alike, none of them complete, all stay and are listed.
+  line the script itself says more than once is never treated as takes of one line. When no take of a line is
+  complete, a take more than a minute from the others stays and is listed.
 - **Timing (Lex, 2026-11-10).** 100-150 ms of room before and after speech at every cut, the start of the clip
   too; a whole silence of 150-250 ms between linked phrases (it aims for 200) and 250-450 ms before a new thought
   (it aims for 300); a breath inside a linked phrase stays; 15 ms fade at every cut. No cut lands inside a word.

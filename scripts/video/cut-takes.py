@@ -291,6 +291,13 @@ class Cutter:
         """True when the earlier sentence repeats most of the later one's opening and stops where the later goes on."""
         return self.mostly_repeated(first, second) and len(second) >= len(first) + 2
 
+    def near_copy(self, first, second):
+        """True when the earlier sentence is a shorter or near copy of the later one. With a script it is mostly the
+        first test that decides: a sentence outside the script seldom scores high against a take that is in it."""
+        names = [self.norms[index] for index in first]
+        return self.stops_short(first, second) \
+            or dice(names, [self.norms[index] for index in second]) >= SETTINGS['nearTakeMatch']
+
     def opens_alike(self, first, second):
         return len(first) >= 2 and len(second) >= 2 \
             and all(loose_equal(self.norms[a], self.norms[b]) for a, b in zip(first[:2], second[:2]))
@@ -406,13 +413,21 @@ class Cutter:
                       'All left in; pick one after checking the picture.')
             return
         complete = [number for number, take in enumerate(takes) if self.complete(take, line)]
-        far = all(self.words[later[0]].start - self.words[earlier[-1]].end > SETTINGS['nearTakeSeconds']
-                  for earlier, later in zip(takes, takes[1:]))
-        if not complete and far:
+        # With none complete, takes more than a minute apart are not trusted as one line: each near group is
+        # resolved on its own and a take far from the others stays.
+        clusters = [[takes[0]]]
+        for earlier, later in zip(takes, takes[1:]):
+            if self.words[later[0]].start - self.words[earlier[-1]].end > SETTINGS['nearTakeSeconds']:
+                clusters.append([])
+            clusters[-1].append(later)
+        if not complete and len(clusters) > 1:
             times = ', '.join(f'{self.words[take[0]].start:.2f}' for take in takes)
             self.flag('no-complete-take', takes[0][0], takes[0][-1],
                       f'{len(takes)} sentences far apart ({times}) may say the same line, but none looks complete. '
-                      'All left in; cut one by hand if it is a retake.')
+                      'The far ones are left in; cut one by hand if it is a retake.')
+            for cluster in clusters:
+                if len(cluster) > 1:
+                    self.resolve(cluster, line)
             return
         if not complete:
             chosen = len(takes) - 1
@@ -547,9 +562,7 @@ class Cutter:
                 if finished and not self.same_line(kept[at:], take):
                     if self.script:
                         # Outside the script it must be a near copy of the take, or it may be an ad-lib.
-                        if self.other_line(kept[at:], take) or not (self.stops_short(kept[at:], take) or dice(
-                                [self.norms[index] for index in kept[at:]],
-                                [self.norms[index] for index in take]) >= SETTINGS['nearTakeMatch']):
+                        if self.other_line(kept[at:], take) or not self.near_copy(kept[at:], take):
                             break
                     elif self.stops_short(kept[at:], take):
                         unsure = True
@@ -618,10 +631,9 @@ class Cutter:
 
     def take_follows(self, sentence, later):
         """True when a take of the same line follows soon: this one is a failed try, not an ad-lib."""
-        end, names = self.words[sentence[-1]].end, [self.norms[index] for index in sentence]
-        return any(self.opens_alike(sentence, other) and (self.stops_short(sentence, other) or dice(
-            names, [self.norms[index] for index in other]) >= SETTINGS['nearTakeMatch'])
-            for other in later if self.words[other[0]].start - end <= SETTINGS['attemptMaxSeconds'])
+        end = self.words[sentence[-1]].end
+        return any(self.opens_alike(sentence, other) and self.near_copy(sentence, other)
+                   for other in later if self.words[other[0]].start - end <= SETTINGS['attemptMaxSeconds'])
 
     def ad_libs(self):
         if not self.script:
@@ -887,7 +899,8 @@ def render_paper_edit(paper):
         'sides, or on one side when the restart repeats the attempt\'s opening words; not when the script says the '
         'same words ("So, again, you see").',
         f'- A dropped start of fewer than {limits["shortStartWords"]} words ("And then I—") is listed, not cut.',
-        f'- Takes of a line more than {limits["nearTakeSeconds"]} s apart with none complete all stay and are listed.',
+        f'- When no take of a line is complete, a take more than {limits["nearTakeSeconds"]} s from the others stays '
+        'and is listed.',
         f'- An ad-lib: no more than {round(limits["adLibMainWords"] * 100)}% of its main words are in its closest '
         'script line, and no take of the same line follows it.',
         f'- A later take counts as clearly worse when it has {limits["worseStumbles"]} or more extra stumbles, '
