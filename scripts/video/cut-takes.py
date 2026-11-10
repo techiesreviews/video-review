@@ -250,7 +250,9 @@ class Cutter:
         """True when two sentences say the same line: the same script sentence, or (no script) a near copy."""
         if self.script:
             (score, line), (other_score, other_line) = self.best_line(first), self.best_line(second)
-            return line == other_line and min(score, other_score) >= SETTINGS['scriptMatch']
+            if max(score, other_score) >= SETTINGS['scriptMatch']:
+                return line == other_line and min(score, other_score) >= SETTINGS['scriptMatch']
+            # Neither is in the script (an ad-lib said twice): compare the two sentences themselves.
         names = [self.norms[index] for index in first]
         other = [self.norms[index] for index in second]
         if dice(names, other) < SETTINGS['nearTakeMatch']:

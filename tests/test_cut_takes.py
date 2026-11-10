@@ -316,6 +316,13 @@ class RestartTests(unittest.TestCase):
         self.assertEqual(removed_texts(plan_words(words)), [])
         self.assertEqual(removed_texts(plan_words(words, 'This is the tool. This is the price.')), [])
 
+    def test_an_ad_lib_said_twice_keeps_the_last_take_even_with_a_script(self):
+        words = [['Quick', 1.0, 1.2], ['note', 1.24, 1.4], ['on', 1.44, 1.6], ['pricing.', 1.64, 2.0],
+                 ['Quick', 2.6, 2.8], ['note', 2.84, 3.0], ['on', 3.04, 3.2], ['pricing.', 3.24, 3.6]]
+        result = plan_words(words, 'This is the tool.')
+        self.assertEqual([(item['text'], item['reason']) for item in result['paperEdit']['removed']],
+                         [('Quick note on pricing.', 'earlier-take')])
+
     def test_repeating_on_purpose_after_a_comma_is_flagged_not_cut(self):
         words = [['The', 1.0, 1.2], ['tool', 1.24, 1.5], ['is', 1.54, 1.7], ['fast,', 1.74, 2.1],
                  ['the', 2.6, 2.8], ['tool', 2.84, 3.1], ['is', 3.14, 3.3], ['cheap.', 3.34, 3.8]]
