@@ -292,8 +292,7 @@ class Cutter:
         return self.mostly_repeated(first, second) and len(second) >= len(first) + 2
 
     def near_copy(self, first, second):
-        """True when the earlier sentence is a shorter or near copy of the later one. With a script it is mostly the
-        first test that decides: a sentence outside the script seldom scores high against a take that is in it."""
+        """True when the earlier sentence is a shorter or near copy of the later one."""
         names = [self.norms[index] for index in first]
         return self.stops_short(first, second) \
             or dice(names, [self.norms[index] for index in second]) >= SETTINGS['nearTakeMatch']
@@ -421,10 +420,13 @@ class Cutter:
                 clusters.append([])
             clusters[-1].append(later)
         if not complete and len(clusters) > 1:
-            times = ', '.join(f'{self.words[take[0]].start:.2f}' for take in takes)
-            self.flag('no-complete-take', takes[0][0], takes[0][-1],
-                      f'{len(takes)} sentences far apart ({times}) may say the same line, but none looks complete. '
-                      'The far ones are left in; cut one by hand if it is a retake.')
+            far = [cluster[0] for cluster in clusters if len(cluster) == 1]
+            times = ', '.join(f'{self.words[take[0]].start:.2f}' for take in far)
+            if far:
+                self.flag('no-complete-take', far[0][0], far[0][-1],
+                          f'{"The take at" if len(far) == 1 else "The takes at"} {times}: more than '
+                          f'{SETTINGS["nearTakeSeconds"]} s from the other takes of this line, and none is complete. '
+                          'Left in; cut one by hand if it is a retake.')
             for cluster in clusters:
                 if len(cluster) > 1:
                     self.resolve(cluster, line)

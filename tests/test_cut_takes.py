@@ -548,6 +548,13 @@ class RestartTests(unittest.TestCase):
                          [('So the new tool', 6.0)])
         kept = kept_starts(result, cut_timeline.load_words(words))
         self.assertTrue({1.0, 2.1, 2.74} <= kept, 'the words before and inside the demo stay')
+        flag, = flags(result, 'possible-restart')
+        self.assertEqual(flag['start'], 1.0)
+        self.assertIn('6.00', flag['message'])
+        # With a script the start would be cut, but the demo between stops it.
+        result = plan_words(words, 'So the new tool works.', demos=[(2.0, 3.0)])
+        self.assertTrue({1.0, 2.1, 2.74} <= kept_starts(result, cut_timeline.load_words(words)))
+        self.assertIn('demo-protected', [item['code'] for item in result['paperEdit']['flags']])
 
     def test_a_far_take_of_a_line_with_none_complete_is_never_removed(self):
         script = 'The board shows every task.'
@@ -556,11 +563,17 @@ class RestartTests(unittest.TestCase):
             words += [['The', start, start + 0.2], ['board', start + 0.24, start + 0.5], ['shows.', start + 0.54,
                       start + 0.9]]
         result = plan_words(words, script)
-        self.assertIn(200.0, kept_starts(result, cut_timeline.load_words(words)))
-        self.assertEqual(removed_texts(result), ['The board shows.'])  # the near pair: the last one stays
-        far, = [item for item in flags(result, 'no-complete-take') if 'far apart' in item['message']]
-        for start in ('1.00', '10.00', '200.00'):
-            self.assertIn(start, far['message'])
+        kept = kept_starts(result, cut_timeline.load_words(words))
+        self.assertTrue({10.0, 200.0} <= kept and 1.0 not in kept, 'the last of the near pair and the far take stay')
+        far, = [item for item in flags(result, 'no-complete-take') if 'more than 60 s' in item['message']]
+        self.assertIn('200.00', far['message'])
+        # The far take first: it stays too.
+        words = []
+        for start in (1.0, 191.0, 200.0):
+            words += [['The', start, start + 0.2], ['board', start + 0.24, start + 0.5], ['shows.', start + 0.54,
+                      start + 0.9]]
+        kept = kept_starts(plan_words(words, script), cut_timeline.load_words(words))
+        self.assertTrue({1.0, 200.0} <= kept and 191.0 not in kept)
 
     def test_a_long_pause_inside_a_sentence_without_a_restart_stays(self):
         words = [['So', 1.0, 1.2], ['I', 1.24, 1.3], ['click', 1.34, 1.6], ['here', 1.64, 1.9], ['and', 4.0, 4.2],
