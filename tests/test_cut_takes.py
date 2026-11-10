@@ -261,8 +261,8 @@ class WithoutScriptTests(unittest.TestCase):
         self.assertEqual(removed_at(result, 205.00)['reason'], 'worse-later-take')
 
 
-def plan_words(words, script=None):
-    return cut_takes.plan(cut_timeline.load_words(words), FPS, script_text=script)
+def plan_words(words, script=None, demos=(), fps=FPS):
+    return cut_takes.plan(cut_timeline.load_words(words), fps, script_text=script, demos=demos)
 
 
 def removed_texts(result):
@@ -274,6 +274,15 @@ class CueTests(unittest.TestCase):
         words = [['Start', 1.0, 1.3], ['the', 1.34, 1.5], ['show', 1.54, 1.9], ['again', 2.6, 2.9],
                  ['Start', 3.6, 3.9], ['the', 3.94, 4.1], ['show', 4.14, 4.5], ['now.', 4.54, 4.9]]
         self.assertEqual(removed_texts(plan_words(words)), ['Start the show again'])
+
+    def test_a_retake_inside_a_marked_demo_is_flagged_instead_of_removed(self):
+        words = [['Start', 1.0, 1.3], ['the', 1.34, 1.5], ['show', 1.54, 1.9], ['again', 2.6, 2.9],
+                 ['Start', 3.6, 3.9], ['the', 3.94, 4.1], ['show', 4.14, 4.5], ['now.', 4.54, 4.9]]
+        result = plan_words(words, demos=[(0.5, 3.0)])
+        self.assertEqual(removed_texts(result), [])
+        flag, = result['paperEdit']['flags']
+        self.assertEqual(flag['code'], 'demo-protected')
+        self.assertIn('a quiet "again" marks a retake', flag['message'])
 
     def test_again_inside_normal_speech_is_kept(self):
         words = [['Say', 1.0, 1.3], ['it', 1.34, 1.5], ['again', 1.54, 1.9], ['louder.', 1.94, 2.4]]
@@ -301,6 +310,12 @@ class RestartTests(unittest.TestCase):
         self.assertEqual([(item['text'], item['reason']) for item in result['paperEdit']['removed']],
                          [('So the tool', 'abandoned-start')])
 
+    def test_two_lines_that_only_open_alike_are_both_kept(self):
+        words = [['This', 1.0, 1.2], ['is', 1.24, 1.4], ['the', 1.44, 1.6], ['tool.', 1.64, 2.0],
+                 ['This', 2.6, 2.8], ['is', 2.84, 3.0], ['the', 3.04, 3.2], ['price.', 3.24, 3.6]]
+        self.assertEqual(removed_texts(plan_words(words)), [])
+        self.assertEqual(removed_texts(plan_words(words, 'This is the tool. This is the price.')), [])
+
     def test_repeating_on_purpose_after_a_comma_is_flagged_not_cut(self):
         words = [['The', 1.0, 1.2], ['tool', 1.24, 1.5], ['is', 1.54, 1.7], ['fast,', 1.74, 2.1],
                  ['the', 2.6, 2.8], ['tool', 2.84, 3.1], ['is', 3.14, 3.3], ['cheap.', 3.34, 3.8]]
@@ -315,6 +330,39 @@ class RestartTests(unittest.TestCase):
                  ['Thanks', 4.6, 4.9], ['for', 4.94, 5.1], ['watching', 5.14, 5.5], ['this', 5.54, 5.7],
                  ['week.', 5.74, 6.1]]
         self.assertEqual(removed_texts(plan_words(words, script)), [])
+
+
+class EdgeCaseTests(unittest.TestCase):
+    def test_too_little_silence_is_flagged_and_no_word_is_cut(self):
+        # The failed attempt starts 40 ms after "words.", so 100 ms of room cannot fit there.
+        words = [['Intro', 0.5, 0.8], ['words.', 0.84, 1.2], ['Start', 1.24, 1.5], ['the', 1.54, 1.7],
+                 ['show', 1.74, 2.0], ['again', 2.7, 3.0], ['Start', 3.7, 4.0], ['the', 4.04, 4.2],
+                 ['show', 4.24, 4.5], ['now.', 4.54, 4.9]]
+        result = plan_words(words)
+        self.assertEqual(removed_texts(result), ['Start the show again'])
+        self.assertIn('tight-edge', [item['code'] for item in result['paperEdit']['flags']])
+        timeline = cut_timeline.load_cutlist(result['cutlist'])
+        loaded = cut_timeline.load_words(words)
+        for run in timeline.runs:
+            for edge in (run.source_start, run.source_end):
+                self.assertEqual([w.text for w in loaded if w.start + TOLERANCE < edge < w.end - TOLERANCE], [])
+
+    def test_a_removal_too_short_for_whole_frames_goes_back_in(self):
+        words = [['Okay.', 0.5, 1.0], ['Go,', 1.0, 1.01], ['again,', 1.01, 1.02], ['go', 1.02, 1.3],
+                 ['now.', 1.34, 1.6]]
+        result = plan_words(words)
+        self.assertEqual(removed_texts(result), [])
+        self.assertIn('too-short-to-cut', [item['code'] for item in result['paperEdit']['flags']])
+        self.assertEqual(len(result['cutlist']['segments']), 1)
+
+    def test_a_fractional_frame_rate_still_never_cuts_inside_a_word(self):
+        result = cut_takes.plan(WORDS, 29.97, script_text=SCRIPT_TEXT, demos=DEMO)
+        timeline = cut_timeline.load_cutlist(result['cutlist'])
+        self.assertEqual(timeline.fps, 29.97)
+        for run in timeline.runs:
+            for edge in (run.source_start, run.source_end):
+                self.assertEqual([w.text for w in WORDS if w.start + TOLERANCE < edge < w.end - TOLERANCE], [])
+        self.assertEqual(kept_starts(result) & {round(w.start, 3) for w in words_between(92.78, 98.42)}, set())
 
 
 class FarApartTests(unittest.TestCase):
