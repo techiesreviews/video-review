@@ -15,7 +15,8 @@ import cut_timeline  # noqa: E402
 
 # Lex's recorded starting preferences, from EDITING-LESSONS.md (docs/video-workflow/CUT-CHECKS.md).
 THRESHOLDS = {
-    'leadInMs': [180, 250],
+    # Lex's choice of 2026-11-10: the same 100-150 ms of room before the first word as at every other cut.
+    'leadInMs': [100, 150],
     'linkedGapMs': [150, 250],
     'newThoughtGapMs': [250, 450],
     'speechEdgeMs': [100, 150],

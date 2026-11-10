@@ -11,7 +11,10 @@ What it does, in order:
 3. Takes of the same line (a restart, the same script sentence however far apart, or a near copy within a minute
    when there is no script) keep the last complete take. When that take is clearly worse than an earlier one, the
    better take stays and Lex is told.
-4. Joins keep room around speech and a whole silence in Lex's ranges; long pauses are shortened, a breath inside a
+4. Unfinished starts that the transcript ran into other words (no full stop, a stray word between attempts, or a
+   restart part way through a phrase) go too: every attempt before a complete take that opens with the take's
+   first two words, back to a sentence that says something else.
+5. Joins keep room around speech and a whole silence in Lex's ranges; long pauses are shortened, a breath inside a
    linked phrase stays, and a cut never lands inside a word.
 A marked screen demo is never cut: what would have been removed there is listed for Lex instead.
 """
@@ -130,13 +133,24 @@ class Cutter:
             return False
         demo = self.demo_at(indices[0], indices[-1])
         if demo:
+            start, end = self.words[indices[0]].start, self.words[indices[-1]].end
+            if any(item['code'] == 'demo-protected' and item['start'] < end and item['end'] > start
+                   for item in self.flags):
+                return False
             self.flag('demo-protected', indices[0], indices[-1],
                       f'Inside the marked screen demo ({demo[0]:.2f}-{demo[1]:.2f}): this would have been removed as '
                       f'{REASONS[reason]}. Left in; check the picture before cutting.')
             return False
         for index in indices:
             self.keep[index] = False
-        self.removed.append({'first': indices[0], 'last': indices[-1], 'reason': reason, 'keeps': keeps})
+        # Words removed earlier can sit inside: list each unbroken stretch once, so nothing is counted twice.
+        runs = [[indices[0]]]
+        for index in indices[1:]:
+            if index == runs[-1][-1] + 1:
+                runs[-1].append(index)
+            else:
+                runs.append([index])
+        self.removed += [{'first': run[0], 'last': run[-1], 'reason': reason, 'keeps': keeps} for run in runs]
         return True
 
     # 1. Quiet "again" retake cues.
@@ -230,6 +244,10 @@ class Cutter:
                           'listen and cut by hand if it is one.')
             else:
                 self.drop(first, 'abandoned-start', second[0])
+        # A stray word or two between a sentence and its redo ("So," or "and then") still makes a pair.
+        for first, between, second in zip(phrases, phrases[1:], phrases[2:]):
+            if ends_sentence(self.words[first[-1]]) and len(between) <= 2 and self.opens_alike(first, second):
+                pairs.append((first[0], second[0]))
         return pairs
 
     def repeats_whole(self, first, second):
@@ -245,6 +263,14 @@ class Cutter:
                 break
             matched += 1
         return matched >= SETTINGS['restartRepeat'] * len(first)
+
+    def stops_short(self, first, second):
+        """True when the earlier sentence repeats most of the later one's opening and stops where the later goes on."""
+        return self.mostly_repeated(first, second) and len(second) >= len(first) + 2
+
+    def opens_alike(self, first, second):
+        return len(first) >= 2 and len(second) >= 2 \
+            and all(loose_equal(self.norms[a], self.norms[b]) for a, b in zip(first[:2], second[:2]))
 
     def same_line(self, first, second):
         """True when two sentences say the same line: the same script sentence, or a near copy when neither
@@ -375,6 +401,9 @@ class Cutter:
                               f'{" and ".join(reasons)}. Say if you prefer the last take.')
                     chosen = best
         keeps = takes[chosen][0]
+        start, rest = self.false_start(takes[chosen], takes, line)
+        if start and self.drop(start, 'abandoned-start', rest[0]):
+            keeps = rest[0]
         for number, take in enumerate(takes):
             if number == chosen:
                 continue
@@ -382,6 +411,94 @@ class Cutter:
             if number > chosen and not self.complete(take, line):
                 reason = 'abandoned-start'
             self.drop(take, reason, keeps)
+
+    def false_start(self, take, takes, line):
+        """Split a kept take at a long pause when what follows is itself a complete take that opens like another take
+        of the line: the words before the pause are an unfinished start the transcript ran into the take."""
+        for cut in range(len(take) - 1, 0, -1):
+            if self.gap_ms(take[cut - 1], take[cut]) < SETTINGS['attemptBreakMs']:
+                continue
+            rest = take[cut:]
+            others = [take[:cut]] + [other for other in takes if other is not take]
+            if len(rest) >= 3 and self.complete(rest, line) and any(self.opens_alike(rest, other) for other in others):
+                return take[:cut], rest
+        return [], take
+
+    # 4. Unfinished starts the transcript ran into other words.
+
+    def take_at(self, first):
+        """The kept words from here to the end of their sentence, or None when no sentence end follows."""
+        take = []
+        for index in range(first, len(self.words)):
+            if not self.keep[index]:
+                return None
+            take.append(index)
+            if ends_sentence(self.words[index]):
+                return take
+        return None
+
+    def script_says_once(self, attempt, take):
+        """True when a script line holds the take, the attempt belongs to that same line, and the line says the
+        take's opening only once: then a repeat after a comma is a restart, not a repeat on purpose."""
+        if not self.script:
+            return False
+        (score, line), (_, attempt_line) = self.best_line(take), self.best_line(attempt)
+        if score < SETTINGS['scriptMatch'] or attempt_line != line:
+            return False
+        words, opening = self.script[line], self.norms[take[0]:take[0] + 2]
+        return sum(all(loose_equal(a, b) for a, b in zip(words[at:at + 2], opening))
+                   for at in range(len(words) - 1)) == 1
+
+    def restarted_lines(self):
+        """Remove the attempts before a complete take that open with the take's first two words, even when the
+        transcript ran them into other words; stop at a sentence that says something else."""
+        pieces = self.phrases()
+        for number in range(len(pieces) - 1, 0, -1):
+            take = self.take_at(pieces[number][0]) if self.keep[pieces[number][0]] else None
+            if not take or len(take) < 3:
+                continue
+            opening, start, passed = self.norms[take[0]:take[0] + 2], None, []
+            for piece in reversed(pieces[:number]):
+                kept = [index for index in piece if self.keep[index]]
+                if not kept:
+                    continue
+                if self.words[take[0]].start - self.words[kept[0]].start > SETTINGS['attemptMaxSeconds']:
+                    break
+                at = next((at for at in range(len(kept) - 1) if all(
+                    loose_equal(self.norms[a], b) for a, b in zip(kept[at:at + 2], opening))), None)
+                finished = ends_sentence(self.words[kept[-1]])
+                if at is None:
+                    if finished and len(kept) >= 3:
+                        break
+                    passed.append(kept)
+                    continue
+                # A finished sentence before the take must be the same line said shorter, not a different line.
+                if finished and not (self.same_line(kept[at:], take) if self.script
+                                     else self.stops_short(kept[at:], take) or self.same_line(kept[at:], take)):
+                    break
+                # One word before the opening ("So next, the ...") belongs to the attempt.
+                start = kept[0] if at <= 1 else kept[at]
+            if start is None:
+                continue
+            attempt = [index for index in range(start, take[0]) if self.keep[index]]
+            if TRAILING_MARK.search(self.words[attempt[-1]].text) \
+                    and self.gap_ms(attempt[-1], take[0]) < SETTINGS['attemptBreakMs'] \
+                    and not self.script_says_once(attempt, take):
+                continue  # "The tool is fast, the tool is cheap." may repeat on purpose: restarts() flagged it.
+            if self.script:
+                # Everything removed must belong to the take's own script line, not to the talk around it.
+                if self.best_line(attempt)[1] == self.best_line(take)[1]:
+                    self.drop(attempt, 'abandoned-start', take[0])
+            elif any(len(other) >= 3 and other[0] > start for other in passed):
+                # Without a script, more than a stray word between the attempts may be real talk: ask, do not cut.
+                self.flag('possible-restart', attempt[0], attempt[-1],
+                          f'Possible unfinished start before the take at {self.words[take[0]].start:.2f}: '
+                          f'"{self.text(attempt)}". Left in; listen and cut by hand if it is one.')
+            else:
+                self.drop(attempt, 'abandoned-start', take[0])
+        removed = {round(self.words[index].start, 3) for index, kept in enumerate(self.keep) if not kept}
+        self.flags = [item for item in self.flags if item['code'] not in ('possible-restart', 'possible-retake-cue')
+                      or item['start'] not in removed]
 
     def possible_restarts(self):
         """Flag a two-word run repeated within a few words of a kept sentence: often a restart without a pause."""
@@ -412,7 +529,7 @@ class Cutter:
                                'end': round(self.words[sentence[-1]].end, 3), 'text': self.text(sentence)})
         return chosen
 
-    # 4. Frames.
+    # 5. Frames.
 
     def frames(self, at, low_room, high_room, direction, limit):
         """Frames that leave between low and high ms of room on one side of a word time, inside a limit."""
@@ -524,6 +641,7 @@ class Cutter:
     def plan(self):
         self.retake_cues()
         self.takes(self.restarts())
+        self.restarted_lines()
         self.possible_restarts()
         ad_libs = self.ad_libs()
         runs, joins = self.segments()

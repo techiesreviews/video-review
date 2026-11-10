@@ -37,6 +37,14 @@ What it does:
 - **Retakes.** A quiet "again" with a pause around it marks a retake: the failed attempt and the word itself are
   removed. "Again and again" and an "again" inside a sentence stay. A sentence begun, dropped and restarted after
   a pause loses the dropped start.
+- **Unfinished starts the transcript hides.** The transcript often drops a quiet "again", leaves the full stop
+  off an unfinished start, or puts a stray word between two attempts, so a start can run into the take after it.
+  Every attempt within 30 s before a complete take that opens with the take's first two words goes, part way
+  through a phrase too ("So next, the..."), back to a sentence that says something else. With a script, what
+  goes must belong to the take's own line; without one, a start with more than a stray word in it is listed
+  instead of cut. A start cut off by a pause of 1.5 s or more inside a kept take goes when the rest opens like
+  another take of the line. A repeat after a comma ("The tool is fast, the tool is cheap.") is only cut when the
+  script says that line once and the start belongs to it; otherwise it is listed.
 - **Takes of one line.** The last complete take stays: the same restart, the same script sentence however far
   apart, or a near copy within a minute when there is no script. When the last take is clearly worse (more
   stumbles, or more of the script line missing), the better earlier take stays and the paper edit says so.
@@ -47,8 +55,8 @@ What it does:
   more), a silence of 3 s or more (a screen demo or a pause?), a possible restart without a pause, a possible
   retake cue, and lines not in the script (ad-libs). Without `--script`, ad-libs are not checked.
 
-The working values it uses beyond Lex's numbers are listed in each paper edit. The join check still prefers
-180-250 ms before the first word, so it shows the cutter's shorter opening as a check.
+The working values it uses beyond Lex's numbers are listed in each paper edit. The join check wants the same
+100-150 ms before the first word (Lex, 2026-11-10), so the cutter's opening passes it.
 
 ## After every fix to a cut
 
@@ -69,10 +77,10 @@ a cut, fix what it shows, then listen. It reports:
 - **Checks, listed second:** a gap outside the preferences, a tight speech edge, a long or short lead-in, a
   kept "again" beside a join, or a join with no transcript words on one side.
 
-The preferences come from `EDITING-LESSONS.md`: 180-250 ms before the first word, 150-250 ms between linked
-phrases, 250-450 ms for a new thought, at least 100 ms around speech edges, and 15 ms fades. A last word ending
-in `.`, `!` or `?` counts as a new thought. Those lessons call the numbers suggestions to audition, so a flag on
-a gap is a question, not an order. The limits for a clipped edge and an orphan word are this script's own working
+The preferences come from `EDITING-LESSONS.md` and Lex's answers of 2026-11-10: 100-150 ms before the first
+word, 150-250 ms between linked phrases, 250-450 ms for a new thought, at least 100 ms around speech edges, and
+15 ms fades. A last word ending in `.`, `!` or `?` counts as a new thought. Those lessons call the numbers
+suggestions to audition, so a flag on a gap is a question, not an order. The limits for a clipped edge and an orphan word are this script's own working
 values, listed at the end of each report.
 
 The script never counts as listening. Word times are approximate and a sound missing from the transcript cannot

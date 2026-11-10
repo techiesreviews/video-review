@@ -273,8 +273,15 @@ class WithoutScriptTests(unittest.TestCase):
         result = plan(script=None, demos=())
         kept = kept_starts(result)
         for (start, end), take in CANDIDATES:
-            self.assertFalse([word for word in words_between(start, end) if round(word.start, 3) in kept])
             self.assertTrue(all(round(word.start, 3) in kept for word in take_from(take)))
+            if start in (592.80, 619.03):
+                # Without a script, a repeat after a comma or a long start with real words in it may be meant:
+                # it is flagged, not cut.
+                flag, = [item for item in flags(result, 'possible-restart') if abs(item['start'] - start) < TOLERANCE]
+                continue
+            self.assertFalse([word for word in words_between(start, end) if round(word.start, 3) in kept])
+        spans = sorted((item['start'], item['end']) for item in result['paperEdit']['removed'])
+        self.assertFalse([pair for pair in zip(spans, spans[1:]) if pair[1][0] < pair[0][1]], 'removals overlap')
         self.assertEqual(result['paperEdit']['adLibs'], [])
         self.assertIn('No script', cut_takes.render_paper_edit(result['paperEdit']))
         self.assertEqual(removed_at(result, 205.00)['reason'], 'worse-later-take')
@@ -378,6 +385,26 @@ class RestartTests(unittest.TestCase):
                  ['Next', 6.0, 6.2], ['week', 6.24, 6.5], ['I', 6.54, 6.6], ['will', 6.64, 6.8],
                  ['show', 6.84, 7.1], ['the', 7.14, 7.3], ['export.', 7.34, 7.8]]
         self.assertEqual(removed_texts(plan_words(words)), [])
+
+    def test_two_script_lines_that_open_alike_are_both_kept(self):
+        words = [['Here', 1.0, 1.2], ['is', 1.24, 1.4], ['the', 1.44, 1.6], ['plan.', 1.64, 2.0],
+                 ['Here', 3.0, 3.2], ['is', 3.24, 3.4], ['the', 3.44, 3.6], ['plan', 3.64, 3.9], ['for', 3.94, 4.1],
+                 ['the', 4.14, 4.3], ['whole', 4.34, 4.6], ['week.', 4.64, 5.0]]
+        self.assertEqual(removed_texts(plan_words(words, 'Here is the plan. Here is the plan for the whole week.')),
+                         [])
+
+    def test_talk_between_two_openings_that_belongs_to_another_line_stays(self):
+        script = 'I think this is great. The next thing is the board. I think this is the best part.'
+        words = [['I', 1.0, 1.1], ['think', 1.14, 1.4], ['this', 1.44, 1.6], ['is', 1.64, 1.8], ['great', 1.84, 2.2],
+                 ['and', 3.0, 3.2], ['the', 3.24, 3.4], ['next', 3.44, 3.7], ['thing', 3.74, 4.0], ['is', 4.04, 4.2],
+                 ['the', 4.24, 4.4], ['board', 4.44, 4.8],
+                 ['I', 6.0, 6.1], ['think', 6.14, 6.4], ['this', 6.44, 6.6], ['is', 6.64, 6.8], ['the', 6.84, 7.0],
+                 ['best', 7.04, 7.3], ['part.', 7.34, 7.8]]
+        self.assertEqual(removed_texts(plan_words(words, script)), [])
+        result = plan_words(words)
+        self.assertEqual(removed_texts(result), [])
+        flag, = flags(result, 'possible-restart')
+        self.assertIn('6.00', flag['message'])
 
     def test_a_long_pause_inside_a_sentence_without_a_restart_stays(self):
         words = [['So', 1.0, 1.2], ['I', 1.24, 1.3], ['click', 1.34, 1.6], ['here', 1.64, 1.9], ['and', 4.0, 4.2],
