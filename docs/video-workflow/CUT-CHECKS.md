@@ -41,13 +41,14 @@ What it does:
   off an unfinished start, or puts a stray word between two attempts, so a start can run into the take after it.
   Every attempt within 30 s before a complete take that opens with the take's first two words goes, part way
   through a phrase too ("So next, the..."), back to a sentence that says something else. With a script, what
-  goes must belong to the take's own line; without one, a start with more than a stray word in it is listed
-  instead of cut. A start cut off by a pause of 1.5 s or more inside a kept take goes when the rest opens like
+  goes must belong to the take's own line; without one, a start with more than a stray word in it, or a
+  shorter finished sentence that opens the same way, is listed instead of cut. A start cut off by a pause of 1.5 s or more inside a kept take goes when the rest opens like
   another take of the line. A repeat after a comma ("The tool is fast, the tool is cheap.") is only cut when the
   script says that line once and the start belongs to it; otherwise it is listed.
 - **Takes of one line.** The last complete take stays: the same restart, the same script sentence however far
   apart, or a near copy within a minute when there is no script. When the last take is clearly worse (more
-  stumbles, or more of the script line missing), the better earlier take stays and the paper edit says so.
+  stumbles, or more of the script line missing), the better earlier take stays and the paper edit says so. A
+  line the script itself says more than once is never treated as takes of one line.
 - **Timing (Lex, 2026-11-10).** 100-150 ms of room before and after speech at every cut, the start of the clip
   too; a whole silence of 150-250 ms between linked phrases (it aims for 200) and 250-450 ms before a new thought
   (it aims for 300); a breath inside a linked phrase stays; 15 ms fade at every cut. No cut lands inside a word.
