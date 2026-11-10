@@ -104,6 +104,8 @@ class Cutter:
         self.keep = [True] * len(words)
         self.demos = [tuple(demo) for demo in demos]
         self.script = script_sentences(script_text) if script_text else None
+        # Lines the script itself says more than once: never treated as takes of one line.
+        self.repeated = {line for line, count in Counter(map(tuple, self.script or ())).items() if count > 1}
         self.removed = []
         self.flags = []
 
@@ -278,7 +280,8 @@ class Cutter:
         if self.script:
             (score, line), (other_score, other_line) = self.best_line(first), self.best_line(second)
             if max(score, other_score) >= SETTINGS['scriptMatch']:
-                return line == other_line and min(score, other_score) >= SETTINGS['scriptMatch']
+                return line == other_line and min(score, other_score) >= SETTINGS['scriptMatch'] \
+                    and tuple(self.script[line]) not in self.repeated
             # Neither is in the script (an ad-lib said twice): compare the two sentences themselves.
         names = [self.norms[index] for index in first]
         other = [self.norms[index] for index in second]
@@ -341,11 +344,11 @@ class Cutter:
                 join(owner[earlier], owner[later])
         lines = {}
         if self.script:
-            repeated = {line for line, count in Counter(map(tuple, self.script)).items() if count > 1}
             for number, sentence in enumerate(sentences):
                 score, line = self.best_line(sentence)
                 # A short sentence, or one the script itself says twice, is not grouped with others.
-                if score >= SETTINGS['scriptMatch'] and len(sentence) >= 3 and tuple(self.script[line]) not in repeated:
+                if score >= SETTINGS['scriptMatch'] and len(sentence) >= 3 \
+                        and tuple(self.script[line]) not in self.repeated:
                     lines[number] = line
                     first = next((other for other, value in lines.items() if value == line and other != number), None)
                     if first is not None:
@@ -452,12 +455,16 @@ class Cutter:
     def restarted_lines(self):
         """Remove the attempts before a complete take that open with the take's first two words, even when the
         transcript ran them into other words; stop at a sentence that says something else."""
-        pieces = self.phrases()
+        pieces, asks = self.phrases(), []
         for number in range(len(pieces) - 1, 0, -1):
             take = self.take_at(pieces[number][0]) if self.keep[pieces[number][0]] else None
             if not take or len(take) < 3:
                 continue
-            opening, start, passed = self.norms[take[0]:take[0] + 2], None, []
+            if self.script:
+                score, line = self.best_line(take)
+                if score >= SETTINGS['scriptMatch'] and tuple(self.script[line]) in self.repeated:
+                    continue  # The script says this line twice on purpose.
+            opening, start, passed, unsure = self.norms[take[0]:take[0] + 2], None, [], False
             for piece in reversed(pieces[:number]):
                 kept = [index for index in piece if self.keep[index]]
                 if not kept:
@@ -473,9 +480,11 @@ class Cutter:
                     passed.append(kept)
                     continue
                 # A finished sentence before the take must be the same line said shorter, not a different line.
-                if finished and not (self.same_line(kept[at:], take) if self.script
-                                     else self.stops_short(kept[at:], take) or self.same_line(kept[at:], take)):
-                    break
+                # Without a script, one that only repeats the take's opening and stops is asked about, not cut.
+                if finished and not self.same_line(kept[at:], take):
+                    if self.script or not self.stops_short(kept[at:], take):
+                        break
+                    unsure = True
                 # One word before the opening ("So next, the ...") belongs to the attempt.
                 start = kept[0] if at <= 1 else kept[at]
             if start is None:
@@ -489,16 +498,19 @@ class Cutter:
                 # Everything removed must belong to the take's own script line, not to the talk around it.
                 if self.best_line(attempt)[1] == self.best_line(take)[1]:
                     self.drop(attempt, 'abandoned-start', take[0])
-            elif any(len(other) >= 3 and other[0] > start for other in passed):
+            elif unsure or any(len(other) >= 3 and other[0] > start for other in passed):
                 # Without a script, more than a stray word between the attempts may be real talk: ask, do not cut.
-                self.flag('possible-restart', attempt[0], attempt[-1],
-                          f'Possible unfinished start before the take at {self.words[take[0]].start:.2f}: '
-                          f'"{self.text(attempt)}". Left in; listen and cut by hand if it is one.')
+                asks.append((attempt, take[0]))
             else:
                 self.drop(attempt, 'abandoned-start', take[0])
-        removed = {round(self.words[index].start, 3) for index, kept in enumerate(self.keep) if not kept}
+        # A restart flagged earlier whose words are now removed is no longer a question for Lex.
+        removed = [self.words[index].start for index, kept in enumerate(self.keep) if not kept]
         self.flags = [item for item in self.flags if item['code'] not in ('possible-restart', 'possible-retake-cue')
-                      or item['start'] not in removed]
+                      or not any(item['start'] - TOLERANCE <= at <= item['end'] for at in removed)]
+        for attempt, take in asks:
+            self.flag('possible-restart', attempt[0], attempt[-1],
+                      f'Possible unfinished start before the take at {self.words[take].start:.2f}: '
+                      f'"{self.text(attempt)}". Left in; listen and cut by hand if it is one.')
 
     def possible_restarts(self):
         """Flag a two-word run repeated within a few words of a kept sentence: often a restart without a pause."""

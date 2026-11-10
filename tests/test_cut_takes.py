@@ -274,10 +274,11 @@ class WithoutScriptTests(unittest.TestCase):
         kept = kept_starts(result)
         for (start, end), take in CANDIDATES:
             self.assertTrue(all(round(word.start, 3) in kept for word in take_from(take)))
-            if start in (592.80, 619.03):
-                # Without a script, a repeat after a comma or a long start with real words in it may be meant:
-                # it is flagged, not cut.
-                flag, = [item for item in flags(result, 'possible-restart') if abs(item['start'] - start) < TOLERANCE]
+            if start in (362.15, 592.80, 619.03):
+                # Without a script, a repeat after a comma, or a start with real words or a shorter finished
+                # sentence in it, may be meant: exactly one flag asks about it, nothing is cut.
+                self.assertEqual(len([item for item in flags(result, 'possible-restart')
+                                      if abs(item['start'] - start) < TOLERANCE]), 1, f'flag at {start}')
                 continue
             self.assertFalse([word for word in words_between(start, end) if round(word.start, 3) in kept])
         spans = sorted((item['start'], item['end']) for item in result['paperEdit']['removed'])
@@ -405,6 +406,32 @@ class RestartTests(unittest.TestCase):
         self.assertEqual(removed_texts(result), [])
         flag, = flags(result, 'possible-restart')
         self.assertIn('6.00', flag['message'])
+
+    def test_a_short_sentence_and_a_longer_different_one_that_open_alike_are_asked_about_not_cut(self):
+        words = [['This', 1.0, 1.2], ['is', 1.24, 1.4], ['the', 1.44, 1.6], ['tool.', 1.64, 2.0], ['This', 3.8, 4.0],
+                 ['is', 4.04, 4.2], ['the', 4.24, 4.4], ['price', 4.44, 4.7], ['we', 4.74, 4.9], ['pay', 4.94, 5.1],
+                 ['for', 5.14, 5.3], ['it.', 5.34, 5.7]]
+        result = plan_words(words)
+        self.assertEqual(removed_texts(result), [])
+        self.assertEqual([item['code'] for item in result['paperEdit']['flags']], ['possible-restart'])
+
+    def test_a_line_the_script_says_twice_in_a_row_keeps_both(self):
+        script = 'Thanks for watching this week. Thanks for watching this week.'
+        words = [['Thanks', 1.0, 1.3], ['for', 1.34, 1.5], ['watching', 1.54, 1.9], ['this', 1.94, 2.1],
+                 ['week.', 2.14, 2.5], ['Thanks', 4.5, 4.8], ['for', 4.84, 5.0], ['watching', 5.04, 5.4],
+                 ['this', 5.44, 5.6], ['week.', 5.64, 6.0]]
+        self.assertEqual(removed_texts(plan_words(words, script)), [])
+
+    def test_an_unfinished_start_inside_a_marked_demo_is_flagged_once_instead_of_cut(self):
+        words = [['So', 1.0, 1.2], ['next,', 1.3, 1.6], ['the', 1.64, 1.8], ['animation', 1.84, 2.3],
+                 ['skills', 2.34, 2.7], ['Next,', 4.0, 4.3], ['the', 4.34, 4.5], ['animation', 4.54, 5.0],
+                 ['skills', 5.04, 5.4], ['make', 5.44, 5.6], ['every', 5.64, 5.9], ['move', 5.94, 6.2],
+                 ['feel', 6.24, 6.4], ['smooth.', 6.44, 6.9]]
+        script = 'Next, the animation skills make every move feel smooth.'
+        for text in (script, None):
+            result = plan_words(words, text, demos=[(0.5, 7.0)])
+            self.assertEqual(removed_texts(result), [], text)
+            self.assertEqual([item['code'] for item in result['paperEdit']['flags']], ['demo-protected'], text)
 
     def test_a_long_pause_inside_a_sentence_without_a_restart_stays(self):
         words = [['So', 1.0, 1.2], ['I', 1.24, 1.3], ['click', 1.34, 1.6], ['here', 1.64, 1.9], ['and', 4.0, 4.2],
