@@ -8,6 +8,12 @@ pause before a new thought and a breath inside a linked phrase. No media is read
 The retakes copy the shapes that the real run on LexTop (2026-11-10) only flagged or cut in part: the transcript
 has no quiet "again" there, an unfinished start runs into the next take without a full stop, a stray word sits
 between two attempts, and a restart can begin part way through a phrase or after a comma.
+
+The second real run (PR #17) showed more shapes, copied here at the same seconds with made-up words: a breath of
+340 ms inside the preferred take at 603.68, unfinished pieces left between a removed take and the take it keeps,
+a finished first try that opens like its take ("Setting up the things."), short stutters ("And then I—",
+"But I'm—") that the paper edit only wants inspected, "So, again," that the script itself says, and a line
+110 s away that only looks like an earlier take.
 """
 import importlib.util
 import json
@@ -114,20 +120,34 @@ class SundayRetakeTests(unittest.TestCase):
             self.assertTrue(all(round(word.start, 3) in kept for word in whole_take),
                             f'the complete take at {take} is kept whole')
 
-    def test_each_removal_says_why_and_which_take_it_keeps(self):
-        expected = {92.78: ('earlier-take', 102.25), 96.12: ('abandoned-start', 102.25),
-                    323.70: ('abandoned-start', 329.03), 341.05: ('earlier-take', 353.96),
-                    348.23: ('abandoned-start', 353.96), 362.15: ('abandoned-start', 374.57),
-                    365.40: ('earlier-take', 374.57), 369.06: ('earlier-take', 374.57),
-                    592.80: ('abandoned-start', 603.68), 619.03: ('abandoned-start', 621.68)}
-        for start, (reason, keeps) in expected.items():
-            removal = removed_at(SUNDAY, start)
-            self.assertEqual((removal['reason'], removal['keeps']), (reason, keeps), f'removal at {start}')
+    def test_each_preferred_take_is_fully_inside_the_kept_ranges(self):
+        timeline = cut_timeline.load_cutlist(SUNDAY['cutlist'])
+        for _, take in CANDIDATES:
+            for word in take_from(take):
+                self.assertTrue(any(run.source_start <= word.start and word.end <= run.source_end
+                                    for run in timeline.runs), f'"{word.text}" at {word.start} in the take at {take}')
 
-    def test_an_unfinished_start_that_runs_into_the_next_take_is_removed(self):
-        # No full stop ends these starts, so the transcript makes one sentence of the start and the take after it.
-        for start, end in ((96.12, 98.42), (348.23, 349.23), (592.80, 601.86)):
-            self.assertAlmostEqual(removed_at(SUNDAY, start)['end'], end, 3)
+    def test_each_attempt_run_is_one_removal_up_to_the_take_it_keeps(self):
+        # One passage from the first failed start to just before the preferred take, not pieces.
+        expected = {92.78: (98.42, 'retake-run', 102.25), 323.70: (326.37, 'abandoned-start', 329.03),
+                    341.05: (349.23, 'retake-run', 353.96), 362.15: (370.21, 'retake-run', 374.57),
+                    592.80: (601.86, 'abandoned-start', 603.68), 619.03: (621.10, 'abandoned-start', 621.68)}
+        for start, (end, reason, keeps) in expected.items():
+            removal = removed_at(SUNDAY, start)
+            self.assertEqual((round(removal['end'], 2), removal['reason'], removal['keeps']), (end, reason, keeps),
+                             f'removal at {start}')
+        self.assertEqual(len(SUNDAY['paperEdit']['removed']), len(expected) + 1)  # plus the worse take at 205
+
+    def test_a_breath_inside_the_preferred_take_is_not_a_new_take(self):
+        # 340 ms after "next week, I am" the take goes on: the removal stops before 603.68, not before 605.36.
+        removal = removed_at(SUNDAY, 592.80)
+        self.assertLess(removal['end'], 603.68)
+        self.assertIn(603.68, kept_starts(SUNDAY))
+
+    def test_a_removal_that_takes_out_a_long_silence_says_so(self):
+        removal = removed_at(SUNDAY, 592.80)
+        self.assertAlmostEqual(removal['longestSilence'], 3.43, 2)
+        self.assertIn('3.4 s silence', cut_takes.render_paper_edit(SUNDAY['paperEdit']))
 
     def test_a_restart_part_way_through_a_phrase_keeps_the_take_and_the_line_before(self):
         self.assertAlmostEqual(removed_at(SUNDAY, 323.70)['end'], 326.37, 3)
@@ -140,14 +160,29 @@ class SundayRetakeTests(unittest.TestCase):
 
     def test_the_introduction_before_the_closing_question_stays(self):
         kept = kept_starts(SUNDAY)
-        self.assertTrue(all(round(word.start, 3) in kept for word in take_from(618.29)))
+        self.assertTrue(all(round(word.start, 3) in kept for word in words_between(618.29, 618.92)))
 
     def test_again_and_again_and_look_again_are_speech(self):
         kept = kept_starts(SUNDAY)
-        for start in (139.20, 560.00):
+        for start in (142.65, 560.00):
             self.assertTrue(all(round(word.start, 3) in kept for word in take_from(start)), f'line at {start}')
-        self.assertFalse([item for item in SUNDAY['paperEdit']['removed'] if 139 < item['start'] < 143
+        self.assertFalse([item for item in SUNDAY['paperEdit']['removed'] if 139 < item['start'] < 146
                           or 559 < item['start'] < 562])
+
+    def test_so_again_that_the_script_says_is_speech_not_a_retake_cue(self):
+        kept = kept_starts(SUNDAY)
+        self.assertTrue(all(round(word.start, 3) in kept for word in words_between(533.35, 537.03)))
+        self.assertFalse([item for item in SUNDAY['paperEdit']['flags'] if 'again' in item['text']
+                          and 533 < item['start'] < 535])
+        # The 5.3 s silence before it now stays, so it is listed for Lex.
+        self.assertTrue(any(abs(item['start'] - 528.09) < TOLERANCE for item in flags(SUNDAY, 'long-silence')))
+
+    def test_a_line_far_away_that_only_looks_like_an_earlier_take_is_kept(self):
+        kept = kept_starts(SUNDAY)
+        self.assertTrue(all(round(word.start, 3) in kept for word in take_from(174.27)))
+        self.assertTrue(all(round(word.start, 3) in kept for word in take_from(283.91)))
+        flag, = flags(SUNDAY, 'no-complete-take')
+        self.assertIn('174.27', flag['message'])
 
     def test_a_worse_last_take_keeps_the_better_one_and_flags_it(self):
         kept = kept_starts(SUNDAY)
@@ -166,14 +201,18 @@ class SundayRetakeTests(unittest.TestCase):
 
     def test_inspect_items_are_flagged_and_left_in(self):
         kept = kept_starts(SUNDAY)
+        # The paper edit says inspect, not cut, at 63-70, 139-143, 410-418, 489-495 and 532-536.
         restarts = sorted(round(item['start']) for item in flags(SUNDAY, 'possible-restart'))
-        self.assertEqual([start // 10 for start in restarts], [6, 13, 48])
-        for start in (63.40, 139.20, 489.30, 532.40):
-            self.assertTrue(all(round(word.start, 3) in kept for word in take_from(start)), f'line at {start}')
+        self.assertEqual([start // 10 for start in restarts], [6, 14, 49])
+        for start, end in ((63, 70), (139, 146), (410, 418), (489, 495), (532, 538)):
+            self.assertTrue(all(round(word.start, 3) in kept for word in words_between(start, end)), f'{start}-{end}')
+            self.assertFalse([item for item in SUNDAY['paperEdit']['removed'] if start <= item['start'] <= end])
         self.assertFalse([item for item in SUNDAY['paperEdit']['flags'] if 'short' in item['text']],
                          'repeated "short" is natural emphasis, not a flag')
 
     def test_ad_libs_are_kept_and_listed(self):
+        # A failed try before a take of the same line (362.15, 592.80) is not an ad-lib, and neither is a short
+        # take whose words are all in its script line (374.57).
         self.assertEqual([(item['start'], item['text']) for item in SUNDAY['paperEdit']['adLibs']],
                          [(450.0, 'By the way, this part was not planned at all.')])
         self.assertIn(450.0, kept_starts(SUNDAY))
@@ -272,15 +311,17 @@ class WithoutScriptTests(unittest.TestCase):
     def test_retakes_are_still_found_and_ad_libs_are_not_judged(self):
         result = plan(script=None, demos=())
         kept = kept_starts(result)
+        timeline = cut_timeline.load_cutlist(result['cutlist'])
         for (start, end), take in CANDIDATES:
-            self.assertTrue(all(round(word.start, 3) in kept for word in take_from(take)))
-            if start in (362.15, 592.80, 619.03):
-                # Without a script, a repeat after a comma, or a start with real words or a shorter finished
-                # sentence in it, may be meant: exactly one flag asks about it, nothing is cut.
-                self.assertEqual(len([item for item in flags(result, 'possible-restart')
-                                      if abs(item['start'] - start) < TOLERANCE]), 1, f'flag at {start}')
-                continue
-            self.assertFalse([word for word in words_between(start, end) if round(word.start, 3) in kept])
+            for word in take_from(take):
+                self.assertTrue(any(run.source_start <= word.start and word.end <= run.source_end
+                                    for run in timeline.runs), f'"{word.text}" in the take at {take}')
+            attempt = words_between(start, end)
+            asked = [item for item in flags(result, 'possible-restart') if start - TOLERANCE <= item['end']
+                     and item['start'] <= end + TOLERANCE]
+            # Without a script some starts may be meant: each attempt is removed whole or asked about.
+            self.assertTrue(not [word for word in attempt if round(word.start, 3) in kept] or asked,
+                            f'{start}-{end} is removed or flagged')
         spans = sorted((item['start'], item['end']) for item in result['paperEdit']['removed'])
         self.assertFalse([pair for pair in zip(spans, spans[1:]) if pair[1][0] < pair[0][1]], 'removals overlap')
         self.assertEqual(result['paperEdit']['adLibs'], [])
@@ -339,11 +380,24 @@ class CueTests(unittest.TestCase):
 
 class RestartTests(unittest.TestCase):
     def test_a_dropped_start_is_removed(self):
-        words = [['So', 1.0, 1.2], ['the', 1.24, 1.4], ['tool', 1.44, 1.8], ['So', 2.6, 2.8], ['the', 2.84, 3.0],
-                 ['tool', 3.04, 3.4], ['works.', 3.44, 3.9]]
+        words = [['So', 1.0, 1.2], ['the', 1.24, 1.4], ['new', 1.44, 1.6], ['tool', 1.64, 1.8], ['So', 2.6, 2.8],
+                 ['the', 2.84, 3.0], ['new', 3.04, 3.2], ['tool', 3.24, 3.4], ['works.', 3.44, 3.9]]
         result = plan_words(words)
         self.assertEqual([(item['text'], item['reason']) for item in result['paperEdit']['removed']],
-                         [('So the tool', 'abandoned-start')])
+                         [('So the new tool', 'abandoned-start')])
+
+    def test_a_dropped_start_of_under_four_words_is_flagged_not_cut(self):
+        # The paper edit's inspect-only restarts ("And then I—", "But I'm—") are this short.
+        for start in (['And', 'then', 'I—'], ["But", "I'm—"]):
+            words = [[text, 1.0 + 0.3 * number, 1.2 + 0.3 * number] for number, text in enumerate(start)]
+            words += [['and', 3.0, 3.2], ['then', 3.24, 3.4], ['I', 3.44, 3.5], ['look', 3.54, 3.8],
+                      ['again.', 3.84, 4.2]] if len(start) == 3 else \
+                [['but', 3.0, 3.2], ['I', 3.24, 3.3], ['managed', 3.34, 3.8], ['it.', 3.84, 4.0]]
+            for script in (None, 'And then I look again. But I managed it.'):
+                result = plan_words(words, script)
+                self.assertEqual(removed_texts(result), [], (start, script))
+                self.assertEqual([item['code'] for item in result['paperEdit']['flags']], ['possible-restart'],
+                                 (start, script))
 
     def test_two_lines_that_only_open_alike_are_both_kept(self):
         words = [['This', 1.0, 1.2], ['is', 1.24, 1.4], ['the', 1.44, 1.6], ['tool.', 1.64, 2.0],
