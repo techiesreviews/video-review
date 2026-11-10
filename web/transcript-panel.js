@@ -1,7 +1,7 @@
 import {normalizeTranscript,activeWordIndex,wordSelection,originalOmissions,wordsInSpan} from './transcript-core.js';
 import {makeRemoval,removalBounds,skipRemoved,previewDuration,exportCut,removedRanges,playbackRemovals} from './cut-core.js';
 import {createWaveform} from './waveform-panel.js';
-import {barKey,suggestion,recentNotes,nextWordAfterDelete,sentLine,barSpotOffWords,deletedIds,cutsToRestore,cutMarks,keptRuns,lastCutGroup} from './edit-bar-core.js';
+import {barKey,suggestion,recentNotes,nextWordAfterDelete,afterDelete,broughtBackLine,sentLine,barSpotOffWords,deletedIds,cutsToRestore,cutMarks,keptRuns,lastCutGroup} from './edit-bar-core.js';
 
 const $=s=>document.querySelector(s);
 const stamp=ms=>`${Math.floor(ms/60000)}:${String(Math.floor(ms/1000)%60).padStart(2,'0')}.${String(ms%1000).padStart(3,'0')}`;
@@ -61,6 +61,11 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   function flushNote(){clearTimeout(noteTimer);const pending=notePending;notePending=null;if(pending)updateRequest(pending.id,pending.text).catch(error=>showError(error.message));}
   function keepDraft(draft){if(draft&&!$('#transcriptSelection').hidden){noteBox.value=draft;ghostState();}}
   function noteState(id=null,text='',base=''){flushNote();noteId=id;noteBase=base;noteBox.value=text;barStatus();ghostState();}
+  // With the bar closed (the box that had the focus is hidden), the focus goes to the words, as Escape does, not to the page.
+  function focusWords(index,isWord=true){
+    const active=document.activeElement;if(active&&active!==document.body&&active!==noteBox)return;
+    const target=isWord?wordNodes[index]:null;if(target&&!target.hidden)target.focus({preventScroll:true});else body.focus({preventScroll:true});
+  }
   function focusBar(){if(!$('#transcriptSelection').hidden)noteBox.focus({preventScroll:true});}
   function clear(){selected=null;anchor=null;sourceAnchor=null;auditionRange=null;noteState();for(const n of body.querySelectorAll('.selected'))n.classList.remove('selected');$('#transcriptPanel').classList.remove('source-selection');$('#restoreOriginalSelection').hidden=true;$('#restoreOriginalSelection').disabled=false;bar.hidden=true;barTarget=null;waveform.setRange(null);}
   function choose(a,b=a,{focus=true}={}){
@@ -208,7 +213,11 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
       const draft=boxNow.startsWith(typedRaw)?boxNow.slice(typedRaw.length).trimStart():boxNow;
       // Like a video editor: the words after the cut stay selected so the next delete or note is one key away.
       const next=wasWords?nextWordAfterDelete(transcript.words,transcript.draftEdits.flatMap(e=>e.wordIds||[]),first,last):-1;
-      if(next>=0){busy=false;refreshCuts();anchor=next;choose(next);keepDraft(draft);barStatus(typed?'Deleted, with your note. Ctrl+Z brings both back.':'Deleted. Ctrl+Z brings it back.');centre(wordNodes[next]);}
+      const after=afterDelete({next,draft,wasWords}),line=typed?'Deleted, with your note. Ctrl+Z brings both back.':'Deleted. Ctrl+Z brings it back.';
+      if(after.show==='next'){busy=false;refreshCuts();anchor=next;choose(next);keepDraft(after.draft);barStatus(line);centre(wordNodes[next]);}
+      // The very last words: they stay selected only when letters were typed during the save, so those are not lost.
+      else if(after.show==='deleted'){busy=false;refreshCuts();anchor=first;choose(first,last);keepDraft(after.draft);barStatus(line);}
+      else focusWords(first,wasWords);
     }
     catch(error){showError(error.message);}finally{busy=false;refreshCuts();}
   }
@@ -221,11 +230,11 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     try{
       const draft=await saveCuts(transcript.draftEdits.slice(0,-count),{keep:stay});if(edit.commentId)await cancelRequest(edit.commentId);
       const note=cutNotes.get(edit.commentId);cutNotes.delete(edit.commentId);
-      if(stay){barStatus(note?'Brought back. Its note is under Resolved.':'Brought back.');return;}
+      if(stay){barStatus(broughtBackLine({noteResolved:!!note}));return;}
       seek(edit.startMs);
       // The words that came back are selected again, so a mistaken undo is one Backspace from being redone.
       const ids=undone.flatMap(e=>e.wordIds||[]),first=transcript.words.findIndex(w=>w.id===ids[0]),last=transcript.words.findIndex(w=>w.id===ids.at(-1));
-      if(first>=0&&last>=first){busy=false;refreshCuts();anchor=first;choose(first,last,{focus:false});keepDraft([note,draft].filter(Boolean).join(' '));barStatus('Brought back. Backspace deletes it again.');if(fromBar)focusBar();}
+      if(first>=0&&last>=first){busy=false;refreshCuts();anchor=first;choose(first,last,{focus:false});keepDraft([note,draft].filter(Boolean).join(' '));barStatus(broughtBackLine({selectedAgain:true}));if(fromBar)focusBar();}
     }
     catch(error){showError(error.message);}finally{busy=false;refreshCuts();}
   }
@@ -235,8 +244,9 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     try{
       await saveCuts(transcript.draftEdits.filter(e=>!ids.includes(e.id)),{keep:stay});
       // A note shared with pieces still cut stays open; once its last piece is back it is resolved.
-      for(const id of new Set(back.map(e=>e.commentId).filter(Boolean)))if(!transcript.draftEdits.some(e=>e.commentId===id)){await cancelRequest(id);cutNotes.delete(id);}
-      if(stay)barStatus('Brought back.');else seek(back[0].startMs);
+      let noteResolved=false;
+      for(const id of new Set(back.map(e=>e.commentId).filter(Boolean)))if(!transcript.draftEdits.some(e=>e.commentId===id)){await cancelRequest(id);noteResolved||=cutNotes.has(id);cutNotes.delete(id);}
+      if(stay)barStatus(broughtBackLine({noteResolved,selectedAgain:fromBar}));else seek(back[0].startMs);
     }catch(error){showError(error.message);}finally{busy=false;refreshCuts();}
   }
   $('#undoTranscriptCut').onclick=undoCut;
