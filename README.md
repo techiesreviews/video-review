@@ -2,7 +2,7 @@
 
 Review a video through its words: seek from the transcript, select a phrase, remove it from a reversible
 preview cut, or leave a timestamped request for an editing agent. The final editable cut can stay in
-DaVinci Resolve. [Reviewing and applying changes](docs/REVIEWING.md) explains the workflow, and [Cut checks and captions](docs/video-workflow/CUT-CHECKS.md) covers the join check and caption files.
+DaVinci Resolve. [Reviewing and applying changes](docs/REVIEWING.md) explains the workflow, and [Take cutter, cut checks and captions](docs/video-workflow/CUT-CHECKS.md) covers the take cutter, the join check and caption files.
 
 The library searches video titles and transcript phrases. Removing an entry archives it without deleting
 the recording. Comments, transcripts and recordings stay private; this repository contains the app code.
