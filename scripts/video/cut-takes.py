@@ -58,6 +58,7 @@ SETTINGS = {
     'worseKeptPoint': 0.6,
     # A dropped start shorter than this is listed, not cut: the paper edit only asks to inspect "And then I—".
     'shortStartWords': 4,
+    # A line is an ad-lib only when no more than this share of its main words is in its closest script line.
     'adLibMainWords': 0.5,
 }
 SENTENCE_END = re.compile(r'[.!?]["\')\]]*$')
@@ -405,7 +406,8 @@ class Cutter:
                       'All left in; pick one after checking the picture.')
             return
         complete = [number for number, take in enumerate(takes) if self.complete(take, line)]
-        far = self.words[takes[-1][0]].start - self.words[takes[0][-1]].end > SETTINGS['nearTakeSeconds']
+        far = all(self.words[later[0]].start - self.words[earlier[-1]].end > SETTINGS['nearTakeSeconds']
+                  for earlier, later in zip(takes, takes[1:]))
         if not complete and far:
             times = ', '.join(f'{self.words[take[0]].start:.2f}' for take in takes)
             self.flag('no-complete-take', takes[0][0], takes[0][-1],
@@ -489,6 +491,16 @@ class Cutter:
         return next((at for at in range(len(indices) - 1) if all(
             loose_equal(self.norms[a], b) for a, b in zip(indices[at:at + 2], opening))), None)
 
+    def carried_from(self, first):
+        """The kept words this word carries on from: back over short breaths, to a sentence end, a removal or a
+        long pause."""
+        words = []
+        while first > 0 and self.keep[first - 1] and not ends_sentence(self.words[first - 1]) \
+                and self.gap_ms(first - 1, first) < SETTINGS['attemptBreakMs']:
+            first -= 1
+            words.insert(0, first)
+        return words
+
     def goes_on(self, first):
         """True when this word may carry on the speech before it after a short breath: no sentence end, broken-off
         word, comma or removal before it, and a pause under the attempt break."""
@@ -510,7 +522,7 @@ class Cutter:
             if not take or len(take) < 3:
                 continue
             opening = self.norms[take[0]:take[0] + 2]
-            if self.goes_on(take[0]) and self.find_opening(pieces[number - 1], opening) is None:
+            if self.find_opening(self.carried_from(take[0]), opening) is None and self.goes_on(take[0]):
                 continue  # A breath inside a take ("I am | working on"), not a new take.
             if self.script:
                 score, line = self.best_line(take)
@@ -534,7 +546,10 @@ class Cutter:
                 # has it as a different line. Without a script, one that only repeats the opening is asked about.
                 if finished and not self.same_line(kept[at:], take):
                     if self.script:
-                        if self.other_line(kept[at:], take):
+                        # Outside the script it must be a near copy of the take, or it may be an ad-lib.
+                        if self.other_line(kept[at:], take) or not (self.stops_short(kept[at:], take) or dice(
+                                [self.norms[index] for index in kept[at:]],
+                                [self.norms[index] for index in take]) >= SETTINGS['nearTakeMatch']):
                             break
                     elif self.stops_short(kept[at:], take):
                         unsure = True
@@ -602,10 +617,11 @@ class Cutter:
         return bool(main) and overlap(main, self.script[line]) > SETTINGS['adLibMainWords'] * len(main)
 
     def take_follows(self, sentence, later):
-        """True when a kept sentence opening the same way follows soon: this one is a failed try, not an ad-lib."""
-        end = self.words[sentence[-1]].end
-        return any(self.opens_alike(sentence, other) for other in later
-                   if self.words[other[0]].start - end <= SETTINGS['attemptMaxSeconds'])
+        """True when a take of the same line follows soon: this one is a failed try, not an ad-lib."""
+        end, names = self.words[sentence[-1]].end, [self.norms[index] for index in sentence]
+        return any(self.opens_alike(sentence, other) and (self.stops_short(sentence, other) or dice(
+            names, [self.norms[index] for index in other]) >= SETTINGS['nearTakeMatch'])
+            for other in later if self.words[other[0]].start - end <= SETTINGS['attemptMaxSeconds'])
 
     def ad_libs(self):
         if not self.script:
@@ -871,6 +887,9 @@ def render_paper_edit(paper):
         'sides, or on one side when the restart repeats the attempt\'s opening words; not when the script says the '
         'same words ("So, again, you see").',
         f'- A dropped start of fewer than {limits["shortStartWords"]} words ("And then I—") is listed, not cut.',
+        f'- Takes of a line more than {limits["nearTakeSeconds"]} s apart with none complete all stay and are listed.',
+        f'- An ad-lib: no more than {round(limits["adLibMainWords"] * 100)}% of its main words are in its closest '
+        'script line, and no take of the same line follows it.',
         f'- A later take counts as clearly worse when it has {limits["worseStumbles"]} or more extra stumbles, '
         f'leaves out over {round(limits["worseCoverageDrop"] * 100)}% more of the script line, or (without a script) '
         f'keeps under {round(limits["worseKeptPoint"] * 100)}% of the earlier take\'s main words.',
