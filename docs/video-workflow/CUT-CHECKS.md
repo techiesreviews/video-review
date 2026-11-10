@@ -35,8 +35,14 @@ on `cutlist.json` and listen.
 What it does:
 
 - **Retakes.** A quiet "again" with a pause around it marks a retake: the failed attempt and the word itself are
-  removed. "Again and again" and an "again" inside a sentence stay. A sentence begun, dropped and restarted after
-  a pause loses the dropped start.
+  removed. "Again and again", an "again" inside a sentence and an "again" the script itself says ("So, again,
+  you see") stay. A sentence begun, dropped and restarted after a pause loses the dropped start; a dropped start
+  of fewer than four words ("And then I—", "But I'm—") is only listed, as the Sunday paper edit asks.
+- **The whole run of failed tries.** From the first failed start to just before the take that stays, as one
+  passage, never into that take: a breath of under 1.5 s inside a take does not start a new one. A broken-off
+  start ("If you could—") before a long pause goes when, with a script, the rest says the whole line. A finished
+  first try that opens like the take ("Setting up the things.") goes too, unless the script has it as a line of
+  its own.
 - **Unfinished starts the transcript hides.** The transcript often drops a quiet "again", leaves the full stop
   off an unfinished start, or puts a stray word between two attempts, so a start can run into the take after it.
   Every attempt within 30 s before a complete take that opens with the take's first two words goes, part way
@@ -49,13 +55,16 @@ What it does:
 - **Takes of one line.** The last complete take stays: the same restart, the same script sentence however far
   apart, or a near copy within a minute when there is no script. When the last take is clearly worse (more
   stumbles, or more of the script line missing), the better earlier take stays and the paper edit says so. A
-  line the script itself says more than once is never treated as takes of one line.
+  line the script itself says more than once is never treated as takes of one line. Sentences more than a minute
+  apart that only look alike, none of them complete, all stay and are listed.
 - **Timing (Lex, 2026-11-10).** 100-150 ms of room before and after speech at every cut, the start of the clip
   too; a whole silence of 150-250 ms between linked phrases (it aims for 200) and 250-450 ms before a new thought
   (it aims for 300); a breath inside a linked phrase stays; 15 ms fade at every cut. No cut lands inside a word.
 - **Left in and listed for Lex:** anything inside a `--demo` range (start-end in source seconds, repeat it for
   more), a silence of 3 s or more (a screen demo or a pause?), a possible restart without a pause, a possible
-  retake cue, and lines not in the script (ad-libs). Without `--script`, ad-libs are not checked.
+  retake cue, and lines not in the script (ad-libs). An ad-lib is a line whose words are not in the script and
+  that no take of the same line follows; a failed try is not an ad-lib. A removal that takes out a silence of
+  3 s or more says so. Without `--script`, ad-libs are not checked.
 
 The working values it uses beyond Lex's numbers are listed in each paper edit. The join check wants the same
 100-150 ms before the first word (Lex, 2026-11-10), so the cutter's opening passes it.
