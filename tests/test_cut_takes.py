@@ -4,6 +4,10 @@ The Sunday fixture (tests/fixtures/sunday-retakes.words.json) is synthetic: the 
 editing PC. It follows the raw HappyScribe export shape and mirrors the Sunday paper edit's clear retake candidates
 and "inspect before cutting" items at the same source seconds, plus a worse last take, an ad-lib, a demo, a long
 pause before a new thought and a breath inside a linked phrase. No media is read.
+
+The retakes copy the shapes that the real run on LexTop (2026-11-10) only flagged or cut in part: the transcript
+has no quiet "again" there, an unfinished start runs into the next take without a full stop, a stray word sits
+between two attempts, and a restart can begin part way through a phrase or after a comma.
 """
 import importlib.util
 import json
@@ -111,19 +115,28 @@ class SundayRetakeTests(unittest.TestCase):
                             f'the complete take at {take} is kept whole')
 
     def test_each_removal_says_why_and_which_take_it_keeps(self):
-        expected = {92.78: 'retake-cue', 324.17: 'abandoned-start', 341.05: 'earlier-take',
-                    362.15: 'retake-cue', 368.60: 'abandoned-start', 592.80: 'retake-cue',
-                    619.03: 'abandoned-start'}
-        for start, reason in expected.items():
-            self.assertEqual(removed_at(SUNDAY, start)['reason'], reason, f'removal at {start}')
-        self.assertEqual(removed_at(SUNDAY, 92.78)['keeps'], 102.25)
-        self.assertEqual(removed_at(SUNDAY, 341.05)['keeps'], 353.96)
-
-    def test_a_quiet_again_is_removed_with_its_failed_attempt(self):
-        for start, cue in ((92.78, 99.70), (362.15, 367.30), (592.80, 602.50)):
+        expected = {92.78: ('earlier-take', 102.25), 96.12: ('abandoned-start', 102.25),
+                    323.70: ('abandoned-start', 329.03), 341.05: ('earlier-take', 353.96),
+                    348.23: ('abandoned-start', 353.96), 362.15: ('abandoned-start', 374.57),
+                    365.40: ('earlier-take', 374.57), 369.06: ('earlier-take', 374.57),
+                    592.80: ('abandoned-start', 603.68), 619.03: ('abandoned-start', 621.68)}
+        for start, (reason, keeps) in expected.items():
             removal = removed_at(SUNDAY, start)
-            self.assertTrue(removal['text'].endswith('again'), removal['text'])
-            self.assertAlmostEqual(removal['end'], next(w.end for w in WORDS if abs(w.start - cue) < TOLERANCE), 3)
+            self.assertEqual((removal['reason'], removal['keeps']), (reason, keeps), f'removal at {start}')
+
+    def test_an_unfinished_start_that_runs_into_the_next_take_is_removed(self):
+        # No full stop ends these starts, so the transcript makes one sentence of the start and the take after it.
+        for start, end in ((96.12, 98.42), (348.23, 349.23), (592.80, 601.86)):
+            self.assertAlmostEqual(removed_at(SUNDAY, start)['end'], end, 3)
+
+    def test_a_restart_part_way_through_a_phrase_keeps_the_take_and_the_line_before(self):
+        self.assertAlmostEqual(removed_at(SUNDAY, 323.70)['end'], 326.37, 3)
+        self.assertAlmostEqual(removed_at(SUNDAY, 619.03)['end'], 621.10, 3)
+
+    def test_no_restart_flag_is_left_on_a_clear_retake(self):
+        for (start, end), _ in CANDIDATES:
+            self.assertFalse([item for item in SUNDAY['paperEdit']['flags'] if item['code'] == 'possible-restart'
+                              and start - TOLERANCE <= item['start'] <= end], f'flag inside {start}-{end}')
 
     def test_the_introduction_before_the_closing_question_stays(self):
         kept = kept_starts(SUNDAY)
@@ -226,6 +239,12 @@ class TimingTests(unittest.TestCase):
                     for flag in entry['flags'] if flag['severity'] == 'problem']
         self.assertEqual(problems, [])
 
+    def test_the_join_check_accepts_the_cutters_opening(self):
+        # Lex's choice of 2026-11-10: the join check wants 100-150 ms before the first word, as the cutter leaves.
+        report = join_check.check_joins(WORDS, cut_timeline.load_cutlist(SUNDAY['cutlist']))
+        self.assertEqual(report['opening']['flags'], [])
+        self.assertEqual(join_check.THRESHOLDS['leadInMs'], list(ROOM_MS))
+
 
 class OutputTests(unittest.TestCase):
     def test_cut_list_uses_the_repo_schema(self):
@@ -270,6 +289,14 @@ def removed_texts(result):
 
 
 class CueTests(unittest.TestCase):
+    def test_a_quiet_again_is_removed_with_its_failed_attempt(self):
+        words = [['The', 92.78, 93.1], ['picture', 93.14, 93.6], ['from,', 93.64, 94.0], ['from', 94.04, 94.4],
+                 ['start', 94.44, 94.9], ['again', 96.2, 96.5], ['The', 98.0, 98.2], ['picture', 98.24, 98.6],
+                 ['shows', 98.64, 99.0], ['the', 99.04, 99.2], ['demo.', 99.24, 99.7]]
+        removal, = plan_words(words)['paperEdit']['removed']
+        self.assertEqual((removal['text'], removal['reason'], removal['keeps']),
+                         ('The picture from, from start again', 'retake-cue', 98.0))
+
     def test_again_with_pauses_both_sides_is_a_retake_cue(self):
         words = [['Start', 1.0, 1.3], ['the', 1.34, 1.5], ['show', 1.54, 1.9], ['again', 2.6, 2.9],
                  ['Start', 3.6, 3.9], ['the', 3.94, 4.1], ['show', 4.14, 4.5], ['now.', 4.54, 4.9]]
@@ -323,6 +350,42 @@ class RestartTests(unittest.TestCase):
         self.assertEqual([(item['text'], item['reason']) for item in result['paperEdit']['removed']],
                          [('Quick note on pricing.', 'earlier-take')])
         self.assertEqual([item['text'] for item in result['paperEdit']['adLibs']], ['Quick note on pricing.'])
+
+    def test_a_restart_after_a_comma_is_cut_when_the_script_says_the_line_once(self):
+        words = [['What', 619.03, 619.3], ['would', 619.34, 619.6], ['you', 619.64, 619.9], ['build', 619.94, 620.3],
+                 ['if', 620.34, 620.6], ['you,', 620.64, 621.1], ['What', 621.68, 621.9], ['would', 621.94, 622.2],
+                 ['you', 622.24, 622.5], ['build', 622.54, 622.9], ['with', 622.94, 623.2], ['this?', 623.24, 623.5]]
+        result = plan_words(words, 'My question for you. What would you build with this?')
+        self.assertEqual([(item['text'], item['reason']) for item in result['paperEdit']['removed']],
+                         [('What would you build if you,', 'abandoned-start')])
+        self.assertEqual(result['paperEdit']['flags'], [])
+        # Without a script nothing says it is one line said twice: flag it, do not cut.
+        result = plan_words(words)
+        self.assertEqual(removed_texts(result), [])
+        self.assertEqual([item['code'] for item in result['paperEdit']['flags']], ['possible-restart'])
+
+    def test_a_repeat_after_a_comma_that_the_script_has_as_two_lines_is_flagged_not_cut(self):
+        words = [['The', 1.0, 1.2], ['tool', 1.24, 1.5], ['is', 1.54, 1.7], ['fast,', 1.74, 2.1],
+                 ['the', 2.6, 2.8], ['tool', 2.84, 3.1], ['is', 3.14, 3.3], ['cheap.', 3.34, 3.8]]
+        for script in ('The tool is fast. The tool is cheap.', 'The tool is fast, the tool is cheap.'):
+            result = plan_words(words, script)
+            self.assertEqual(removed_texts(result), [], script)
+            self.assertEqual([item['code'] for item in result['paperEdit']['flags']], ['possible-restart'], script)
+
+    def test_a_different_sentence_between_two_openings_stops_the_restart(self):
+        words = [['Next', 1.0, 1.2], ['week', 1.24, 1.5], ['I', 1.54, 1.6], ['will', 1.64, 1.8], ['show', 1.84, 2.1],
+                 ['you', 2.14, 2.4], ['That', 4.0, 4.2], ['is', 4.24, 4.4], ['all', 4.44, 4.6], ['today.', 4.64, 5.0],
+                 ['Next', 6.0, 6.2], ['week', 6.24, 6.5], ['I', 6.54, 6.6], ['will', 6.64, 6.8],
+                 ['show', 6.84, 7.1], ['the', 7.14, 7.3], ['export.', 7.34, 7.8]]
+        self.assertEqual(removed_texts(plan_words(words)), [])
+
+    def test_a_long_pause_inside_a_sentence_without_a_restart_stays(self):
+        words = [['So', 1.0, 1.2], ['I', 1.24, 1.3], ['click', 1.34, 1.6], ['here', 1.64, 1.9], ['and', 4.0, 4.2],
+                 ['the', 4.24, 4.4], ['page', 4.44, 4.7], ['opens.', 4.74, 5.2],
+                 ['So', 6.0, 6.2], ['I', 6.24, 6.3], ['click', 6.34, 6.6], ['save', 6.64, 6.9], ['now.', 6.94, 7.3]]
+        self.assertEqual(removed_texts(plan_words(words)), [])
+        self.assertEqual(removed_texts(plan_words(words, 'So I click here and the page opens. So I click save now.')),
+                         [])
 
     def test_repeating_on_purpose_after_a_comma_is_flagged_not_cut(self):
         words = [['The', 1.0, 1.2], ['tool', 1.24, 1.5], ['is', 1.54, 1.7], ['fast,', 1.74, 2.1],
