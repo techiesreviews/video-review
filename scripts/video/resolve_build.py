@@ -266,6 +266,7 @@ class Builder:
         codec = next((codec for codec in PREFERRED_CODECS if codec in codecs), None)
         if not codec or not project.SetCurrentRenderFormatAndCodec('mp4', codec):
             raise ResolveError(f'Resolve offers none of {", ".join(PREFERRED_CODECS)} for mp4.')
+        self.facts['codec'] = codec
         project.SetCurrentRenderMode(1)
         settings = {'SelectAllFrames': True, 'TargetDir': str(self.run_dir), 'CustomName': temporary.stem,
                     'FormatWidth': width, 'FormatHeight': height, 'FrameRate': fps, 'ExportVideo': True,
@@ -275,6 +276,7 @@ class Builder:
         job = project.AddRenderJob()
         if not job or not project.StartRendering([job]):
             raise ResolveError('Resolve did not start the render.')
+        self.facts['renderJob'] = job
         self.log(f'Rendering with {codec} to {temporary}')
         deadline = clock() + timeout_seconds
         while True:
@@ -291,7 +293,6 @@ class Builder:
         if not temporary.is_file():
             raise ResolveError(f'Resolve says the render is complete but {temporary} is missing.')
         temporary.rename(final)
-        self.facts.update({'codec': codec, 'renderJob': job})
         return final
 
 
