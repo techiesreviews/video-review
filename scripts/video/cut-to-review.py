@@ -21,6 +21,7 @@ import hashlib
 import http.client
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -170,7 +171,7 @@ def probe_source(path, fps):
     duration = float(stream.get('duration') or data.get('format', {}).get('duration') or 0)
     # A constant-rate file's average can differ by a rounding of its last frame (1800000/60001); a variable one
     # drifts by many frames over the file.
-    drift = abs(float(rate) - float(average)) * duration if duration else float(rate != average)
+    drift = abs(float(rate) - float(average)) * duration if duration else (0 if rate == average else math.inf)
     if drift > 1.5:
         raise Stop(f'{path} has a variable frame rate ({float(rate):g} vs {float(average):g} fps average). '
                    'Convert it to a constant frame rate first.')
@@ -530,8 +531,13 @@ def upload(args, environ=os.environ, post=post_json, log=print):
         try:
             call(name, arguments)
         except Stop as error:
+            refused = str(error).startswith('The review page refused')
             # The page registered the id last time but its answer was lost: this run folder owns that id.
-            if not (started and name == 'register_video' and 'already exists' in str(error)):
+            if not (started and name == 'register_video' and refused and 'already exists' in str(error)):
+                if refused:
+                    # A clear answer: nothing is in flight, so a later "already exists" is not ours.
+                    progress.pop('started')
+                    done_file.write_text(json.dumps(progress, indent=2), encoding='utf-8')
                 raise
         progress['steps'].append(name)
         progress.pop('started')

@@ -187,6 +187,18 @@ class Preflight(Base):
         self.probe.average = '2700/100'
         self.refuses('variable frame rate')
 
+    def test_variable_frame_rate_without_a_duration(self):
+        probe = self.probe
+
+        def no_duration(path, *arguments):
+            data = probe(path, *arguments)
+            for stream in data['streams']:
+                stream.pop('duration', None)
+            return data
+        probe.average = '2997/100'
+        with mock.patch.object(cut_to_review, 'ffprobe_json', no_duration):
+            self.refuses('variable frame rate')
+
     def test_constant_rate_with_a_rounded_average(self):
         self.probe.average = '1800000/60001'
         self.assertEqual(self.build(dry_run=True), 0)
@@ -598,12 +610,18 @@ class UploadFailures(Base):
 
     def test_an_id_taken_before_this_run_is_still_refused(self):
         def exists(url, message, token):
+            self.sent.append(message)
             if message.get('params', {}).get('name') == 'register_video':
                 return {'jsonrpc': '2.0', 'id': message['id'],
                         'result': {'content': [{'text': 'That id already exists'}], 'isError': True}}
             return {'jsonrpc': '2.0', 'id': message['id'], 'result': {}}
-        with self.assertRaisesRegex(cut_to_review.Stop, 'already exists'):
-            self.upload(exists)
+        for _ in range(2):
+            with self.assertRaisesRegex(cut_to_review.Stop, 'already exists'):
+                self.upload(exists)
+        names = [message['params']['name'] for message in self.sent if message['method'] == 'tools/call']
+        self.assertEqual(names, ['register_video', 'register_video'])
+        record = json.loads((self.run_dir / cut_to_review.DONE_FILE).read_text(encoding='utf-8'))
+        self.assertNotIn('complete', record)
 
     def test_a_pending_change_is_not_recorded_as_done(self):
         def pending(url, message, token):
