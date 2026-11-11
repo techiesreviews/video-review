@@ -708,8 +708,8 @@ class Cutter:
             if fitting:
                 best = min(fitting, key=lambda pair: abs(gap(pair) - target))
                 over = max(room(best[0], self.fps, end, 1), room(best[1], self.fps, start, -1))
-                note = (f'{over} ms of room on one side, over {high} ms, to keep the silence in range'
-                        if over > high else None)
+                note = (f'{over} ms of room on one side, over {wide} ms, to keep the silence in range'
+                        if over > wide else None)
                 return best + (kind, note)
             if pairs and closest is None:
                 closest = min(pairs, key=lambda pair: abs(gap(pair) - target))
