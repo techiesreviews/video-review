@@ -427,6 +427,7 @@ class ResolveSteps(unittest.TestCase):
             builder.render('test-video-v1', FPS, 1920, 1080, 600, sleep=lambda seconds: None,
                            clock=lambda: next(ticks))
         self.assertIn('StopRendering', resolve.log.names())
+        self.assertEqual(builder.facts['codec'], 'H264_NVIDIA')
 
 
 class FullRun(Base):
@@ -560,7 +561,7 @@ class FullRun(Base):
         self.assertIn('Stopped', report)
         self.assertIn('render failed: disk full', report)
         self.assertIn('Resolve endFrame inclusive: ', report)
-        self.assertNotIn('Render codec', report)
+        self.assertIn('Render codec: H264_NVIDIA', report)
         self.assertIn('Not listened', report)
 
     def test_a_failed_payload_still_writes_the_report(self):
