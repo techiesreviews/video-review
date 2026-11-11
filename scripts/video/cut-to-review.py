@@ -5,8 +5,8 @@ Usage:
                           [--source PATH] [--renders-root DIR] [--dry-run]
   python cut-to-review.py --upload <run-folder> [--hosted] [--data-dir DIR]
 
-The first form checks the cut (Lex's approval of this exact cut list, the recording, its hash and a constant
-frame rate), writes the join check and captions, builds one fresh "A-CUT — working" timeline in DaVinci Resolve
+The first form checks the cut (Lex's approval of this exact cut list, the recording, its hash when the cut list
+has sourceSha256, and a constant frame rate), writes the join check and captions, builds one fresh "A-CUT — working" timeline in DaVinci Resolve
 Studio, renders it under a temporary name, renames it, checks it with ffprobe and writes the review page data
 into renders/<slug>/<version>/ without sending anything. Then it stops with exit code 3 and says what to listen
 to first. --dry-run does the checks, the join check, captions and the review data only: no Resolve, no render.
@@ -18,6 +18,7 @@ default; --hosted uses video.techies.tools with the token in VIDEO_REVIEW_TOKEN,
 import argparse
 from fractions import Fraction
 import hashlib
+import http.client
 import importlib.util
 import json
 import os
@@ -425,8 +426,10 @@ def post_json(url, message, token):
         if isinstance(reply, dict) and isinstance(reply.get('error'), dict):
             return reply
         raise Stop(f'The review page answered HTTP {error.code}.') from None
-    except (urllib.error.URLError, TimeoutError, ValueError) as error:
+    except (OSError, http.client.HTTPException) as error:
         raise Stop(f'The review page could not be reached: {error}.') from None
+    except ValueError:
+        raise Stop('The review page sent a reply that is not JSON.') from None
 
 
 def hosted_caller(base_url, token, post=post_json, sleep=time.sleep):
@@ -479,6 +482,9 @@ def upload(args, environ=os.environ, post=post_json, log=print):
     progress = read_json(done_file, 'The upload record') if done_file.exists() else {'steps': []}
     if progress.get('complete'):
         raise Stop(f'{payload["videoId"]} was uploaded already; a video id is never reused. Render a new --version.')
+    if progress['steps'] and progress.get('hosted') != bool(args.hosted):
+        raise Stop(f'This upload was started on the {"hosted" if progress.get("hosted") else "local"} review page; '
+                   'finish it there.')
     video = run_dir / payload['file']['name']
     if not video.is_file() or sha256_file(video) != payload['file']['sha256']:
         raise Stop(f'{video} is missing or changed since the render check. Render it again as a new version.')
@@ -492,9 +498,6 @@ def upload(args, environ=os.environ, post=post_json, log=print):
     else:
         call, page = local_caller(args.data_dir), args.review_url or LOCAL_URL
         register.update(path=str(video.resolve()), fingerprint=payload['file']['sha256'])
-    if progress['steps'] and progress.get('hosted') != bool(args.hosted):
-        raise Stop(f'This upload was started on the {"hosted" if progress.get("hosted") else "local"} review page; '
-                   'finish it there.')
     progress.update(videoId=payload['videoId'], reviewPage=page, hosted=bool(args.hosted))
     steps = (('register_video', register),
              ('set_transcript', {'videoId': payload['videoId'], 'transcript': payload['transcript']}),

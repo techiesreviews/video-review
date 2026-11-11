@@ -549,6 +549,21 @@ class UploadFailures(Base):
             with self.assertRaisesRegex(cut_to_review.Stop, 'Choose Connect agent again'):
                 self.upload(cut_to_review.post_json)
 
+    def test_switching_page_halfway_is_refused(self):
+        with self.assertRaisesRegex(cut_to_review.Stop, 'refused set_transcript'):
+            self.upload(self.post)
+        args = cut_to_review.parse(['--upload', str(self.run_dir)])
+        with mock.patch.object(cut_to_review, 'local_caller', lambda data_dir: self.fail('called the local page')):
+            with self.assertRaisesRegex(cut_to_review.Stop, 'started on the hosted review page'):
+                cut_to_review.upload(args, environ={}, post=no_network)
+
+    def test_dropped_connection_is_a_plain_stop(self):
+        def dropped(request, timeout):
+            raise ConnectionResetError('reset')
+        with mock.patch.object(cut_to_review.urllib.request, 'urlopen', dropped):
+            with self.assertRaisesRegex(cut_to_review.Stop, 'could not be reached'):
+                self.upload(cut_to_review.post_json)
+
     def test_offline_is_a_plain_stop(self):
         import urllib.error
 
