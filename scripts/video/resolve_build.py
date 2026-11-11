@@ -63,6 +63,11 @@ def segments_from_cutlist(cutlist):
             for index, item in enumerate(sorted(cutlist['segments'], key=lambda item: item['timelineStartFrame']))]
 
 
+def segments_from_runs(timeline):
+    """One clip per unbroken run: a split where the source runs on is not a cut, so it gets no clip edge or fade."""
+    return [Segment(run.label, run.source_in, run.source_out, run.timeline_start_frame) for run in timeline.runs]
+
+
 def clip_infos(item, segment, timeline_start, end_inclusive=True):
     """The picture and the sound of one segment, both placed at the same record frame on track 1."""
     end = segment.source_out - 1 if end_inclusive else segment.source_out

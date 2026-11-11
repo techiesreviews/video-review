@@ -26,6 +26,7 @@ import re
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 
 HERE = Path(__file__).resolve().parent
@@ -52,7 +53,7 @@ DATE = re.compile(r'\d{4}-\d{2}-\d{2}')
 LOCAL_URL = 'http://127.0.0.1:8879'
 HOSTED_URL = 'https://video.techies.tools'
 UPLOAD_FILE = 'review-upload.json'
-DONE_FILE = 'review-upload-done.json'
+DONE_FILE = 'review-upload-record.json'
 DEFAULT_RENDER_TIMEOUT_MINUTES = 180
 HOSTED_RETRIES = 5
 HOSTED_RETRY_SECONDS = 2
@@ -165,14 +166,17 @@ def probe_source(path, fps):
         rate, average = Fraction(stream['r_frame_rate']), Fraction(stream['avg_frame_rate'])
     except (KeyError, ValueError, ZeroDivisionError):
         raise Stop(f'ffprobe gives no frame rate for {path}.') from None
-    if rate != average:
+    duration = float(stream.get('duration') or data.get('format', {}).get('duration') or 0)
+    # A constant-rate file's average can differ by a rounding of its last frame (1800000/60001); a variable one
+    # drifts by many frames over the file.
+    drift = abs(float(rate) - float(average)) * duration if duration else float(rate != average)
+    if drift > 1.5:
         raise Stop(f'{path} has a variable frame rate ({float(rate):g} vs {float(average):g} fps average). '
                    'Convert it to a constant frame rate first.')
     if abs(float(rate) - fps) > 0.001:
         raise Stop(f'The recording runs at {float(rate):g} fps; the cut list says {fps:g}.')
     frames = stream.get('nb_frames')
     if not str(frames or '').isdigit():
-        duration = float(stream.get('duration') or data.get('format', {}).get('duration') or 0)
         frames = round(duration * float(rate))
     return {'width': int(stream['width']), 'height': int(stream['height']), 'frames': int(frames),
             'fps': float(rate)}
@@ -202,7 +206,7 @@ def preflight(args):
     if source is None or not source.is_file():
         raise Stop(f'The recording was not found ({source or "no sourcePath in the cut list"}). Pass --source.')
     fps = cutlist.get('fps')
-    timeline, segments = check_segments(cutlist)
+    timeline, _ = check_segments(cutlist)
     media = probe_source(source, float(fps))
     check_segments(cutlist, media['frames'])
     wanted = cutlist.get('sourceSha256')
@@ -214,7 +218,8 @@ def preflight(args):
         raise Stop(f'{run_dir} already exists. Choose a new --version; older renders stay as they are.')
     return {'cutlist': cutlist, 'cutlistPath': cutlist_path, 'approval': approval, 'words': words,
             'wordsPath': words_path, 'source': source.resolve(), 'fps': fps, 'timeline': timeline,
-            'segments': segments, 'media': media, 'runDir': run_dir}
+            'segments': resolve_build.segments_from_runs(timeline), 'media': media, 'runDir': run_dir,
+            'hashChecked': bool(wanted)}
 
 
 # Step 2: the join check and captions, into the run folder.
@@ -323,7 +328,8 @@ def run_report(plan, report, payload, facts):
         '**Not listened.** The join check reads word times; only listening clears a join.', '',
         f'- Cut list: {plan["cutlistPath"]} (approved by {plan["approval"]["approvedBy"]} on '
         f'{plan["approval"]["date"]}: "{plan["approval"]["words"]}")',
-        f'- Recording: {plan["source"]}',
+        f'- Recording: {plan["source"]} '
+        + ('(SHA-256 matches the cut list)' if plan['hashChecked'] else '(hash not checked: the cut list has no sourceSha256)'),
         f'- Video file: {payload["file"]["name"] or "none (dry run)"}',
         f'- Resolve: {facts.get("project", "not used (dry run)")}, timeline {facts.get("timeline", "none")}',
     ]
@@ -346,6 +352,8 @@ def stop_message(plan, report, payload, facts):
     red = red_joins(report)
     lines = [f'Stopped before the upload. Video: {plan["runDir"] / (payload["file"]["name"] or "")}',
              f'Timeline: {facts.get("timeline", "none (dry run)")} in {facts.get("project", "no Resolve project")}.']
+    if not plan['hashChecked']:
+        lines.append(f'Recording hash not checked (the cut list has no sourceSha256): {plan["source"]}')
     if red:
         lines.append('Joins to hear first: ' + ', '.join(f'{join["index"]} at {join_check.clock(join["timelineSeconds"])}'
                                                         for join in red) + '.')
@@ -404,8 +412,21 @@ def build(args, connect=resolve_build.connect, log=print, sleep=None):
 def post_json(url, message, token):
     request = urllib.request.Request(url, json.dumps(message).encode('utf-8'), method='POST', headers={
         'Content-Type': 'application/json', 'Accept': 'application/json', 'Authorization': f'Bearer {token}'})
-    with urllib.request.urlopen(request, timeout=60) as response:
-        return json.loads(response.read() or b'null')
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            return json.loads(response.read() or b'null')
+    except urllib.error.HTTPError as error:
+        try:
+            reply = json.loads(error.read() or b'null')
+        except ValueError:
+            reply = None
+        finally:
+            error.close()
+        if isinstance(reply, dict) and isinstance(reply.get('error'), dict):
+            return reply
+        raise Stop(f'The review page answered HTTP {error.code}.') from None
+    except (urllib.error.URLError, TimeoutError, ValueError) as error:
+        raise Stop(f'The review page could not be reached: {error}.') from None
 
 
 def hosted_caller(base_url, token, post=post_json, sleep=time.sleep):
@@ -415,7 +436,8 @@ def hosted_caller(base_url, token, post=post_json, sleep=time.sleep):
         reply = post(f'{base_url}/mcp', {'jsonrpc': '2.0', 'id': next(counter), 'method': method, 'params': params},
                      token)
         if not isinstance(reply, dict) or reply.get('error'):
-            raise Stop(f'The review page refused {method}: {(reply or {}).get("error", {}).get("message", reply)}')
+            error = reply.get('error') if isinstance(reply, dict) else None
+            raise Stop(f'The review page refused {method}: {error.get("message") if isinstance(error, dict) else reply}')
         return reply.get('result')
 
     rpc('initialize', {'protocolVersion': '2025-06-18', 'capabilities': {},
@@ -453,7 +475,9 @@ def upload(args, environ=os.environ, post=post_json, log=print):
         raise Stop(f'{run_dir / UPLOAD_FILE} is not review data from this tool.')
     if payload.get('dryRun'):
         raise Stop('This is a dry run: there is no video to upload.')
-    if (run_dir / DONE_FILE).exists():
+    done_file = run_dir / DONE_FILE
+    progress = read_json(done_file, 'The upload record') if done_file.exists() else {'steps': []}
+    if progress.get('complete'):
         raise Stop(f'{payload["videoId"]} was uploaded already; a video id is never reused. Render a new --version.')
     video = run_dir / payload['file']['name']
     if not video.is_file() or sha256_file(video) != payload['file']['sha256']:
@@ -468,11 +492,22 @@ def upload(args, environ=os.environ, post=post_json, log=print):
     else:
         call, page = local_caller(args.data_dir), args.review_url or LOCAL_URL
         register.update(path=str(video.resolve()), fingerprint=payload['file']['sha256'])
-    call('register_video', register)
-    call('set_transcript', {'videoId': payload['videoId'], 'transcript': payload['transcript']})
-    call('open_video', {'videoId': payload['videoId']})
-    write_new(run_dir / DONE_FILE, json.dumps({'videoId': payload['videoId'], 'reviewPage': page,
-                                               'hosted': bool(args.hosted)}, indent=2))
+    if progress['steps'] and progress.get('hosted') != bool(args.hosted):
+        raise Stop(f'This upload was started on the {"hosted" if progress.get("hosted") else "local"} review page; '
+                   'finish it there.')
+    progress.update(videoId=payload['videoId'], reviewPage=page, hosted=bool(args.hosted))
+    steps = (('register_video', register),
+             ('set_transcript', {'videoId': payload['videoId'], 'transcript': payload['transcript']}),
+             ('open_video', {'videoId': payload['videoId']}))
+    # Each finished step is recorded, so a rerun after a failure carries on instead of registering the id twice.
+    for name, arguments in steps:
+        if name in progress['steps']:
+            continue
+        call(name, arguments)
+        progress['steps'].append(name)
+        done_file.write_text(json.dumps(progress, indent=2), encoding='utf-8')
+    progress['complete'] = True
+    done_file.write_text(json.dumps(progress, indent=2), encoding='utf-8')
     log(f'Uploaded {payload["videoId"]} to the review page {page}. The file stays at {video}.')
     return 0
 
@@ -494,8 +529,8 @@ def parse(argv=None):
     parser.add_argument('--data-dir', help='local review data folder (default: the review server\'s)')
     args = parser.parse_args(argv)
     if args.upload:
-        if args.cut_folder or args.dry_run:
-            parser.error('--upload takes only the run folder.')
+        if args.cut_folder or args.dry_run or args.video or args.project or args.words or args.source:
+            parser.error('--upload takes only the run folder (and --hosted or --data-dir).')
     elif not args.cut_folder or not args.video:
         parser.error('give the cut folder and --video, or --upload <run-folder>.')
     return args

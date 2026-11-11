@@ -88,7 +88,8 @@ class FakeProbe:
             seconds = self.render_seconds if self.render_seconds is not None else 67 / FPS
             return {'streams': [{'codec_type': kind} for kind in self.streams], 'format': {'duration': str(seconds)}}
         return {'streams': [{'r_frame_rate': self.rate, 'avg_frame_rate': self.average, 'width': 1920,
-                             'height': 1080, 'nb_frames': str(SOURCE_FRAMES)}], 'format': {}}
+                             'height': 1080, 'nb_frames': str(SOURCE_FRAMES),
+                             'duration': str(SOURCE_FRAMES / FPS)}], 'format': {}}
 
 
 def no_network(*args, **kwargs):
@@ -179,10 +180,16 @@ class Preflight(Base):
         self.space.write_cutlist({**self.space.cutlist, 'sourceSha256': sha(b'recording')})
         self.space.approve()
         self.assertEqual(self.build(dry_run=True), 0)
+        report = (self.space.renders / 'test-video' / 'v1-dry-run' / 'run-report.md').read_text(encoding='utf-8')
+        self.assertIn('SHA-256 matches the cut list', report)
 
     def test_variable_frame_rate(self):
-        self.probe.average = '2997/100'
+        self.probe.average = '2700/100'
         self.refuses('variable frame rate')
+
+    def test_constant_rate_with_a_rounded_average(self):
+        self.probe.average = '1800000/60001'
+        self.assertEqual(self.build(dry_run=True), 0)
 
     def test_other_frame_rate(self):
         self.probe.rate = self.probe.average = '25/1'
@@ -407,7 +414,9 @@ class FullRun(Base):
         self.assertEqual(payload['transcript']['cuts'], [{'id': 'join-1', 'atMs': 1133, 'risk': False}])
         report = (self.run_dir / 'run-report.md').read_text(encoding='utf-8')
         self.assertIn('Not listened', report)
-        self.assertNotIn('upload-done', ' '.join(path.name for path in self.run_dir.iterdir()))
+        self.assertFalse((self.run_dir / cut_to_review.DONE_FILE).exists())
+        self.assertIn('hash not checked', report)
+        self.assertIn('Recording hash not checked', self.output)
 
     def test_red_join_marker_and_message(self):
         cutlist = make_cutlist(((26, 55), (117, 150)), sourcePath=str(self.space.source))
@@ -421,6 +430,16 @@ class FullRun(Base):
         self.assertIn('Recommend: listen to the red joins, then say upload.', self.output)
         payload = json.loads((self.run_dir / 'review-upload.json').read_text(encoding='utf-8'))
         self.assertTrue(payload['transcript']['cuts'][0]['risk'])
+
+    def test_a_split_where_the_source_runs_on_is_one_clip(self):
+        cutlist = make_cutlist(((26, 40), (40, 60), (117, 150)), sourcePath=str(self.space.source))
+        self.space.write_cutlist(cutlist)
+        self.space.approve()
+        self.assertEqual(self.build(), cut_to_review.STOP_EXIT)
+        timeline = self.resolve.manager.current.current
+        self.assertEqual([(clip.GetLeftOffset(), clip.GetDuration()) for clip in timeline.tracks['audio']],
+                         [(26, 34), (117, 33)])
+        self.assertEqual(sorted(timeline.markers), [34])
 
     def test_render_with_the_wrong_length_is_refused(self):
         self.probe.render_seconds = 70 / FPS
@@ -488,6 +507,56 @@ class Upload(Base):
         self.assertEqual(register['fileName'], 'test-video-v1.mp4')
         self.assertNotIn('path', register)
         self.assertNotIn('vr_secret', output.getvalue())
+
+
+class UploadFailures(Base):
+    def setUp(self):
+        super().setUp()
+        self.assertEqual(self.build(), cut_to_review.STOP_EXIT)
+        self.sent = []
+        self.fail_transcript = True
+
+    def post(self, url, message, token):
+        self.sent.append(message)
+        name = message.get('params', {}).get('name')
+        if name == 'set_transcript' and self.fail_transcript:
+            self.fail_transcript = False
+            return {'jsonrpc': '2.0', 'id': message['id'], 'result': {'content': [{'text': 'Invalid'}], 'isError': True}}
+        return {'jsonrpc': '2.0', 'id': message['id'], 'result': {'content': [{'text': '{}'}]}}
+
+    def upload(self, post):
+        args = cut_to_review.parse(['--upload', str(self.run_dir), '--hosted'])
+        with contextlib.redirect_stdout(io.StringIO()):
+            return cut_to_review.upload(args, environ={'VIDEO_REVIEW_TOKEN': 'vr_secret'}, post=post)
+
+    def test_a_rerun_finishes_what_failed_without_registering_twice(self):
+        with self.assertRaisesRegex(cut_to_review.Stop, 'refused set_transcript'):
+            self.upload(self.post)
+        self.assertEqual(self.upload(self.post), 0)
+        names = [message['params']['name'] for message in self.sent if message['method'] == 'tools/call']
+        self.assertEqual(names, ['register_video', 'set_transcript', 'set_transcript', 'open_video'])
+        with self.assertRaisesRegex(cut_to_review.Stop, 'never reused'):
+            self.upload(self.post)
+
+    def test_http_error_becomes_the_server_message(self):
+        import urllib.error
+
+        def unauthorized(request, timeout):
+            body = io.BytesIO(json.dumps({'jsonrpc': '2.0', 'id': None,
+                                          'error': {'code': -32001, 'message': 'Choose Connect agent again.'}}).encode())
+            raise urllib.error.HTTPError(request.full_url, 401, 'Unauthorized', {}, body)
+        with mock.patch.object(cut_to_review.urllib.request, 'urlopen', unauthorized):
+            with self.assertRaisesRegex(cut_to_review.Stop, 'Choose Connect agent again'):
+                self.upload(cut_to_review.post_json)
+
+    def test_offline_is_a_plain_stop(self):
+        import urllib.error
+
+        def offline(request, timeout):
+            raise urllib.error.URLError('no route')
+        with mock.patch.object(cut_to_review.urllib.request, 'urlopen', offline):
+            with self.assertRaisesRegex(cut_to_review.Stop, 'could not be reached'):
+                self.upload(cut_to_review.post_json)
 
 
 class HostedRetry(unittest.TestCase):
