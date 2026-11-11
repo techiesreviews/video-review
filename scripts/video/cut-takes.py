@@ -32,14 +32,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import cut_timeline  # noqa: E402
 
 SETTINGS = {
-    # Lex's answers of 2026-11-10 (room on both sides of speech, the whole silence at a join).
+    # Lex's answers of 2026-11-10 (room on both sides of speech) and 2026-11-11 (the whole silence at a join:
+    # he listened to the cutter's version next to the original and chose the longer pauses).
     'roomMs': [100, 150],
-    'linkedGapMs': [150, 250],
-    'newThoughtGapMs': [250, 450],
+    'linkedGapMs': [200, 300],
+    'newThoughtGapMs': [350, 500],
     'audioFadeMs': 15,
     # Where the cutter aims inside those ranges.
-    'linkedTargetMs': 200,
-    'newThoughtTargetMs': 300,
+    'linkedTargetMs': 250,
+    'newThoughtTargetMs': 400,
+    # Room per side at a new-thought join may reach this (half the aimed silence): 100-150 ms on each side adds up to
+    # 300 ms at most, so 350-500 ms of silence needs more. Every other cut stays at 100-150 ms.
+    'newThoughtRoomMaxMs': 200,
     # Working values of this cutter, not Lex's words; each is listed in the paper edit.
     'breathMaxMs': 700,
     'longSilenceMs': 3000,
@@ -693,22 +697,26 @@ class Cutter:
         target = SETTINGS['newThoughtTargetMs' if kind == 'new-thought' else 'linkedTargetMs']
         end, start = self.words[before].end, self.words[after].start
         low, high = SETTINGS['roomMs']
+        wide = max(high, SETTINGS['newThoughtRoomMaxMs']) if kind == 'new-thought' else high
         gap = lambda pair: room(pair[0], self.fps, end, 1) + room(pair[1], self.fps, start, -1)  # noqa: E731
         closest = None
         for stretch in (0, math.ceil(1000 / self.fps)):
-            outs = self.frames(end, low, high + stretch, 1, out_limit)
-            ins = self.frames(start, low, high + stretch, -1, in_limit)
+            outs = self.frames(end, low, wide + stretch, 1, out_limit)
+            ins = self.frames(start, low, wide + stretch, -1, in_limit)
             pairs = [(out, entry) for out in outs for entry in ins if entry > out]
             fitting = [pair for pair in pairs if low_gap <= gap(pair) <= high_gap]
             if fitting:
-                note = f'one frame over {high} ms of room, to keep the silence in range' if stretch else None
-                return min(fitting, key=lambda pair: abs(gap(pair) - target)) + (kind, note)
+                best = min(fitting, key=lambda pair: abs(gap(pair) - target))
+                over = max(room(best[0], self.fps, end, 1), room(best[1], self.fps, start, -1))
+                note = (f'{over} ms of room on one side, over {high} ms, to keep the silence in range'
+                        if over > high else None)
+                return best + (kind, note)
             if pairs and closest is None:
                 closest = min(pairs, key=lambda pair: abs(gap(pair) - target))
         if closest:
             return closest + (kind, 'silence outside the range')
-        outs = self.frames(end, low, high, 1, out_limit)
-        ins = self.frames(start, low, high, -1, in_limit)
+        outs = self.frames(end, low, wide, 1, out_limit)
+        ins = self.frames(start, low, wide, -1, in_limit)
         out = outs[0] if outs else self.fallback(end, 1, out_limit, before, 'after')
         entry = ins[-1] if ins else self.fallback(start, -1, in_limit, after, 'before')
         return out, entry, kind, None
@@ -888,7 +896,8 @@ def render_paper_edit(paper):
     lines += [
         '', '## Timing used', '',
         f'- Room before and after speech at every cut: {limits["roomMs"][0]}-{limits["roomMs"][1]} ms '
-        f'(opening {paper["opening"]["leadInMs"]} ms, ending {paper["ending"]["tailMs"]} ms).',
+        f'(opening {paper["opening"]["leadInMs"]} ms, ending {paper["ending"]["tailMs"]} ms); before a new thought '
+        f'up to {limits["newThoughtRoomMaxMs"]} ms on a side, so the silence can reach its range.',
         f'- Whole silence at a join: about {limits["linkedTargetMs"]} ms between linked phrases (range '
         f'{limits["linkedGapMs"][0]}-{limits["linkedGapMs"][1]} ms), about {limits["newThoughtTargetMs"]} ms before a '
         f'new thought (range {limits["newThoughtGapMs"][0]}-{limits["newThoughtGapMs"][1]} ms). '
