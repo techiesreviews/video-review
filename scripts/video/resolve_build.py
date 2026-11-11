@@ -146,7 +146,7 @@ class Builder:
     def build_timeline(self, source_path, fps, width, height, segments, audio_fade_ms, markers):
         project = self.project
         existing = self._timeline_named(TIMELINE_NAME)
-        if existing and any(existing.GetItemListInTrack(kind, 1) for kind in ('video', 'audio')):
+        if existing and _has_clips(existing):
             raise ResolveError(f'The project already has a timeline "{TIMELINE_NAME}" with clips. Rename it in '
                                'Resolve first; this tool only builds one fresh working timeline.')
         if not project.GetTimelineCount():
@@ -229,14 +229,18 @@ class Builder:
         return list(zip(tracks['video'], tracks['audio']))
 
     def _fades(self, clips, frames):
-        """Resolve 21's native audio fades (SetFades in the one-off build), read back on every clip."""
+        """Resolve 21's native fades: TimelineItem.SetFades({FadeIn, FadeOut}) in frames, read back with GetFades."""
+        wanted = {'FadeIn': frames, 'FadeOut': frames}
         for clip in clips:
-            if not clip.SetFades(frames, frames):
+            if not clip.SetFades(dict(wanted)):
                 raise ResolveError(f'Resolve did not set the {frames:g}-frame audio fades. The timeline is built '
-                                   'but not rendered; check TimelineItem.SetFades in this Resolve version.')
+                                   'but not rendered.')
             found = clip.GetFades()
-            values = list(found.values()) if isinstance(found, dict) else list(found or [])
-            if len(values) != 2 or any(abs(float(value) - frames) > 1e-6 for value in values):
+            try:
+                same = all(abs(float(found[key]) - frames) <= 1e-6 for key in wanted)
+            except (KeyError, TypeError, ValueError):
+                same = False
+            if not same:
                 raise ResolveError(f'Audio fades read back as {found!r}, expected {frames:g} frames each side.')
         self.facts['fadeFrames'] = frames
 
@@ -289,6 +293,13 @@ class Builder:
         temporary.rename(final)
         self.facts.update({'codec': codec, 'renderJob': job})
         return final
+
+
+def _has_clips(timeline):
+    """Any clip on any picture, sound or subtitle track."""
+    return any(timeline.GetItemListInTrack(kind, index)
+               for kind in ('video', 'audio', 'subtitle')
+               for index in range(1, (timeline.GetTrackCount(kind) or 0) + 1))
 
 
 def _same_number(value, number):
