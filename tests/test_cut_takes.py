@@ -297,6 +297,25 @@ class TimingTests(unittest.TestCase):
         self.assertTrue(ROOM_MS[0] <= joins[0]['tail'] <= 200 and ROOM_MS[0] <= joins[0]['head'] <= 200)
         self.assertTrue(abs(joins[0]['gap'] - 400) <= 34, joins[0]['gap'])
 
+    def test_a_new_thought_join_only_has_a_note_when_the_room_goes_past_200_ms(self):
+        words = [['Intro.', 0.5, 1.0], ['Next', 1.8, 2.1], ['thing.', 2.14, 2.5]]
+        join = plan_words(words)['paperEdit']['joins'][0]
+        self.assertTrue(join['tailMs'] <= 200 and join['headMs'] <= 200)
+        self.assertIsNone(join['note'])
+
+    def test_new_thought_pauses_hold_at_other_frame_rates(self):
+        words = [['Intro.', 0.5, 1.0], ['Next', 2.0, 2.3], ['thing.', 2.34, 2.7]]
+        for fps in (24, 25):
+            join = plan_words(words, fps=fps)['paperEdit']['joins'][0]
+            self.assertTrue(350 <= join['gapMs'] <= 500, f'{fps} fps: {join["gapMs"]} ms')
+            side = max(join['tailMs'], join['headMs'])
+            self.assertTrue(ROOM_MS[0] <= min(join['tailMs'], join['headMs']) and side <= 200 + 1000 // fps,
+                            f'{fps} fps: {join["tailMs"]} and {join["headMs"]} ms of room')
+            # A note appears only when a side went past 200 ms, and it names that room.
+            self.assertEqual(join['note'] is not None, side > 200, f'{fps} fps: {join}')
+            if side > 200:
+                self.assertIn(f'{side} ms of room on one side, over 200 ms', join['note'])
+
     def test_a_long_pause_between_linked_phrases_is_cut_to_200_300_ms(self):
         words = [['Intro', 0.5, 1.0], ['next', 2.0, 2.3], ['thing.', 2.34, 2.7]]
         result = plan_words(words)

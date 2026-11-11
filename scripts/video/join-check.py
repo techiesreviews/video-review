@@ -280,7 +280,7 @@ def render_markdown(report):
         'A last word ending in . ! or ? counts as a new thought; anything else as linked.',
         f'- Gap for a new thought: {limits["newThoughtGapMs"][0]}-{limits["newThoughtGapMs"][1]} ms.',
         f'- Space around speech edges: at least {limits["speechEdgeMs"][0]} ms where possible '
-        f'(preference {limits["speechEdgeMs"][0]}-{limits["speechEdgeMs"][1]} ms; soft endings can need more).',
+        f'(preference {limits["speechEdgeMs"][0]}-{limits["speechEdgeMs"][1]} ms; soft endings can need more, and a new thought may leave up to 200 ms).',
         f'- Audio fade: {limits["audioFadeMs"]} ms. A fade can hide a click, not repair a clipped word.',
         f'- Working limits of this check: a clip of up to {limits["clippedEdgeMaxMs"]} ms counts as clipping an edge; '
         f'an orphan is a word of up to {limits["orphanWordMaxMs"]} ms with at least {limits["orphanPauseMs"]} ms of '
