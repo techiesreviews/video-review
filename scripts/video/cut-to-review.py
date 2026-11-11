@@ -265,8 +265,11 @@ def markers(report):
 
 # Step 5: check the rendered file.
 def verify_render(path, duration_frames, fps):
-    data = ffprobe_json(path, '-show_entries', 'stream=codec_type:format=duration')
-    kinds = [stream.get('codec_type') for stream in data.get('streams') or []]
+    data = ffprobe_json(path, '-show_entries', 'stream=codec_type,codec_tag_string:format=duration')
+    streams = data.get('streams') or []
+    # Resolve adds a timecode data stream (tag tmcd) to every MP4; it is not picture or sound.
+    kinds = [stream.get('codec_type') for stream in streams
+             if not (stream.get('codec_type') == 'data' and stream.get('codec_tag_string') == 'tmcd')]
     if sorted(kinds) != ['audio', 'video']:
         raise Stop(f'{path} has the streams {kinds}; expected one video and one audio stream.')
     duration = float(data.get('format', {}).get('duration') or 0)
@@ -322,6 +325,32 @@ def upload_payload(plan, report, video_file=None, file_sha=None):
     }
 
 
+def fact_lines(facts):
+    return [f'- {text}: {facts[key]}'
+            for key, text in (('checkpoint', 'Checkpoint before the build'), ('endFrameInclusive',
+                                                                              'Resolve endFrame inclusive'),
+                              ('fadeFrames', 'Audio fades (frames each side)'), ('markers', 'Join markers'),
+                              ('codec', 'Render codec'))
+            if key in facts]
+
+
+def failure_report(plan, report, facts, error):
+    """The run report for a run that stopped in a late step: what was found so far, and the error."""
+    summary = report['summary']
+    lines = [
+        f'# {plan["video"]}-{plan["version"]}: stopped, no review video', '',
+        f'**Stopped:** {error}', '',
+        '**Not listened.** The join check reads word times; only listening clears a join.', '',
+        f'- Cut list: {plan["cutlistPath"]}',
+        f'- Recording: {plan["source"]}',
+        f'- Resolve: {facts.get("project", "not used (dry run)")}, timeline {facts.get("timeline", "none")}',
+    ]
+    lines += fact_lines(facts)
+    lines += [f'- Joins: {summary["joins"]}; problems {summary["problems"]}, checks {summary["checks"]}', '',
+              'Nothing was uploaded.', '']
+    return '\n'.join(lines)
+
+
 def run_report(plan, report, payload, facts):
     red = red_joins(report)
     summary = report['summary']
@@ -335,10 +364,7 @@ def run_report(plan, report, payload, facts):
         f'- Video file: {payload["file"]["name"] or "none (dry run)"}',
         f'- Resolve: {facts.get("project", "not used (dry run)")}, timeline {facts.get("timeline", "none")}',
     ]
-    for key, text in (('checkpoint', 'Checkpoint before the build'), ('codec', 'Render codec'),
-                      ('fadeFrames', 'Audio fades (frames each side)'), ('endFrameInclusive', 'Resolve endFrame inclusive')):
-        if key in facts:
-            lines.append(f'- {text}: {facts[key]}')
+    lines += fact_lines(facts)
     lines += [f'- Joins: {summary["joins"]}; problems {summary["problems"]}, checks {summary["checks"]}; '
               f'red joins {len(red)}', '', '## Listen to these joins first', '']
     lines += [f'- Join {join["index"]} at {join_check.clock(join["timelineSeconds"])}: '
@@ -364,6 +390,14 @@ def stop_message(plan, report, payload, facts):
         lines.append('No red joins. Recommend: listen to the whole cut, then say upload.')
     lines.append(f'Upload when Lex says yes: python scripts/video/cut-to-review.py --upload {plan["runDir"]}')
     return '\n'.join(lines)
+
+
+def write_failure_report(plan, report, facts, error):
+    """Best effort: a report that cannot be written must not hide the error that stopped the run."""
+    try:
+        write_new(plan['runDir'] / 'run-report.md', failure_report(plan, report, facts, error))
+    except OSError:
+        pass
 
 
 def build(args, connect=resolve_build.connect, log=print, sleep=None):
@@ -394,13 +428,23 @@ def build(args, connect=resolve_build.connect, log=print, sleep=None):
             video_file = builder.render(f'{args.video}-{args.version}', plan['fps'], media['width'], media['height'],
                                         args.render_timeout * 60, **extra)
         except resolve_build.ResolveError as error:
-            raise Stop(f'{error} (Run folder: {run_dir})') from None
-        finally:
             facts = builder.facts
-        verify_render(video_file, plan['cutlist']['durationFrames'], float(plan['fps']))
-        file_sha = sha256_file(video_file)
-    payload = upload_payload(plan, report, video_file, file_sha)
-    write_new(run_dir / UPLOAD_FILE, json.dumps(payload, ensure_ascii=False, indent=2))
+            write_failure_report(plan, report, facts, error)
+            raise Stop(f'{error} (Run folder: {run_dir})') from None
+        except BaseException as error:
+            facts = builder.facts
+            write_failure_report(plan, report, facts, error)
+            raise
+        facts = builder.facts
+    try:
+        if video_file is not None:
+            verify_render(video_file, plan['cutlist']['durationFrames'], float(plan['fps']))
+            file_sha = sha256_file(video_file)
+        payload = upload_payload(plan, report, video_file, file_sha)
+        write_new(run_dir / UPLOAD_FILE, json.dumps(payload, ensure_ascii=False, indent=2))
+    except BaseException as error:
+        write_failure_report(plan, report, facts, error)
+        raise
     write_new(run_dir / 'run-report.md', run_report(plan, report, payload, facts))
     if args.dry_run:
         log(f'Dry run: checks, join check, captions and review data written to {run_dir}. Nothing built, '

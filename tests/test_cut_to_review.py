@@ -78,15 +78,17 @@ class Workspace:
 class FakeProbe:
     """ffprobe for the recording (constant 30 fps, 200 frames) and for the render (exact length)."""
 
-    def __init__(self, rate='30/1', average='30/1', streams=('video', 'audio'), render_seconds=None):
+    def __init__(self, rate='30/1', average='30/1', streams=('video', 'audio'), render_seconds=None, tags=None):
         self.rate, self.average, self.streams, self.render_seconds = rate, average, streams, render_seconds
+        self.tags = tags or {}
         self.calls = []
 
     def __call__(self, path, *arguments):
         self.calls.append(Path(path).name)
-        if 'stream=codec_type:format=duration' in arguments:
+        if 'stream=codec_type,codec_tag_string:format=duration' in arguments:
             seconds = self.render_seconds if self.render_seconds is not None else 67 / FPS
-            return {'streams': [{'codec_type': kind} for kind in self.streams], 'format': {'duration': str(seconds)}}
+            return {'streams': [{'codec_type': kind, **({'codec_tag_string': self.tags[kind]} if kind in self.tags else {})}
+                                for kind in self.streams], 'format': {'duration': str(seconds)}}
         return {'streams': [{'r_frame_rate': self.rate, 'avg_frame_rate': self.average, 'width': 1920,
                              'height': 1080, 'nb_frames': str(SOURCE_FRAMES),
                              'duration': str(SOURCE_FRAMES / FPS)}], 'format': {}}
@@ -481,6 +483,62 @@ class FullRun(Base):
     def test_render_without_sound_is_refused(self):
         self.probe.streams = ('video',)
         self.refuses('one video and one audio stream')
+
+    def test_resolve_timecode_data_stream_is_accepted(self):
+        self.probe.streams = ('video', 'audio', 'data')
+        self.probe.tags = {'data': 'tmcd'}
+        self.assertEqual(self.build(), cut_to_review.STOP_EXIT)
+        self.assertTrue((self.run_dir / 'review-upload.json').is_file())
+
+    def test_other_data_streams_are_refused(self):
+        self.probe.streams = ('video', 'audio', 'data')
+        self.probe.tags = {'data': 'gpmd'}
+        self.refuses('one video and one audio stream')
+
+    def test_data_stream_without_a_tag_is_refused(self):
+        self.probe.streams = ('video', 'audio', 'data')
+        self.refuses('one video and one audio stream')
+
+    def test_a_second_video_stream_is_refused_even_with_timecode(self):
+        self.probe.streams = ('video', 'video', 'audio', 'data')
+        self.probe.tags = {'data': 'tmcd'}
+        self.refuses('one video and one audio stream')
+
+    def report_after_stop(self, pattern, resolve=None):
+        self.refuses(pattern, resolve)
+        return (self.run_dir / 'run-report.md').read_text(encoding='utf-8')
+
+    def test_a_wrong_length_render_still_writes_the_report(self):
+        self.probe.render_seconds = 70 / FPS
+        report = self.report_after_stop('more than a frame apart')
+        self.assertIn('Stopped', report)
+        self.assertIn('more than a frame apart', report)
+        self.assertIn('Render codec: H264_NVIDIA', report)
+        self.assertIn('Resolve endFrame inclusive: ', report)
+        self.assertIn('Audio fades (frames each side)', report)
+        self.assertIn('Join markers: 1', report)
+        self.assertFalse((self.run_dir / 'review-upload.json').exists())
+
+    def test_a_failed_render_still_writes_the_report(self):
+        report = self.report_after_stop('render failed: disk full', FakeResolve(renderOutcome='Failed'))
+        self.assertIn('Stopped', report)
+        self.assertIn('render failed: disk full', report)
+        self.assertIn('Resolve endFrame inclusive: ', report)
+        self.assertNotIn('Render codec', report)
+        self.assertIn('Not listened', report)
+
+    def test_a_failed_payload_still_writes_the_report(self):
+        with mock.patch.object(cut_to_review, 'upload_payload', side_effect=cut_to_review.Stop('payload broke')):
+            report = self.report_after_stop('payload broke')
+        self.assertIn('payload broke', report)
+        self.assertIn('Render codec: H264_NVIDIA', report)
+
+    def test_an_unexpected_error_also_writes_the_report(self):
+        with mock.patch.object(cut_to_review, 'upload_payload', side_effect=OSError('disk gone')):
+            with self.assertRaisesRegex(OSError, 'disk gone'):
+                self.build()
+        report = (self.run_dir / 'run-report.md').read_text(encoding='utf-8')
+        self.assertIn('disk gone', report)
 
 
 class Upload(Base):
