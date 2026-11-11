@@ -170,9 +170,10 @@ In order, it writes everything into a new `renders/<slug>/<version>/` folder (an
    export and a save.
 4. A render to `<slug>-<version>.rendering.mp4` (H.264 on the NVIDIA encoder when Resolve offers it, else
    H.264; AAC 48 kHz), renamed to `<slug>-<version>.mp4` once Resolve reports it complete.
-5. ffprobe: one video and one audio stream, and the length within a frame of the cut list.
+5. ffprobe: one video and one audio stream (Resolve's timecode data stream, tag `tmcd`, is allowed; any other extra stream fails), and the length within a frame of the cut list.
 6. `review-upload.json` (what the review page will get, with the file's SHA-256) and `run-report.md`. Nothing
-   is sent.
+   is sent. When the render, the ffprobe check or this step fails, `run-report.md` is still written, with what was
+   found so far (endFrame inclusive or not, codec, fades, markers) and the error.
 7. It stops with exit code 3 and names the joins to hear first.
 
 Only after Lex says upload:
