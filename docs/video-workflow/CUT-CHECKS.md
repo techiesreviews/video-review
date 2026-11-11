@@ -149,19 +149,23 @@ python scripts\video\cut-to-review.py <cut-folder> --video <slug> [--version v1]
 
 It needs Lex's approval of this exact cut list: an `approval.json` in the cut folder with `status` `"approved"`,
 `approvedBy`, his `words`, the `date` (YYYY-MM-DD) and `cutlistSha256`, the SHA-256 of `cutlist.json`'s bytes. A
-cut list that changed after he approved it is refused. The transcript is `words.json` in the cut folder unless
+cut list that changed after he approved it is refused. An `approval` block with the same keys inside
+`cutlist.json` also works; its `cutlistSha256` is then the hash of the cut list without the block, written as
+compact JSON with sorted keys. The transcript is `words.json` in the cut folder unless
 `--words` names another; the recording is the cut list's `sourcePath` unless `--source` names it.
 
 In order, it writes everything into a new `renders/<slug>/<version>/` folder (an existing one is refused):
 
-1. Read-only checks: the approval, the recording and its hash (`sourceSha256`), a constant frame rate equal to
+1. Read-only checks: the approval, the recording and its hash when the cut list has `sourceSha256` (without
+   it, the report and the stop message say the hash was not checked), a constant frame rate equal to
    the cut list's, segments back to back from frame 0 adding up to `durationFrames` and inside the recording,
    and DaVinci Resolve Studio reachable with external scripting set to Local. It never starts Resolve.
 2. The join check and the captions.
 3. In Resolve, the project named by `--project` (default: the slug). It only opens or creates that project
    when it is already open or when Resolve sits at an empty Untitled Project; it saves a `.drp` checkpoint of
    an existing project first, and refuses any other open project. One timeline `A-CUT — working` (refused
-   when one with clips exists): linked picture and sound per segment, every clip read back, the cut list's
+   when one with clips exists): linked picture and sound per unbroken run (a split where the source runs on
+   is one clip), every clip read back, the cut list's
    audio fades, a marker per join (red where the join check found a problem, yellow otherwise), a `.drt`
    export and a save.
 4. A render to `<slug>-<version>.rendering.mp4` (H.264 on the NVIDIA encoder when Resolve offers it, else
@@ -179,7 +183,8 @@ python scripts\video\cut-to-review.py --upload renders\<slug>\<version>
 
 This registers `<slug>-<version>` on the local review page (http://127.0.0.1:8879), attaches the transcript
 and opens it. The file stays on this computer; nothing goes to YouTube. `--hosted` uses video.techies.tools
-with the token in `VIDEO_REVIEW_TOKEN`. A changed file or an id uploaded before is refused.
+with the token in `VIDEO_REVIEW_TOKEN`. A changed file or an id uploaded before is refused. Each finished step
+is recorded in `review-upload-record.json`, so after a failure the same command carries on where it stopped.
 
 `--dry-run` does steps 1, 2 and 6 into `renders/<slug>/<version>-dry-run/` without Resolve, a render or the
 review page. A render can take long: agents start the command with `scripts/agents/kit go`.
