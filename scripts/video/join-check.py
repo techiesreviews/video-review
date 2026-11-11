@@ -21,6 +21,8 @@ THRESHOLDS = {
     'linkedGapMs': [200, 300],
     'newThoughtGapMs': [350, 500],
     'speechEdgeMs': [100, 150],
+    # Two sides of 100-150 ms add up to 300 ms at most, so a new thought may leave more (the cutter's working value).
+    'newThoughtRoomMaxMs': 200,
     'audioFadeMs': 15,
     # Working limits of this check, not recorded preferences.
     'clippedEdgeMaxMs': 80,
@@ -280,7 +282,8 @@ def render_markdown(report):
         'A last word ending in . ! or ? counts as a new thought; anything else as linked.',
         f'- Gap for a new thought: {limits["newThoughtGapMs"][0]}-{limits["newThoughtGapMs"][1]} ms.',
         f'- Space around speech edges: at least {limits["speechEdgeMs"][0]} ms where possible '
-        f'(preference {limits["speechEdgeMs"][0]}-{limits["speechEdgeMs"][1]} ms; soft endings can need more, and a new thought may leave up to 200 ms).',
+        f'(preference {limits["speechEdgeMs"][0]}-{limits["speechEdgeMs"][1]} ms; soft endings can need more, and a '
+        f'new thought may leave up to {limits["newThoughtRoomMaxMs"]} ms).',
         f'- Audio fade: {limits["audioFadeMs"]} ms. A fade can hide a click, not repair a clipped word.',
         f'- Working limits of this check: a clip of up to {limits["clippedEdgeMaxMs"]} ms counts as clipping an edge; '
         f'an orphan is a word of up to {limits["orphanWordMaxMs"]} ms with at least {limits["orphanPauseMs"]} ms of '
