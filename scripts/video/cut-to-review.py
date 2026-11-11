@@ -325,26 +325,32 @@ def upload_payload(plan, report, video_file=None, file_sha=None):
     }
 
 
+FACT_LABELS = (
+    ('checkpoint', 'Checkpoint before the build'),
+    ('endFrameInclusive', 'Resolve endFrame inclusive'),
+    ('fadeFrames', 'Audio fades (frames each side)'),
+    ('markers', 'Join markers'),
+    ('codec', 'Render codec'),
+)
+
+
 def fact_lines(facts):
-    return [f'- {text}: {facts[key]}'
-            for key, text in (('checkpoint', 'Checkpoint before the build'), ('endFrameInclusive',
-                                                                              'Resolve endFrame inclusive'),
-                              ('fadeFrames', 'Audio fades (frames each side)'), ('markers', 'Join markers'),
-                              ('codec', 'Render codec'))
-            if key in facts]
+    return [f'- {text}: {facts[key]}' for key, text in FACT_LABELS if key in facts]
 
 
-def failure_report(plan, report, facts, error):
+def failure_report(plan, report, facts, error, video_file=None):
     """The run report for a run that stopped in a late step: what was found so far, and the error."""
     summary = report['summary']
     lines = [
         f'# {plan["video"]}-{plan["version"]}: stopped, no review video', '',
-        f'**Stopped:** {error}', '',
+        f'**Stopped:** {str(error) or type(error).__name__}', '',
         '**Not listened.** The join check reads word times; only listening clears a join.', '',
         f'- Cut list: {plan["cutlistPath"]}',
         f'- Recording: {plan["source"]}',
-        f'- Resolve: {facts.get("project", "not used (dry run)")}, timeline {facts.get("timeline", "none")}',
     ]
+    if video_file is not None:
+        lines.append(f'- Video file: {video_file.name} (rendered, not accepted)')
+    lines.append(f'- Resolve: {facts.get("project", "not used (dry run)")}, timeline {facts.get("timeline", "none")}')
     lines += fact_lines(facts)
     lines += [f'- Joins: {summary["joins"]}; problems {summary["problems"]}, checks {summary["checks"]}', '',
               'Nothing was uploaded.', '']
@@ -392,10 +398,10 @@ def stop_message(plan, report, payload, facts):
     return '\n'.join(lines)
 
 
-def write_failure_report(plan, report, facts, error):
+def write_failure_report(plan, report, facts, error, video_file=None):
     """Best effort: a report that cannot be written must not hide the error that stopped the run."""
     try:
-        write_new(plan['runDir'] / 'run-report.md', failure_report(plan, report, facts, error))
+        write_new(plan['runDir'] / 'run-report.md', failure_report(plan, report, facts, error, video_file))
     except OSError:
         pass
 
@@ -442,8 +448,11 @@ def build(args, connect=resolve_build.connect, log=print, sleep=None):
             file_sha = sha256_file(video_file)
         payload = upload_payload(plan, report, video_file, file_sha)
         write_new(run_dir / UPLOAD_FILE, json.dumps(payload, ensure_ascii=False, indent=2))
+    except Stop as error:
+        write_failure_report(plan, report, facts, error, video_file)
+        raise Stop(f'{error} (Run folder: {run_dir})') from None
     except BaseException as error:
-        write_failure_report(plan, report, facts, error)
+        write_failure_report(plan, report, facts, error, video_file)
         raise
     write_new(run_dir / 'run-report.md', run_report(plan, report, payload, facts))
     if args.dry_run:
