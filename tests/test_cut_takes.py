@@ -50,9 +50,11 @@ DEMO = [(410.0, 418.0)]
 CANDIDATES = [((92.78, 98.42), 102.25), ((324.17, 326.37), 329.03), ((341.05, 349.23), 353.96),
               ((362.15, 370.21), 374.57), ((592.80, 601.86), 603.68), ((619.03, 621.10), 621.68)]
 TOLERANCE = 0.011
-# Lex's answers of 2026-11-10: room around speech and the whole silence at a join.
+# Lex's answers of 2026-11-10 (room around speech) and 2026-11-11 (he chose the longer pauses, version B).
 ROOM_MS = (100, 150)
-GAP_MS = {'linked': (150, 250), 'new-thought': (250, 450)}
+GAP_MS = {'linked': (200, 300), 'new-thought': (350, 500)}
+# 100-150 ms on each side adds up to 300 ms at most, so a new-thought join may leave up to 200 ms on a side.
+ROOM_MAX_MS = {'linked': 150, 'new-thought': 200}
 
 
 def plan(transcript=TRANSCRIPT, script=SCRIPT_TEXT, demos=DEMO):
@@ -238,8 +240,9 @@ class TimingTests(unittest.TestCase):
         self.assertEqual(len(measured), 10)
         for join in measured:
             where = f'join after "{join["after"].text}" at {join["after"].end}'
-            self.assertTrue(ROOM_MS[0] <= join['tail'] <= ROOM_MS[1], f'{where}: tail {join["tail"]} ms')
-            self.assertTrue(ROOM_MS[0] <= join['head'] <= ROOM_MS[1], f'{where}: head {join["head"]} ms')
+            most = ROOM_MAX_MS[join['kind']]
+            self.assertTrue(ROOM_MS[0] <= join['tail'] <= most, f'{where}: tail {join["tail"]} ms')
+            self.assertTrue(ROOM_MS[0] <= join['head'] <= most, f'{where}: head {join["head"]} ms')
             low, high = GAP_MS[join['kind']]
             self.assertTrue(low <= join['gap'] <= high, f'{where}: {join["kind"]} gap {join["gap"]} ms')
 
@@ -266,6 +269,42 @@ class TimingTests(unittest.TestCase):
         join = next(item for item in joins_from_frames(SUNDAY) if item['after'].text == 'again.')
         self.assertEqual(join['kind'], 'new-thought')
         self.assertLess(join['gap'], 1200)
+
+    def test_the_pauses_are_the_longer_ones_lex_chose(self):
+        self.assertEqual(cut_takes.SETTINGS['roomMs'], list(ROOM_MS))
+        self.assertEqual(cut_takes.SETTINGS['linkedGapMs'], list(GAP_MS['linked']))
+        self.assertEqual(cut_takes.SETTINGS['newThoughtGapMs'], list(GAP_MS['new-thought']))
+        text = cut_takes.render_paper_edit(SUNDAY['paperEdit'])
+        self.assertIn('200-300 ms', text)
+        self.assertIn('350-500 ms', text)
+        self.assertIn('up to 200 ms on a side', text)
+        self.assertNotIn('150-250 ms', text)
+        self.assertNotIn('250-450 ms', text)
+
+    def test_a_new_thought_silence_up_to_500_ms_is_left_alone(self):
+        # 480 ms is inside Lex's 350-500 ms range, so nothing is cut there.
+        result = plan_words([['Intro.', 0.5, 1.0], ['Next', 1.48, 1.8], ['thing.', 1.84, 2.2]])
+        self.assertEqual(result['paperEdit']['joins'], [])
+        self.assertEqual(len(result['cutlist']['segments']), 1)
+
+    def test_a_long_silence_before_a_new_thought_is_cut_to_350_500_ms(self):
+        result = plan_words([['Intro.', 0.5, 1.0], ['Next', 1.8, 2.1], ['thing.', 2.14, 2.5]])
+        joins = joins_from_frames(result, cut_timeline.load_words(
+            [['Intro.', 0.5, 1.0], ['Next', 1.8, 2.1], ['thing.', 2.14, 2.5]]))
+        self.assertEqual(len(joins), 1)
+        self.assertEqual(joins[0]['kind'], 'new-thought')
+        self.assertTrue(350 <= joins[0]['gap'] <= 500, joins[0]['gap'])
+        self.assertTrue(ROOM_MS[0] <= joins[0]['tail'] <= 200 and ROOM_MS[0] <= joins[0]['head'] <= 200)
+        self.assertTrue(abs(joins[0]['gap'] - 400) <= 34, joins[0]['gap'])
+
+    def test_a_long_pause_between_linked_phrases_is_cut_to_200_300_ms(self):
+        words = [['Intro', 0.5, 1.0], ['next', 2.0, 2.3], ['thing.', 2.34, 2.7]]
+        result = plan_words(words)
+        joins = joins_from_frames(result, cut_timeline.load_words(words))
+        self.assertEqual(len(joins), 1)
+        self.assertEqual(joins[0]['kind'], 'linked')
+        self.assertTrue(200 <= joins[0]['gap'] <= 300, joins[0]['gap'])
+        self.assertTrue(ROOM_MS[0] <= joins[0]['tail'] <= ROOM_MS[1] and ROOM_MS[0] <= joins[0]['head'] <= ROOM_MS[1])
 
     def test_fades_are_noted(self):
         self.assertEqual(SUNDAY['cutlist']['audioFadeMs'], 15)

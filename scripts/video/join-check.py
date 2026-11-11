@@ -17,8 +17,9 @@ import cut_timeline  # noqa: E402
 THRESHOLDS = {
     # Lex's choice of 2026-11-10: the same 100-150 ms of room before the first word as at every other cut.
     'leadInMs': [100, 150],
-    'linkedGapMs': [150, 250],
-    'newThoughtGapMs': [250, 450],
+    # Lex's choice of 2026-11-11: the longer pauses between phrases.
+    'linkedGapMs': [200, 300],
+    'newThoughtGapMs': [350, 500],
     'speechEdgeMs': [100, 150],
     'audioFadeMs': 15,
     # Working limits of this check, not recorded preferences.

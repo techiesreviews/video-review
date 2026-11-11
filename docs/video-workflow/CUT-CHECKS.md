@@ -57,9 +57,12 @@ What it does:
   stumbles, or more of the script line missing), the better earlier take stays and the paper edit says so. A
   line the script itself says more than once is never treated as takes of one line. When no take of a line is
   complete, a take more than a minute from the others stays and is listed.
-- **Timing (Lex, 2026-11-10).** 100-150 ms of room before and after speech at every cut, the start of the clip
-  too; a whole silence of 150-250 ms between linked phrases (it aims for 200) and 250-450 ms before a new thought
-  (it aims for 300); a breath inside a linked phrase stays; 15 ms fade at every cut. No cut lands inside a word.
+- **Timing (Lex, 2026-11-10 and 2026-11-11).** 100-150 ms of room before and after speech at every cut, the start
+  of the clip too; a whole silence of 200-300 ms between linked phrases (it aims for 250) and 350-500 ms before a
+  new thought (it aims for 400); Lex chose these longer pauses (version B) after listening to the cutter's version
+  next to the original, so a silence of up to 500 ms before a new thought is left as it is. Two sides of 100-150 ms
+  add up to 300 ms at most, so before a new thought the room may reach 200 ms on a side (a working value, listed in
+  each paper edit). A breath inside a linked phrase stays; 15 ms fade at every cut. No cut lands inside a word.
 - **Left in and listed for Lex:** anything inside a `--demo` range (start-end in source seconds, repeat it for
   more), a silence of 3 s or more (a screen demo or a pause?), a possible restart without a pause, a possible
   retake cue, and lines not in the script (ad-libs). An ad-lib is a line whose words are not in the script and
@@ -88,9 +91,9 @@ a cut, fix what it shows, then listen. It reports:
 - **Checks, listed second:** a gap outside the preferences, a tight speech edge, a long or short lead-in, a
   kept "again" beside a join, or a join with no transcript words on one side.
 
-The preferences come from `EDITING-LESSONS.md` and Lex's answers of 2026-11-10: 100-150 ms before the first
-word, 150-250 ms between linked phrases, 250-450 ms for a new thought, at least 100 ms around speech edges, and
-15 ms fades. A last word ending in `.`, `!` or `?` counts as a new thought. Those lessons call the numbers
+The preferences come from `EDITING-LESSONS.md` and Lex's answers of 2026-11-10 and 2026-11-11: 100-150 ms before
+the first word, 200-300 ms between linked phrases, 350-500 ms for a new thought, at least 100 ms around speech
+edges, and 15 ms fades. A last word ending in `.`, `!` or `?` counts as a new thought. Those lessons call the numbers
 suggestions to audition, so a flag on a gap is a question, not an order. The limits for a clipped edge and an
 orphan word are this script's own working values, listed at the end of each report.
 
