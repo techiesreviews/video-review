@@ -448,6 +448,7 @@ class FullRun(Base):
         self.assertEqual(payload['transcript']['cuts'], [{'id': 'join-1', 'atMs': 1133, 'risk': False}])
         report = (self.run_dir / 'run-report.md').read_text(encoding='utf-8')
         self.assertIn('Not listened', report)
+        self.assertIn('Join markers: 1', report)
         self.assertFalse((self.run_dir / cut_to_review.DONE_FILE).exists())
         self.assertIn('hash not checked', report)
         self.assertIn('Recording hash not checked', self.output)
@@ -518,6 +519,41 @@ class FullRun(Base):
         self.assertIn('Audio fades (frames each side)', report)
         self.assertIn('Join markers: 1', report)
         self.assertFalse((self.run_dir / 'review-upload.json').exists())
+
+    def test_the_report_names_a_rendered_file_that_failed_the_check(self):
+        self.probe.render_seconds = 70 / FPS
+        report = self.report_after_stop('Run folder: ')
+        self.assertIn('Video file: test-video-v1.mp4 (rendered, not accepted)', report)
+
+    def test_a_report_that_cannot_be_written_does_not_hide_the_error(self):
+        self.probe.render_seconds = 70 / FPS
+        real = cut_to_review.write_new
+
+        def refuse_the_report(path, text):
+            if path.name == 'run-report.md':
+                raise OSError('read-only')
+            return real(path, text)
+
+        with mock.patch.object(cut_to_review, 'write_new', refuse_the_report):
+            self.refuses('more than a frame apart')
+        self.assertFalse((self.run_dir / 'run-report.md').exists())
+
+    def test_a_stop_before_the_render_still_writes_the_report(self):
+        resolve = FakeResolve()
+        with mock.patch.object(resolve_build.Builder, 'build_timeline',
+                               side_effect=resolve_build.ResolveError('timeline refused')):
+            report = self.report_after_stop('timeline refused', resolve)
+        self.assertIn('timeline refused', report)
+        self.assertNotIn('Render codec', report)
+        self.assertNotIn('Join markers', report)
+        self.assertNotIn('Video file', report)
+
+    def test_an_interrupt_names_itself_in_the_report(self):
+        with mock.patch.object(cut_to_review, 'upload_payload', side_effect=KeyboardInterrupt()):
+            with self.assertRaises(KeyboardInterrupt):
+                self.build()
+        report = (self.run_dir / 'run-report.md').read_text(encoding='utf-8')
+        self.assertIn('**Stopped:** KeyboardInterrupt', report)
 
     def test_a_failed_render_still_writes_the_report(self):
         report = self.report_after_stop('render failed: disk full', FakeResolve(renderOutcome='Failed'))
