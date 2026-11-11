@@ -38,11 +38,12 @@ class FakeClip:
     def GetMediaPoolItem(self):
         return self.item
 
-    def SetFades(self, fade_in, fade_out):
-        self.log.note('SetFades', self.kind, fade_in, fade_out)
-        if self.refuse_fades:
+    def SetFades(self, fades):
+        """Resolve 21.1: one dict {FadeIn, FadeOut} in frames."""
+        self.log.note('SetFades', self.kind, fades['FadeIn'], fades['FadeOut'])
+        if self.refuse_fades or set(fades) != {'FadeIn', 'FadeOut'}:
             return False
-        self.fades = {'in': fade_in, 'out': fade_out}
+        self.fades = dict(fades)
         return True
 
     def GetFades(self):
@@ -61,6 +62,7 @@ class FakeTimeline:
     def __init__(self, log, name, options, start_frame=108000):
         self.log, self.name, self.options, self.start_frame = log, name, options, start_frame
         self.tracks = {'video': [], 'audio': []}
+        self.upper = {'video': [], 'audio': [], 'subtitle': []}
         self.markers = {}
         self.linked = []
 
@@ -70,8 +72,13 @@ class FakeTimeline:
     def GetStartFrame(self):
         return self.start_frame
 
+    def GetTrackCount(self, kind):
+        return 2 if kind in self.tracks else 1
+
     def GetItemListInTrack(self, kind, index):
-        return list(self.tracks[kind]) if index == 1 else []
+        if index == 1 and kind in self.tracks:
+            return list(self.tracks[kind])
+        return list(self.upper[kind]) if index <= self.GetTrackCount(kind) else []
 
     def DeleteClips(self, clips, ripple):
         self.log.note('DeleteClips', len(clips), ripple)

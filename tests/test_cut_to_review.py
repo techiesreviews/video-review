@@ -350,6 +350,26 @@ class ResolveSteps(unittest.TestCase):
             builder.build_timeline('/footage/recording.mov', FPS, 1920, 1080, self.segments, 15, [])
         self.assertNotIn('ImportMedia', resolve.log.names())
 
+    def test_refuses_an_existing_working_timeline_with_clips_on_a_higher_track(self):
+        resolve = FakeResolve(current='Test project', projectFps=30)
+        project = resolve.manager.current
+        timeline = project.pool.CreateEmptyTimeline(resolve_build.TIMELINE_NAME)
+        timeline.upper['audio'].append('music')
+        builder = self.builder(resolve)
+        builder.open_project('Test project')
+        with self.assertRaisesRegex(resolve_build.ResolveError, 'already has a timeline'):
+            builder.build_timeline('/footage/recording.mov', FPS, 1920, 1080, self.segments, 15, [])
+        self.assertNotIn('ImportMedia', resolve.log.names())
+
+    def test_reuses_an_empty_working_timeline(self):
+        resolve = FakeResolve(current='Test project', projectFps=30)
+        project = resolve.manager.current
+        project.pool.CreateEmptyTimeline(resolve_build.TIMELINE_NAME)
+        builder = self.builder(resolve)
+        builder.open_project('Test project')
+        builder.build_timeline('/footage/recording.mov', FPS, 1920, 1080, self.segments, 15, [])
+        self.assertEqual(project.GetTimelineCount(), 1)
+
     def test_refuses_a_project_at_another_frame_rate(self):
         resolve = FakeResolve(current='Test project', currentTimelines=[], projectFps=25)
         project = resolve.manager.current
@@ -554,7 +574,58 @@ class UploadFailures(Base):
             self.upload(self.post)
         args = cut_to_review.parse(['--upload', str(self.run_dir)])
         with mock.patch.object(cut_to_review, 'local_caller', lambda data_dir: self.fail('called the local page')):
-            with self.assertRaisesRegex(cut_to_review.Stop, 'started on the hosted review page'):
+            with self.assertRaisesRegex(cut_to_review.Stop, 'started on another review page \\(https://video.techies.tools\\)'):
+                cut_to_review.upload(args, environ={}, post=no_network)
+
+    def test_lost_registration_answer_is_taken_as_registered(self):
+        def lost(url, message, token):
+            self.sent.append(message)
+            if message.get('params', {}).get('name') == 'register_video':
+                raise cut_to_review.Stop('The review page could not be reached: timed out.')
+            return {'jsonrpc': '2.0', 'id': message['id'], 'result': {}}
+        with self.assertRaisesRegex(cut_to_review.Stop, 'timed out'):
+            self.upload(lost)
+
+        def exists(url, message, token):
+            self.sent.append(message)
+            if message.get('params', {}).get('name') == 'register_video':
+                return {'jsonrpc': '2.0', 'id': message['id'],
+                        'result': {'content': [{'text': 'That id already exists; use a new id'}], 'isError': True}}
+            return {'jsonrpc': '2.0', 'id': message['id'], 'result': {'content': [{'text': '{}'}]}}
+        self.assertEqual(self.upload(exists), 0)
+        names = [message['params']['name'] for message in self.sent if message['method'] == 'tools/call']
+        self.assertEqual(names, ['register_video', 'register_video', 'set_transcript', 'open_video'])
+
+    def test_an_id_taken_before_this_run_is_still_refused(self):
+        def exists(url, message, token):
+            if message.get('params', {}).get('name') == 'register_video':
+                return {'jsonrpc': '2.0', 'id': message['id'],
+                        'result': {'content': [{'text': 'That id already exists'}], 'isError': True}}
+            return {'jsonrpc': '2.0', 'id': message['id'], 'result': {}}
+        with self.assertRaisesRegex(cut_to_review.Stop, 'already exists'):
+            self.upload(exists)
+
+    def test_a_pending_change_is_not_recorded_as_done(self):
+        def pending(url, message, token):
+            self.sent.append(message)
+            text = '{"status": "pending"}' if message.get('params', {}).get('name') == 'set_transcript' else '{}'
+            return {'jsonrpc': '2.0', 'id': message['id'], 'result': {'content': [{'text': text}]}}
+        with self.assertRaisesRegex(cut_to_review.Stop, 'has not applied set_transcript yet'):
+            self.upload(pending)
+        record = json.loads((self.run_dir / cut_to_review.DONE_FILE).read_text(encoding='utf-8'))
+        self.assertEqual(record['steps'], ['register_video'])
+        self.assertNotIn('vr_secret', json.dumps(record))
+
+    def test_another_local_data_folder_is_refused(self):
+        def fail(name, arguments):
+            if name == 'set_transcript':
+                raise cut_to_review.Stop('The review page refused set_transcript: x')
+        with mock.patch.object(cut_to_review, 'local_caller', lambda data_dir: fail):
+            args = cut_to_review.parse(['--upload', str(self.run_dir), '--data-dir', str(self.space.root / 'a')])
+            with self.assertRaises(cut_to_review.Stop), contextlib.redirect_stdout(io.StringIO()):
+                cut_to_review.upload(args, environ={}, post=no_network)
+            args = cut_to_review.parse(['--upload', str(self.run_dir), '--data-dir', str(self.space.root / 'b')])
+            with self.assertRaisesRegex(cut_to_review.Stop, 'another review page'):
                 cut_to_review.upload(args, environ={}, post=no_network)
 
     def test_dropped_connection_is_a_plain_stop(self):

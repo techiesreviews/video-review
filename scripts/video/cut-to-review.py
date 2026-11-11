@@ -329,8 +329,8 @@ def run_report(plan, report, payload, facts):
         '**Not listened.** The join check reads word times; only listening clears a join.', '',
         f'- Cut list: {plan["cutlistPath"]} (approved by {plan["approval"]["approvedBy"]} on '
         f'{plan["approval"]["date"]}: "{plan["approval"]["words"]}")',
-        f'- Recording: {plan["source"]} '
-        + ('(SHA-256 matches the cut list)' if plan['hashChecked'] else '(hash not checked: the cut list has no sourceSha256)'),
+        f'- Recording: {plan["source"]} ' + ('(SHA-256 matches the cut list)' if plan['hashChecked']
+                                             else '(hash not checked: the cut list has no sourceSha256)'),
         f'- Video file: {payload["file"]["name"] or "none (dry run)"}',
         f'- Resolve: {facts.get("project", "not used (dry run)")}, timeline {facts.get("timeline", "none")}',
     ]
@@ -451,6 +451,13 @@ def hosted_caller(base_url, token, post=post_json, sleep=time.sleep):
             result = rpc('tools/call', {'name': name, 'arguments': arguments}) or {}
             text = ''.join(item.get('text', '') for item in result.get('content', []))
             if not result.get('isError'):
+                try:
+                    pending = json.loads(text).get('status') == 'pending'
+                except (ValueError, AttributeError):
+                    pending = False
+                if pending:
+                    raise Stop(f'The reviewer\'s tab has not applied {name} yet. Bring the Video Review tab to the '
+                               'front, then run the same --upload again.')
                 return text
             # The reviewer's tab applies a new video a moment after register_video returns.
             if 'Unknown video version' not in text or attempt == HOSTED_RETRIES:
@@ -471,6 +478,16 @@ def local_caller(data_dir):
     return call
 
 
+def upload_destination(args, environ):
+    """Which review page this upload goes to, without secrets: the local data folder, or the hosted session."""
+    if args.hosted:
+        token = environ.get('VIDEO_REVIEW_TOKEN', '').strip()
+        session = token.split('_')[1] if token.count('_') >= 2 else token
+        return f'{args.review_url or HOSTED_URL}|{hashlib.sha256(session.encode()).hexdigest()[:16]}'
+    folder = args.data_dir or environ.get('VIDEO_REVIEW_DATA_DIR') or ROOT / 'data'
+    return f'local {Path(folder).expanduser().resolve()}'
+
+
 def upload(args, environ=os.environ, post=post_json, log=print):
     run_dir = Path(args.upload)
     payload = read_json(run_dir / UPLOAD_FILE, 'The review data')
@@ -482,8 +499,9 @@ def upload(args, environ=os.environ, post=post_json, log=print):
     progress = read_json(done_file, 'The upload record') if done_file.exists() else {'steps': []}
     if progress.get('complete'):
         raise Stop(f'{payload["videoId"]} was uploaded already; a video id is never reused. Render a new --version.')
-    if progress['steps'] and progress.get('hosted') != bool(args.hosted):
-        raise Stop(f'This upload was started on the {"hosted" if progress.get("hosted") else "local"} review page; '
+    destination = upload_destination(args, environ)
+    if progress.get('destination', destination) != destination:
+        raise Stop(f'This upload was started on another review page ({progress["destination"].split("|")[0]}); '
                    'finish it there.')
     video = run_dir / payload['file']['name']
     if not video.is_file() or sha256_file(video) != payload['file']['sha256']:
@@ -498,16 +516,25 @@ def upload(args, environ=os.environ, post=post_json, log=print):
     else:
         call, page = local_caller(args.data_dir), args.review_url or LOCAL_URL
         register.update(path=str(video.resolve()), fingerprint=payload['file']['sha256'])
-    progress.update(videoId=payload['videoId'], reviewPage=page, hosted=bool(args.hosted))
+    progress.update(videoId=payload['videoId'], reviewPage=page, hosted=bool(args.hosted), destination=destination)
     steps = (('register_video', register),
              ('set_transcript', {'videoId': payload['videoId'], 'transcript': payload['transcript']}),
              ('open_video', {'videoId': payload['videoId']}))
-    # Each finished step is recorded, so a rerun after a failure carries on instead of registering the id twice.
+    # Each step is recorded as started and as finished, so a rerun after a failure carries on where it stopped.
     for name, arguments in steps:
         if name in progress['steps']:
             continue
-        call(name, arguments)
+        started = progress.get('started') == name
+        progress['started'] = name
+        done_file.write_text(json.dumps(progress, indent=2), encoding='utf-8')
+        try:
+            call(name, arguments)
+        except Stop as error:
+            # The page registered the id last time but its answer was lost: this run folder owns that id.
+            if not (started and name == 'register_video' and 'already exists' in str(error)):
+                raise
         progress['steps'].append(name)
+        progress.pop('started')
         done_file.write_text(json.dumps(progress, indent=2), encoding='utf-8')
     progress['complete'] = True
     done_file.write_text(json.dumps(progress, indent=2), encoding='utf-8')
