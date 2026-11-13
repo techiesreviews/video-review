@@ -91,3 +91,9 @@ Demo for Lex (not in the repo): `bash .scratch/overview-sample/start-demo.sh` in
 a fresh sample video, starts the server and opens the overview page and a self-reloading "Rough cut (live)" page; a star
 click changes the live page within two seconds, and `bash .scratch/overview-sample/new-take.sh` brings a new take through
 a real registration run. `stop-demo.sh` stops it.
+
+### Follow-ups
+
+- Standards (P3): 4a825ce:scripts/video/rough_cut.py:45 — P3 fault: `_length` treats a duration of `true`/`false` as unknown. The overview strip (`overview_page.py:285`) takes it as 1 or 0 seconds. For a bool duration, the list and the strip would give different totals and "+" markers, which breaks the "same list" promise in the module docstring. Take registration only writes numbers, so this is very unlikely to happen. Fix: give both places one shared helper, for example a public `rough_cut.length` or a helper in `scene_store`, and use it in `_cut_strip` too.
+- Validation gaps (gap): The star route passes the registered cue file to `rebuild_rough_cut` (`server.py:125`, `cue=cue`). No server test shows that this cue file decides `script_changed`. Test to add in `tests/test_server.py`: Register the video with a cue file whose `1 · INTRO` heading is renamed. Click a star on `01-intro`. Check that `saved_rough_cut()['scenes'][0]['script_changed']` is true, and false for scene 2. (`test_take_intake.py` already has this check for the intake path.)
+
