@@ -319,21 +319,27 @@ def load(raw_dir):
     return store
 
 
-def save(raw_dir, store):
-    """Refresh best and flagged, then write the file safely: temporary file in the same folder, then rename."""
-    apply_best(store)
-    path = scene_file_path(raw_dir)
+def write_text_atomic(path, text):
+    """Write a whole file safely: a temporary file in the same folder, then a rename into place. A reader sees the old
+    file or the new one, never half of it, and a failed write leaves the old file and no temporary file."""
+    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f'{FILE_NAME}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp')
+    temporary = path.with_name(f'{path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp')
     try:
         with open(temporary, 'w', encoding='utf-8', newline='\n') as handle:
-            handle.write(json.dumps(store, indent=2, ensure_ascii=False) + '\n')
+            handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
         _retry_on_windows(lambda: os.replace(temporary, path))
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise
+
+
+def save(raw_dir, store):
+    """Refresh best and flagged, then write the file safely (write_text_atomic)."""
+    apply_best(store)
+    write_text_atomic(scene_file_path(raw_dir), json.dumps(store, indent=2, ensure_ascii=False) + '\n')
 
 
 def _try_lock(handle):

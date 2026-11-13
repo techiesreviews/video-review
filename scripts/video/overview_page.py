@@ -239,7 +239,7 @@ def _take_card(scene, take, best, thumbs, prefix):
         f'<div class="note">{esc(_take_note(take))}</div></div>')
 
 
-def _changed_in_script(store, cue_text):
+def changed_in_script(store, cue_text):
     """Ids of the saved scenes whose heading no longer matches the script, found by comparing the scene list with
     the cue text now (scene_store.check_script on a copy, so nothing is saved). Empty when the cue text has no
     numbered sections at all: that is not a script, so it says nothing about the scenes."""
@@ -301,7 +301,7 @@ def render(store, name, cue_text=None, thumbs=(), server='', video='', link_pref
     link to a take or thumbnail (the server's page needs one; the saved file uses relative links)."""
     esc = html.escape
     texts = scene_texts(cue_text or '')
-    changed = _changed_in_script(store, cue_text or '')
+    changed = changed_in_script(store, cue_text or '')
     strip, recorded, takes, total, complete = _cut_strip(store)
     scenes = ''.join(_scene_section(scene, texts.get(scene['id']), thumbs, link_prefix, changed)
                      for scene in store['scenes'])
@@ -312,7 +312,7 @@ def render(store, name, cue_text=None, thumbs=(), server='', video='', link_pref
         off=esc(STARS_OFF_TEXT), scenes=scenes) + PAGE_SCRIPT)
 
 
-def _cue_text(folder, cue):
+def read_cue_text(folder, cue):
     path = Path(cue) if cue else Path(folder) / DEFAULT_CUE_NAME
     try:
         return path.read_text(encoding='utf-8', errors='replace')
@@ -321,7 +321,7 @@ def _cue_text(folder, cue):
 
 
 def _page(raw_dir, store, cue, link_prefix, server, thumbs):
-    return render(store, Path(raw_dir).resolve().name, cue_text=_cue_text(raw_dir, cue), thumbs=thumbs,
+    return render(store, Path(raw_dir).resolve().name, cue_text=read_cue_text(raw_dir, cue), thumbs=thumbs,
                   video=video_key(raw_dir), link_prefix=link_prefix,
                   server=server_address() if server is None else server)
 

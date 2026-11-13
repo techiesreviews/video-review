@@ -6,6 +6,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parent))
 sys.path.insert(0,str(Path(__file__).resolve().parent/'scripts'/'video'))
 import review_store as store
 import overview_page
+import rough_cut
 import scene_store
 
 ROOT=Path(__file__).resolve().parent
@@ -110,15 +111,20 @@ class Handler(BaseHTTPRequestHandler):
         for name,value in {**self.cors(),'Access-Control-Allow-Methods':'POST','Access-Control-Allow-Headers':'Content-Type','Access-Control-Allow-Private-Network':'true','Access-Control-Max-Age':'600','Content-Length':'0'}.items():self.send_header(name,value)
         self.end_headers()
     def star(self,cmd):
-        """Lex's star for a take (or off, with take null): writes the scene file, then rewrites the saved page."""
+        """Lex's star for a take (or off, with take null): writes the scene file, then rebuilds the rough cut list and rewrites the saved page."""
         if not isinstance(cmd,dict) or 'take' not in cmd:raise ValueError('Invalid star request')
         found=self.scene_video(str(cmd.get('video','')))
         if not found:return self.send_json({'error':'Unknown video'},404,extra=self.cors())
         folder,cue=found;scene,take=cmd.get('scene'),cmd.get('take')
         if not isinstance(scene,str) or (take is not None and type(take) is not int):raise ValueError('Invalid star request')
         saved=scene_store.update(folder,lambda current:scene_store.set_star(current,scene,take))
+        # The rough cut list and the page both follow the star on their own; one failing does not stop the other.
+        problems=[]
+        try:rough_cut.rebuild_rough_cut(folder,cue=cue)
+        except (OSError,scene_store.SceneFileError) as error:problems.append(f'the rough cut could not be rebuilt: {error}')
         try:overview_page.build(folder,cue=cue,server=f'http://127.0.0.1:{PORT}')
-        except (OSError,scene_store.SceneFileError) as error:return self.send_json({'error':f'The star is saved, but the page could not be rewritten: {error}'},500,extra=self.cors())
+        except (OSError,scene_store.SceneFileError) as error:problems.append(f'the page could not be rewritten: {error}')
+        if problems:return self.send_json({'error':'The star is saved, but '+' and '.join(problems)},500,extra=self.cors())
         self.send_json({'ok':True,'scenes':saved['scenes']},extra=self.cors())
     def do_POST(self):
         if self.path not in ['/api/comments','/api/view','/api/library','/api/scenes/star'] and not self.path.startswith('/api/transcript/'):return self.send_error(404)
