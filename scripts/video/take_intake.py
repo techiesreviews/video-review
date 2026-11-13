@@ -24,6 +24,7 @@ only while results are copied into the file.
 import argparse
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import re
 import statistics
@@ -224,9 +225,13 @@ def settle(candidates, seconds, sleep):
 
 
 def recorded_at(path):
-    """When the file was created (on Windows and macOS), else when it was last written, as UTC text."""
+    """When the file was created, as UTC text: its birth time where Python gives one (macOS, Windows with Python
+    3.12 or newer), its creation time on older Python on Windows (st_ctime means creation there), and elsewhere,
+    where no creation time exists, the time it was last written."""
     info = path.stat()
-    seconds = getattr(info, 'st_birthtime', None) or info.st_mtime
+    seconds = getattr(info, 'st_birthtime', None)
+    if not seconds:
+        seconds = info.st_ctime if os.name == 'nt' else info.st_mtime
     return datetime.fromtimestamp(seconds, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
 
@@ -262,12 +267,8 @@ def _refresh_scene(store, scene):
         others = [t['duration'] for t in entry['takes']
                   if t is not take and isinstance(t.get('duration'), (int, float))]
         flag = length_off(take['duration'], others)
-        merged = {'ends_early': sound.get('ends_early')} if 'ends_early' in sound else {}
         if flag is not None:
-            merged['length_off'] = flag
-        if 'long_pause' in sound:
-            merged['long_pause'] = sound['long_pause']
-        take['sound'] = merged
+            sound['length_off'] = flag
     scene_store.set_favorite(store, scene, pick_favorite(entry))
 
 
@@ -278,7 +279,8 @@ def run(raw_dir, settle_seconds=None, sleep=time.sleep):
     unknown_folders (scene folders that are not in the scene list)."""
     store = scene_store.load(raw_dir)
     if store is None:
-        raise scene_store.SceneFileError(f'No {scene_store.FILE_NAME} in {raw_dir}.')
+        raise scene_store.SceneFileError(
+            f'No {scene_store.FILE_NAME} in {raw_dir}: the scene list is saved when the first take is recorded.')
     candidates, unknown = find_new_takes(raw_dir, store)
     steady, growing = settle(candidates, SETTLE_SECONDS if settle_seconds is None else settle_seconds, sleep)
     report = {'added': [], 'growing': [(c[0], c[1]) for c in growing], 'unreadable': [],
@@ -339,10 +341,6 @@ def main(argv=None):
         print(f'The video folder {folder} does not exist.', file=sys.stderr)
         return 2
     try:
-        if scene_store.load(folder) is None:
-            print(f'No {scene_store.FILE_NAME} in {folder}: the scene list is saved when the first take is recorded.',
-                  file=sys.stderr)
-            return 2
         report = run(folder)
     except (scene_store.SceneFileError, ToolMissing) as error:
         print(str(error), file=sys.stderr)

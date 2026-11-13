@@ -250,9 +250,25 @@ class NewTakes(IntakeCase):
         self.assertEqual(take['file'], 'take-01.mkv')
         self.assertEqual(take['name'], scene_store.take_full_name(scene, 1))
         self.assertEqual(take['duration'], 60.0)
+        if os.name != 'nt' and not hasattr(os.stat_result, 'st_birthtime'):
+            self.assertEqual(take['recorded_at'], '2023-11-14T22:13:20Z')   # the file's last-written time
         self.assertRegex(take['recorded_at'], r'^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$')
         # A lone take is never compared with another, so its length check did not run.
         self.assertEqual(take['sound'], {'ends_early': False, 'long_pause': False})
+
+    def test_one_take_saved_in_two_formats_is_registered_once(self):
+        scene = self.scenes[0]
+        self.add_file(scene, 1, 60.0)
+        self.add_file(scene, 1, 60.0, name='take-01.mp4')
+        report = self.run_intake()
+        self.assertEqual(report['added'], [(scene, 1)])
+        entry = scene_store.find_scene(scene_store.load(self.raw), scene)
+        self.assertEqual([t['file'] for t in entry['takes']], ['take-01.mkv'])
+
+    def test_an_upper_case_extension_is_a_take_and_keeps_its_spelling(self):
+        self.add_file(self.scenes[0], 1, 60.0, name='take-01.MKV')
+        self.run_intake()
+        self.assertEqual(self.take(self.scenes[0], 1)['file'], 'take-01.MKV')
 
     def test_every_scene_folder_is_scanned(self):
         self.add_file(self.scenes[0], 1, 60.0)
@@ -307,6 +323,28 @@ class NewTakes(IntakeCase):
         with self.assertRaises(scene_store.SceneFileError):
             self.run_intake()
         self.assertFalse((self.raw / scene_store.FILE_NAME).exists())
+
+
+class RecordedAt(unittest.TestCase):
+    @staticmethod
+    def fake_path(**times):
+        path = mock.Mock()
+        path.stat.return_value = mock.Mock(spec=list(times), **times)
+        return path
+
+    def test_birth_time_wins_where_python_has_one(self):
+        path = self.fake_path(st_birthtime=1_600_000_000, st_ctime=1_650_000_000, st_mtime=1_700_000_000)
+        self.assertEqual(take_intake.recorded_at(path), '2020-09-13T12:26:40Z')
+
+    def test_on_windows_with_older_python_the_creation_time_is_ctime(self):
+        path = self.fake_path(st_ctime=1_600_000_000, st_mtime=1_700_000_000)
+        with mock.patch.object(take_intake.os, 'name', 'nt'):
+            self.assertEqual(take_intake.recorded_at(path), '2020-09-13T12:26:40Z')
+
+    def test_elsewhere_the_last_written_time_is_used(self):
+        path = self.fake_path(st_ctime=1_650_000_000, st_mtime=1_700_000_000)
+        with mock.patch.object(take_intake.os, 'name', 'posix'):
+            self.assertEqual(take_intake.recorded_at(path), '2023-11-14T22:13:20Z')
 
 
 class ExistingTakes(IntakeCase):
