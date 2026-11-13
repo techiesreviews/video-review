@@ -1,5 +1,7 @@
 """Checks for the per-video scene file (scripts/video/scene_store.py). Only small invented files, no real footage."""
+import errno
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -179,11 +181,7 @@ class ScriptChanges(unittest.TestCase):
                          ['02-what-it-really-costs', '03-the-news-moves-fast'])
         self.assertEqual(len(scene_store.find_scene(self.store, '02-what-it-really-costs')['takes']), 1)
 
-    def test_removing_a_scene_does_not_flag_the_ones_after_it(self):
-        without = CUE.replace('### **3 · THE NEWS MOVES FAST · 10:00**', '### not a heading')
-        self.assertEqual(self.flagged(without), ['03-the-news-moves-fast'])
-
-    def test_removed_scene_is_flagged_and_kept(self):
+    def test_removed_scene_is_flagged_and_kept_and_later_scenes_are_not(self):
         without = CUE.replace('### **3 · THE NEWS MOVES FAST · 10:00**', '### not a heading')
         self.assertEqual(self.flagged(without), ['03-the-news-moves-fast'])
         self.assertEqual(len(self.store['scenes']), 5)
@@ -467,14 +465,47 @@ class UpdateUnderLock(unittest.TestCase):
             holder = subprocess.Popen(
                 [sys.executable, '-I', '-c', HOLD_THEN_DIE, str(ROOT / 'scripts/video'), raw],
                 stdout=subprocess.PIPE, text=True)
+            self.addCleanup(holder.stdout.close)
+            self.addCleanup(holder.wait)
+            self.addCleanup(holder.kill)
             self.assertEqual(holder.stdout.readline().strip(), 'holding')
             with mock.patch.object(scene_store, 'LOCK_WAIT_SECONDS', 0.2):
                 with self.assertRaises(scene_store.SceneFileError):
                     scene_store.update(raw, lambda store: None)
             holder.kill()  # no chance to clean up
             holder.wait()
-            holder.stdout.close()
             scene_store.update(raw, lambda store: scene_store.add_take(store, '01-intro', 1))
+            self.assertEqual(len(scene_store.find_scene(scene_store.load(raw), '01-intro')['takes']), 1)
+
+    def test_a_real_locking_failure_is_not_called_a_busy_lock(self):
+        with tempfile.TemporaryDirectory() as raw:
+            scene_store.ensure_scene_list(raw, CUE)
+            failure = OSError(errno.ENOLCK, 'No locks available')
+            with mock.patch.object(scene_store, '_try_lock', side_effect=failure):
+                with self.assertRaises(OSError) as caught:
+                    scene_store.update(raw, lambda store: None)
+            self.assertNotIsInstance(caught.exception, scene_store.SceneFileError)
+
+    def test_the_windows_lock_calls_retry_and_work_from_the_start_of_the_file(self):
+        calls = []
+
+        class FakeMsvcrt:
+            LK_NBLCK, LK_UNLCK = 'lock', 'unlock'
+
+            @staticmethod
+            def locking(descriptor, mode, size):
+                position = os.lseek(descriptor, 0, os.SEEK_CUR)
+                calls.append((mode, position, size))
+                if len(calls) == 1:
+                    raise OSError(errno.EACCES, 'busy')
+
+        with tempfile.TemporaryDirectory() as raw:
+            scene_store.ensure_scene_list(raw, CUE)
+            calls.clear()
+            with mock.patch.object(scene_store, 'fcntl', None), \
+                    mock.patch.object(scene_store, 'msvcrt', FakeMsvcrt, create=True):
+                scene_store.update(raw, lambda store: scene_store.add_take(store, '01-intro', 1))
+            self.assertEqual(calls, [('lock', 0, 1), ('lock', 0, 1), ('unlock', 0, 1)])
             self.assertEqual(len(scene_store.find_scene(scene_store.load(raw), '01-intro')['takes']), 1)
 
     def test_separate_programs_writing_at_once_lose_nothing(self):

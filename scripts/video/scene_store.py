@@ -20,6 +20,7 @@ string.
 """
 from contextlib import contextmanager
 from datetime import datetime, timezone
+import errno
 import json
 import os
 from pathlib import Path
@@ -53,6 +54,9 @@ TAKE_FULL = re.compile(r'^scene-(\d+-.+)-take-(\d+)(\.[A-Za-z0-9]+)?$')
 WINDOWS_RETRIES = 10
 LOCK_NAME = 'scenes.json.lock'
 LOCK_WAIT_SECONDS = 10  # how long update() waits for another program's lock before giving up
+# What "someone else holds the lock" looks like: flock says EAGAIN/EWOULDBLOCK, Windows locking says EACCES or EDEADLOCK.
+LOCK_BUSY_ERRNOS = {code for code in (errno.EAGAIN, errno.EWOULDBLOCK, errno.EACCES,
+                                      getattr(errno, 'EDEADLK', None), getattr(errno, 'EDEADLOCK', None)) if code}
 
 
 class SceneFileError(Exception):
@@ -149,8 +153,9 @@ def check_script(store, cue_text):
     """Compare the saved scene list with the script now. Flags changed scenes; renames and deletes nothing.
 
     A saved scene gets script_changed true when its id (number plus title) is no longer in the script (title
-    changed, number changed, or removed), or when it kept its id but now sits in a different place among the scenes
-    both lists still share (headings swapped or moved without renumbering). A scene that matches again loses the flag. Scenes that are only in
+    changed, number changed, or removed), or when it kept its id but now sits in a different place among the
+    scenes both lists still share (headings swapped or moved without renumbering). A scene that matches again
+    loses the flag. Scenes that are only in
     the script now are reported under "added" and are not added to the file. Returns {"changed": [...], "added": [...]}.
     An edit that keeps the same id (only capital letters or punctuation in the title) is ignored on purpose.
     """
@@ -346,7 +351,9 @@ def _locked(raw_dir):
             try:
                 _try_lock(handle)
                 break
-            except OSError:
+            except OSError as error:
+                if error.errno not in LOCK_BUSY_ERRNOS:
+                    raise  # a real failure (for example no locking on this drive), not a busy lock
                 if time.monotonic() > deadline:
                     raise SceneFileError(f'{handle.name} is held by another program; try again in a moment.') from None
                 time.sleep(0.05)
