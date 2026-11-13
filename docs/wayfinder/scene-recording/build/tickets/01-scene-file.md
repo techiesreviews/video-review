@@ -53,8 +53,10 @@ Fields of `scenes.json` (use exactly these names in tickets 02-04):
   `flagged`, `takes`.
 - Take: `number`, `file` (`take-03.mkv`), `name` (`scene-02-what-it-really-costs-take-03`), and when known
   `recorded_at`, `duration` (seconds), `sound`.
-- `sound`: `ends_early` and `long_pause`, both true or false, written by the sound check (ticket 02). "Clean" means
-  both false; no `sound` means not checked.
+- `sound`: `ends_early` (check 1 failed: not a clean end), `length_off` (check 2 failed: length not close to the other
+  takes), `long_pause` (check 3 failed: a long silence in the middle), each true or false, written by the sound check
+  (ticket 02). A check missing from `sound` counts as not run. Only `ends_early` and `long_pause` decide "clearly
+  worse" and the best take ("clean" = both false); `length_off` only feeds the computer's favorite.
 
 Rules as built:
 
@@ -70,7 +72,11 @@ Rules as built:
   decides. `save` refreshes `best` and `flagged` before writing, so readers always find them.
 - Safe writes: temporary file in the same folder, then rename; leftover `.tmp` files are never read. A `scenes.json`
   that is not valid raises `SceneFileError` instead of looking empty.
+- Every write goes through `update(raw_dir, change)`: it takes a lock file (`scenes.json.lock`, taken over when older
+  than 30 seconds), loads, runs `change(store)`, saves and releases, so a star clicked during a take intake is not
+  lost. Tickets 02-04 must write this way. `ensure_scene_list` takes the same lock.
+- Edits to a script heading that keep the same id (only capital letters or punctuation) are ignored on purpose; the
+  one-hash title line of a cue file is never a scene.
 - Other helpers: `load`, `save`, `add_take`, `set_star`, `set_favorite`, `find_scene`, take-name helpers
   (`take_file_name`, `parse_take_file_name`, `take_full_name`, `parse_take_full_name`, `scene_folder`).
-- Limit: two programs saving at the same moment can still lose one of the two changes (last save wins); the file
-  itself is never broken. Callers should load, change and save quickly.
+- Limit: a program that calls `load` and `save` itself, outside `update`, can still overwrite another program's change.

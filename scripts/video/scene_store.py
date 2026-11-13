@@ -8,11 +8,17 @@ Fields (also listed in the build ticket, so the next tickets use the same names)
   file:   version, saved_at, scenes, markers
   scene:  id, number, title, script_changed, star, favorite, best, flagged, takes
   take:   number, file, name, recorded_at, duration, sound   (only number, file and name are always there)
-  sound:  ends_early, long_pause                             (written by the sound check; true or false)
+  sound:  ends_early, length_off, long_pause                 (written by the sound check; each true or false)
+          ends_early = check 1 failed (the take does not end in a clean stretch of silence),
+          length_off = check 2 failed (length not close to the other takes of the scene),
+          long_pause = check 3 failed (a long silence in the middle).
+          Only ends_early and long_pause decide "clearly worse" and the best take; length_off is only for the
+          computer's favorite. A check that is missing from sound counts as not run.
 
 Nothing here reads or writes media, and nothing touches a script or prompter file: the cue text comes in as a
 string.
 """
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import json
 import os
@@ -31,13 +37,17 @@ OPTIONAL_TAKE_FIELDS = ('recorded_at', 'duration', 'sound')
 DEFAULT_EXTENSION = '.mkv'
 
 # A numbered section of a saved prompter cue file: "### **2 · WHAT IT REALLY COSTS · 02:00**". The time and the
-# bold marks are optional. Headings without a number (PREP, the hook) are not scenes.
+# bold marks are optional. Headings without a number (PREP, the hook) are not scenes, and neither is the file's
+# one-hash title line, even when it starts with a number.
 HEADING = re.compile(
-    r'^#{1,6}[ \t]+(?:\*\*)?[ \t]*(\d+)[ \t]*·[ \t]*(.+?)[ \t]*'
+    r'^#{2,6}[ \t]+(?:\*\*)?[ \t]*(\d+)[ \t]*·[ \t]*(.+?)[ \t]*'
     r'(?:·[ \t]*\d{1,2}(?::\d{2}){1,2})?[ \t]*(?:\*\*)?[ \t]*$')
 TAKE_FILE = re.compile(r'^take-(\d+)(\.[A-Za-z0-9]+)$')
 TAKE_FULL = re.compile(r'^scene-(\d+-.+)-take-(\d+)(\.[A-Za-z0-9]+)?$')
 WINDOWS_RETRIES = 10
+LOCK_NAME = 'scenes.json.lock'
+LOCK_STALE_SECONDS = 30  # a lock older than this was left by a program that stopped; it is taken over
+LOCK_WAIT_SECONDS = 10   # how long update() waits for another program's lock before giving up
 
 
 class SceneFileError(Exception):
@@ -118,15 +128,16 @@ def new_store(scenes):
 
 def ensure_scene_list(raw_dir, cue_text):
     """The scene list is saved once, at the first take. Later calls return the saved file untouched."""
-    store = load(raw_dir)
-    if store is not None:
+    with _locked(raw_dir):
+        store = load(raw_dir)
+        if store is not None:
+            return store
+        scenes = parse_cue_file(cue_text)
+        if not scenes:
+            raise ValueError('The cue file has no numbered sections (like "2 · Title"), so there is no scene list to save.')
+        store = new_store(scenes)
+        save(raw_dir, store)
         return store
-    scenes = parse_cue_file(cue_text)
-    if not scenes:
-        raise ValueError('The cue file has no numbered sections (like "2 · Title"), so there is no scene list to save.')
-    store = new_store(scenes)
-    save(raw_dir, store)
-    return store
 
 
 def check_script(store, cue_text):
@@ -135,6 +146,7 @@ def check_script(store, cue_text):
     A saved scene whose id (number plus title) is no longer in the script gets script_changed true, whether its
     title changed, it moved, or it was removed. A scene that matches again loses the flag. Scenes that are only in
     the script now are reported under "added" and are not added to the file. Returns {"changed": [...], "added": [...]}.
+    An edit that keeps the same id (only capital letters or punctuation in the title) is ignored on purpose.
     """
     current = [scene['id'] for scene in parse_cue_file(cue_text)]
     saved = [scene['id'] for scene in store['scenes']]
@@ -155,20 +167,25 @@ def find_scene(store, scene):
 
 # Takes, stars, best take ---------------------------------------------------------------------------------------
 
-def add_take(store, scene, number, extension=DEFAULT_EXTENSION, **fields):
+def add_take(store, scene, number, extension=None, **fields):
     """Register a take (or update it when that number is already there). Takes stay in number order.
 
-    Optional fields: recorded_at, duration, sound ({"ends_early": bool, "long_pause": bool}). None is skipped.
+    Optional fields: recorded_at, duration, sound ({"ends_early": bool, "length_off": bool, "long_pause": bool}).
+    None is skipped. extension (default .mkv) is only used to name the file; give it again to change it.
     """
     unknown = set(fields) - set(OPTIONAL_TAKE_FIELDS)
     if unknown:
         raise ValueError(f'Unknown take field(s): {", ".join(sorted(unknown))}')
+    number = int(number)
     entry = find_scene(store, scene)
     take = next((t for t in entry['takes'] if t['number'] == number), None)
     if take is None:
-        take = {'number': number, 'file': take_file_name(number, extension), 'name': take_full_name(scene, number)}
+        take = {'number': number, 'file': take_file_name(number, extension or DEFAULT_EXTENSION),
+                'name': take_full_name(scene, number)}
         entry['takes'].append(take)
         entry['takes'].sort(key=lambda t: t['number'])
+    elif extension:
+        take['file'] = take_file_name(number, extension)
     take.update({key: value for key, value in fields.items() if value is not None})
     return take
 
@@ -194,7 +211,9 @@ def set_favorite(store, scene, number):
 
 def _sound(take, flag):
     sound = take.get('sound')
-    return None if sound is None else bool(sound.get(flag))
+    if not isinstance(sound, dict) or flag not in sound:
+        return None
+    return bool(sound[flag])
 
 
 def _is_clean(take):
@@ -263,8 +282,10 @@ def load(raw_dir):
         store = json.loads(raw)
     except ValueError as error:  # includes UnicodeDecodeError and JSONDecodeError
         raise SceneFileError(f'{path} is not valid JSON: {error}') from error
-    if not isinstance(store, dict) or not isinstance(store.get('scenes'), list):
-        raise SceneFileError(f'{path} is not a scene file (no scene list).')
+    if not isinstance(store, dict) or not isinstance(store.get('scenes'), list) or not all(
+            isinstance(scene, dict) and 'id' in scene and isinstance(scene.get('takes'), list)
+            for scene in store['scenes']):
+        raise SceneFileError(f'{path} is not a scene file (no scene list, or a scene without an id or takes).')
     return store
 
 
@@ -283,3 +304,43 @@ def save(raw_dir, store):
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise
+
+
+@contextmanager
+def _locked(raw_dir):
+    """One program at a time between load and save: a lock file made with O_EXCL, taken over when stale."""
+    folder = Path(raw_dir)
+    folder.mkdir(parents=True, exist_ok=True)
+    lock = folder / LOCK_NAME
+    deadline = time.monotonic() + LOCK_WAIT_SECONDS
+    while True:
+        try:
+            os.close(os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            break
+        except FileExistsError:
+            try:
+                if time.time() - lock.stat().st_mtime > LOCK_STALE_SECONDS:
+                    lock.unlink(missing_ok=True)
+                    continue
+            except FileNotFoundError:
+                continue
+            if time.monotonic() > deadline:
+                raise SceneFileError(f'{lock} is held by another program; try again in a moment.')
+            time.sleep(0.05)
+    try:
+        yield
+    finally:
+        lock.unlink(missing_ok=True)
+
+
+def update(raw_dir, change):
+    """Load the scene file, run change(store), save it, all under the lock. Use this for every write, so a star
+    clicked while the take intake runs is not lost. Returns the saved store; the file must already exist
+    (ensure_scene_list makes it)."""
+    with _locked(raw_dir):
+        store = load(raw_dir)
+        if store is None:
+            raise SceneFileError(f'No {FILE_NAME} in {raw_dir} yet; call ensure_scene_list first.')
+        change(store)
+        save(raw_dir, store)
+        return store
