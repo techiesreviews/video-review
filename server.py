@@ -121,7 +121,7 @@ class Handler(BaseHTTPRequestHandler):
         # The rough cut list and the page both follow the star on their own; one failing does not stop the other.
         problems=[]
         try:rough_cut.rebuild_rough_cut(folder,cue=cue)
-        except (OSError,scene_store.SceneFileError) as error:problems.append(f'the rough cut could not be rebuilt: {error}')
+        except (OSError,ValueError,scene_store.SceneFileError) as error:problems.append(f'the rough cut could not be rebuilt: {error}')
         try:overview_page.build(folder,cue=cue,server=f'http://127.0.0.1:{PORT}')
         except (OSError,scene_store.SceneFileError) as error:problems.append(f'the page could not be rewritten: {error}')
         if problems:return self.send_json({'error':'The star is saved, but '+' and '.join(problems)},500,extra=self.cors())

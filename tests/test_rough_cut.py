@@ -1,6 +1,9 @@
 """Checks for the rough cut list (scripts/video/rough_cut.py). Small invented scene files and cue text only; nothing
 here needs a media tool."""
+import contextlib
+import io
 import json
+import os
 from pathlib import Path
 import re
 import sys
@@ -313,6 +316,64 @@ class WhenItCannotBeMade(RoughCutCase):
                 self.rebuild()
         self.assertEqual((self.raw / rough_cut.FILE_NAME).read_bytes(), before)
         self.assertEqual([p.name for p in self.raw.iterdir() if p.name.endswith('.tmp')], [])
+
+
+class CommandLine(RoughCutCase):
+    def run_main(self, *args):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = rough_cut.main([str(a) for a in args])
+        return code, out.getvalue(), err.getvalue()
+
+    def test_the_command_writes_the_list_and_says_what_it_holds(self):
+        data = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__('shutil').rmtree(data, True))
+        code, out, err = self.run_main(self.raw, '--data-dir', data)
+        self.assertEqual((code, err), (0, ''))
+        self.assertIn('Rough cut: 2 of 5 scenes, 183 s', out)
+        self.assertEqual(len(self.saved()['scenes']), 5)
+
+    def test_the_command_writes_nothing_outside_the_video_folder(self):
+        data = Path(tempfile.mkdtemp()) / 'not-made-yet'
+        self.addCleanup(lambda: __import__('shutil').rmtree(data.parent, True))
+        code, out, err = self.run_main(self.raw, '--data-dir', data)
+        self.assertEqual(code, 0)
+        self.assertFalse(data.exists())
+
+    def test_the_data_folder_setting_is_used_to_find_the_remembered_cue_file(self):
+        data = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__('shutil').rmtree(data, True))
+        other = self.raw / 'other-cues.md'
+        other.write_text(CUE.replace('ROOM 1: WHAT CHANGED?', 'ROOM ONE'), encoding='utf-8')
+        overview_page.register(data, self.raw, cue=other)
+        with mock.patch.dict(os.environ, {'VIDEO_REVIEW_DATA_DIR': str(data)}):
+            self.assertEqual(self.run_main(self.raw)[0], 0)
+        self.assertTrue(self.entry(ROOM)['script_changed'])
+
+    def test_a_registry_that_cannot_be_read_does_not_stop_the_list(self):
+        data = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__('shutil').rmtree(data, True))
+        (data / overview_page.REGISTRY_NAME).write_text('{nope', encoding='utf-8')
+        self.assertEqual(self.run_main(self.raw, '--data-dir', data)[0], 0)
+        self.assertEqual(len(self.saved()['scenes']), 5)
+
+    def test_a_missing_folder_is_an_error_that_says_so(self):
+        code, out, err = self.run_main(self.raw / 'nope')
+        self.assertEqual(code, 2)
+        self.assertIn('does not exist', err)
+
+    def test_a_folder_without_a_scene_file_is_an_error_that_says_so(self):
+        (self.raw / scene_store.FILE_NAME).unlink()
+        code, out, err = self.run_main(self.raw)
+        self.assertEqual(code, 2)
+        self.assertIn(scene_store.FILE_NAME, err)
+        self.assertFalse((self.raw / rough_cut.FILE_NAME).exists())
+
+    def test_a_write_that_fails_is_one_plain_line_not_a_traceback(self):
+        with mock.patch.object(scene_store.os, 'replace', side_effect=OSError('disk full')):
+            code, out, err = self.run_main(self.raw)
+        self.assertEqual(code, 2)
+        self.assertEqual(err.strip(), 'disk full')
 
 
 class WhileAnotherProgramWrites(RoughCutCase):

@@ -59,8 +59,8 @@ word-timed transcript and a cut list Lex approved (`cut_timeline.load_cutlist` r
 take a list of finished clips without a larger change. The review page plays one registered video file. The follow-up is
 [06 Show the rough cut on the review page](06-rough-cut-on-the-review-page.md): join the best takes into one file with
 ffmpeg and register it with a marker at every join. Pushing the list into the Resolve timeline stays out (it needs LexTop).
-Done when 4: `bash scripts/agents/run-tests.sh` passes (490 unit tests and the two script suites, with ffmpeg on the
-path so the four real-clip tests run too); the landing is this change's own pull request into `dev` through `kit pr`.
+Done when 4: `bash scripts/agents/run-tests.sh` passes (the unit tests and the two script suites; also with ffmpeg on the
+path, so the four real-clip tests run too); the landing is this change's own pull request into `dev` through `kit pr`.
 
 Rules as built (for ticket 06 and the Prompter slice):
 
@@ -83,6 +83,8 @@ Rules as built (for ticket 06 and the Prompter slice):
   page too); the intake prints "rough cut not updated: ..." and still exits 0. The rebuild is its own locked step after
   the scene file's write, so a program that stops between the two leaves a list one change behind until the next star or
   run; every rebuild reads the newest scene file, so two at once end with the list of the latest one.
+- The hand-run command only looks up the registry in the data folder (`--data-dir`, else `VIDEO_REVIEW_DATA_DIR`, else
+  `data/`), never creates it, and says a failure in one line. A registry that cannot be read means no remembered cue file.
 - Nothing is cut and no media is read; the Resolve timeline is not touched.
 
 Demo for Lex (not in the repo): `bash .scratch/overview-sample/start-demo.sh` in the main checkout of video-review sets up

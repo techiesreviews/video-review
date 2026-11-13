@@ -1,9 +1,9 @@
 ---
 title: Show the rough cut on the review page
-type: task (AFK)
+type: task (HITL until Lex answers the question below, then AFK)
 status: open
 assignee: unassigned
-blocked_by: [04-rough-cut-from-best-takes]
+blocked_by: [04-rough-cut-from-best-takes, Lex's answer to the question below]
 ---
 
 ## What
@@ -45,6 +45,7 @@ only when asked, with the page saying the video is older than the list.
 
 ## Done when
 
+- Lex's answer to the question is written into this ticket before the build starts.
 - Tests (ffmpeg stood in for, plus one real two-clip join with generated clips): join order, a missing scene skipped, a
   flagged scene listed, markers at the joins, a differing take named and re-encoded, and a video older than the list
   said as such.
