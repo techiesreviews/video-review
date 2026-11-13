@@ -73,8 +73,10 @@ Rules as built:
 - Safe writes: temporary file in the same folder, then rename; leftover `.tmp` files are never read. A `scenes.json`
   that is not valid raises `SceneFileError` instead of looking empty.
 - Every write goes through `update(raw_dir, change)`: it takes a lock file (`scenes.json.lock`, taken over when older
-  than 30 seconds), loads, runs `change(store)`, saves and releases, so a star clicked during a take intake is not
-  lost. Tickets 02-04 must write this way. `ensure_scene_list` takes the same lock.
+  than 120 seconds), loads, runs `change(store)`, saves and releases, so a star clicked during a take intake is not
+  lost. Tickets 02-04 must write this way, and do slow work (ffprobe, ffmpeg) before calling `update`: `change` should
+  only copy results into the store, because another program waits at most 10 seconds for the lock.
+  `ensure_scene_list` takes the same lock.
 - Edits to a script heading that keep the same id (only capital letters or punctuation) are ignored on purpose; the
   one-hash title line of a cue file is never a scene.
 - Other helpers: `load`, `save`, `add_take`, `set_star`, `set_favorite`, `find_scene`, take-name helpers

@@ -46,7 +46,7 @@ TAKE_FILE = re.compile(r'^take-(\d+)(\.[A-Za-z0-9]+)$')
 TAKE_FULL = re.compile(r'^scene-(\d+-.+)-take-(\d+)(\.[A-Za-z0-9]+)?$')
 WINDOWS_RETRIES = 10
 LOCK_NAME = 'scenes.json.lock'
-LOCK_STALE_SECONDS = 30  # a lock older than this was left by a program that stopped; it is taken over
+LOCK_STALE_SECONDS = 120  # a lock older than this was left by a program that stopped; it is taken over
 LOCK_WAIT_SECONDS = 10   # how long update() waits for another program's lock before giving up
 
 
@@ -312,10 +312,15 @@ def _locked(raw_dir):
     folder = Path(raw_dir)
     folder.mkdir(parents=True, exist_ok=True)
     lock = folder / LOCK_NAME
+    token = f'{os.getpid()}-{uuid.uuid4().hex}'
     deadline = time.monotonic() + LOCK_WAIT_SECONDS
     while True:
         try:
-            os.close(os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            handle = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            try:
+                os.write(handle, token.encode('ascii'))
+            finally:
+                os.close(handle)
             break
         except FileExistsError:
             try:
@@ -330,13 +335,21 @@ def _locked(raw_dir):
     try:
         yield
     finally:
-        lock.unlink(missing_ok=True)
+        # Only remove our own lock: if it was taken over as stale, it now belongs to another program.
+        try:
+            if lock.read_text(encoding='ascii') == token:
+                lock.unlink(missing_ok=True)
+        except (FileNotFoundError, UnicodeDecodeError):
+            pass
 
 
 def update(raw_dir, change):
     """Load the scene file, run change(store), save it, all under the lock. Use this for every write, so a star
     clicked while the take intake runs is not lost. Returns the saved store; the file must already exist
-    (ensure_scene_list makes it)."""
+    (ensure_scene_list makes it).
+
+    Do slow work (ffprobe, ffmpeg, reading media) before calling update; change should only copy results into
+    the store. Another program waits for the lock up to LOCK_WAIT_SECONDS, then gets a SceneFileError."""
     with _locked(raw_dir):
         store = load(raw_dir)
         if store is None:
