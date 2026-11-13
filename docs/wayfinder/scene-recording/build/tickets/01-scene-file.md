@@ -39,7 +39,13 @@ and writes it through one module.
 - `bash scripts/agents/run-tests.sh` passes; landed on `dev` through `kit pr`.
 - The builder lists the file's fields in the ticket's `## Done` so the next tickets use the same names.
 
-## Done
+## Done (2026-11-13)
+
+Done when 1: met — `tests/test_scene_store.py` covers scene ids from headings, take names both ways, the scene list saved
+once, a changed title flagged, star wins, newest by default, the clearly-worse case, and a half-written file never read as
+a broken one (plus swapped headings, the lock and two programs writing at once).
+Done when 2: met — `bash scripts/agents/run-tests.sh` passes; the change lands on `dev` through `kit pr`.
+Done when 3: met — the file's fields are listed below.
 
 Built `scripts/video/scene_store.py` with `tests/test_scene_store.py` and two fixtures
 (`tests/fixtures/scene-cue-file.md`, a cue file in the real saved layout with invented words;
