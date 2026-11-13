@@ -78,6 +78,14 @@ Rules as built (for ticket 04 and the Prompter slice):
   eight characters of a fingerprint of the full path, so two folders with the same name never mix. The server finds
   the folder in `scene-videos.json` in its data folder (`overview_page.register` / `lookup`); a key nobody
   registered gets a 404.
+- The intake and the server must use the same data folder: `take_intake.py <folder> --data-dir DIR` (default
+  `VIDEO_REVIEW_DATA_DIR`, else the usual `data/`) must be the folder the server starts with, or the server cannot
+  find the video. The server writes the port it really listens on to `server-port.json` in that folder at start, and
+  a page written by the intake or the command uses it (else `VIDEO_REVIEW_PORT`, else 8879).
+- `overview_page.build` makes thumbnails first, then reads the scene file, makes the page and writes it while holding
+  the scene file's lock (`scene_store.locked`, the same lock under a public name), so a page never comes from a scene
+  file another program is changing and two rewrites cannot finish in the wrong order. Temporary file names carry a
+  random part (several requests share one process).
 - `GET /api/scenes?video=<key>` returns the saved scene list. `POST /api/scenes/star` takes
   `{"video": key, "scene": id, "take": number-or-null}` (null takes the star off), writes through
   `scene_store.update()`, then rewrites `overview.html`; a star that is saved while the page cannot be rewritten
@@ -101,7 +109,8 @@ Rules as built (for ticket 04 and the Prompter slice):
 - Thumbnails: one picture per take at 320 px wide, a second in, made once and saved beside the take (`take-03.jpg`).
   Without ffmpeg, or when ffmpeg cannot read a take, that take shows a plain placeholder and the page still builds.
 - "+ Record" is disabled and says "Coming with the Prompter". The page's server address is `127.0.0.1` and the port
-  from `VIDEO_REVIEW_PORT` (default 8879) when the file is written; the server writes its own port when it rewrites
-  the page after a star. The strip's total shows a `+` when a best take has no known length.
+  in `server-port.json`, else `VIDEO_REVIEW_PORT`, else 8879, when the file is written; the server writes its own
+  port when it rewrites the page after a star. When a star click is answered with an error, the page shows what the
+  server said in the line above the strip and keeps the stars usable; only a server that does not answer greys them. The strip's total shows a `+` when a best take has no known length.
 - Only the page's wording is new; colours and layout follow the Borumi-style mock-up. A browser that cannot play
   `.mkv` (Firefox) shows "This browser cannot play this file." under the player.

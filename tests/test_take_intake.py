@@ -699,6 +699,14 @@ class CommandLine(IntakeCase):
         self.assertEqual(overview_page.lookup(self.data, overview_page.video_key(self.raw))[0], self.raw.resolve())
         self.assertIn(overview_page.FILE_NAME, text)
 
+    def test_the_video_is_registered_in_the_data_folder_that_is_named(self):
+        other = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, other, True)
+        code, text = self.run_main(self.raw, '--data-dir', other)
+        self.assertEqual(code, 0)
+        self.assertEqual(overview_page.lookup(other, overview_page.video_key(self.raw))[0], self.raw.resolve())
+        self.assertIsNone(overview_page.lookup(self.data, overview_page.video_key(self.raw)))
+
     def test_a_run_that_finds_nothing_still_rewrites_the_page(self):
         (self.raw / overview_page.FILE_NAME).write_text('old', encoding='utf-8')
         code, text = self.run_main(self.raw)

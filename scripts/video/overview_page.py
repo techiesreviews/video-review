@@ -29,7 +29,9 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 from urllib.parse import quote
+import uuid
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -39,6 +41,7 @@ import scene_store  # noqa: E402
 
 FILE_NAME = 'overview.html'
 REGISTRY_NAME = 'scene-videos.json'
+PORT_NAME = 'server-port.json'
 DEFAULT_CUE_NAME = 'prompter.md'
 DEFAULT_PORT = 8879
 STARS_OFF_TEXT = 'Stars are off. Start video-review on this computer to change them.'
@@ -68,16 +71,17 @@ def register(data_dir, folder, cue=None):
     Returns the key. Nothing is written when the entry is already there. A cue file named earlier is kept when
     none is named now. A registry file that is not valid JSON raises ValueError."""
     path = Path(data_dir) / REGISTRY_NAME
-    registry = review_store.read(path, {})
-    if not isinstance(registry, dict):
-        raise ValueError(f'{path} is not a registry of videos.')
     key = video_key(folder)
-    old = registry.get(key) if isinstance(registry.get(key), dict) else {}
-    entry = {'folder': str(Path(folder).resolve()),
-             'cue': str(Path(cue).resolve()) if cue else old.get('cue')}
-    if registry.get(key) != entry:
-        registry[key] = entry
-        review_store.write(path, registry)
+    with review_store.FileLock(Path(data_dir) / f'{REGISTRY_NAME}.lock'):
+        registry = review_store.read(path, {})
+        if not isinstance(registry, dict):
+            raise ValueError(f'{path} is not a registry of videos.')
+        old = registry.get(key) if isinstance(registry.get(key), dict) else {}
+        entry = {'folder': str(Path(folder).resolve()),
+                 'cue': str(Path(cue).resolve()) if cue else old.get('cue')}
+        if registry.get(key) != entry:
+            registry[key] = entry
+            review_store.write(path, registry)
     return key
 
 
@@ -93,6 +97,25 @@ def lookup(data_dir, key):
         return None
     cue = Path(entry['cue']) if isinstance(entry.get('cue'), str) else None
     return folder, cue
+
+
+def remember_port(data_dir, port):
+    """The server writes the port it really listens on, so pages written by other programs ask the right one."""
+    review_store.write(Path(data_dir) / PORT_NAME, {'port': int(port)})
+
+
+def server_address(data_dir=None):
+    """Where a saved page asks for the take list: the port the server wrote in its data folder, else
+    VIDEO_REVIEW_PORT, else the usual 8879."""
+    port = None
+    if data_dir is not None:
+        try:
+            port = review_store.read(Path(data_dir) / PORT_NAME, {}).get('port')
+        except (ValueError, AttributeError, OSError):
+            port = None  # no file, or one that is not readable: fall back
+    if not isinstance(port, int) or isinstance(port, bool):
+        port = os.environ.get('VIDEO_REVIEW_PORT') or DEFAULT_PORT
+    return f'http://127.0.0.1:{port}'
 
 
 # The script text -------------------------------------------------------------------------------------------------
@@ -132,7 +155,7 @@ def thumb_path(scene, take):
 def _make_thumbnail(video, image, duration):
     """One frame of a take saved as a small picture, written to a temporary file first. True when it worked."""
     seek = min(THUMB_SECONDS, duration / 2) if duration else 0
-    temporary = image.with_name(f'{image.stem}.tmp{image.suffix}')
+    temporary = image.with_name(f'{image.stem}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp{image.suffix}')
     command = ['ffmpeg', '-y', '-v', 'error', '-ss', f'{seek:g}', '-i', str(video), '-frames:v', '1',
                '-vf', f'scale={THUMB_WIDTH}:-2', '-q:v', '5', '-f', 'image2', '-update', '1', str(temporary)]
     try:
@@ -279,38 +302,48 @@ def _cue_text(folder, cue):
         return ''  # no cue file (or none readable): the scenes show without their text
 
 
-def _default_server():
-    return f'http://127.0.0.1:{os.environ.get("VIDEO_REVIEW_PORT") or DEFAULT_PORT}'
+def _page(raw_dir, store, cue, link_prefix, server, thumbs):
+    return render(store, Path(raw_dir).resolve().name, cue_text=_cue_text(raw_dir, cue), thumbs=thumbs,
+                  video=video_key(raw_dir), link_prefix=link_prefix,
+                  server=server_address() if server is None else server)
+
+
+def _load(raw_dir):
+    store = scene_store.load(raw_dir)
+    if store is None:
+        raise scene_store.SceneFileError(
+            f'No {scene_store.FILE_NAME} in {raw_dir}: the scene list is saved when the first take is recorded.')
+    return store
 
 
 def build_html(raw_dir, cue=None, link_prefix='', server=None):
     """The page for a video folder, as text. Makes missing thumbnails first. SceneFileError when the folder has no
     usable scene file."""
-    store = scene_store.load(raw_dir)
-    if store is None:
-        raise scene_store.SceneFileError(
-            f'No {scene_store.FILE_NAME} in {raw_dir}: the scene list is saved when the first take is recorded.')
-    return render(store, Path(raw_dir).resolve().name, cue_text=_cue_text(raw_dir, cue),
-                  thumbs=ensure_thumbnails(raw_dir, store), video=video_key(raw_dir), link_prefix=link_prefix,
-                  server=_default_server() if server is None else server)
+    store = _load(raw_dir)
+    return _page(raw_dir, store, cue, link_prefix, server, ensure_thumbnails(raw_dir, store))
 
 
 def build(raw_dir, cue=None, server=None):
-    """Write overview.html into the video folder (a whole new file each time) and return its path."""
-    page = build_html(raw_dir, cue=cue, server=server)
+    """Write overview.html into the video folder (a whole new file each time) and return its path.
+
+    The slow part (thumbnails) is done first. The scene file is then read, the page made and written while the scene
+    file's lock is held, so a page is never made from a scene file that another program is just changing, and two
+    rewrites cannot finish in the wrong order and leave an older page behind."""
+    thumbs = ensure_thumbnails(raw_dir, _load(raw_dir))
     path = Path(raw_dir) / FILE_NAME
-    temporary = path.with_name(f'{FILE_NAME}.{os.getpid()}.tmp')
+    temporary = path.with_name(f'{FILE_NAME}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp')
     try:
-        temporary.write_text(page, encoding='utf-8', newline='\n')
-        for attempt in range(10):  # on Windows a program that has the page open can make the rename fail briefly
-            try:
-                os.replace(temporary, path)
-                break
-            except PermissionError:
-                if attempt == 9:
-                    raise
-                import time
-                time.sleep(0.05)
+        with scene_store.locked(raw_dir):
+            temporary.write_text(_page(raw_dir, _load(raw_dir), cue, '', server, thumbs), encoding='utf-8',
+                                 newline='\n')
+            for attempt in range(10):  # on Windows a program that has the page open can make the rename fail briefly
+                try:
+                    os.replace(temporary, path)
+                    break
+                except PermissionError:
+                    if attempt == 9:
+                        raise
+                    time.sleep(0.05)
     finally:
         temporary.unlink(missing_ok=True)
     return path
@@ -318,8 +351,9 @@ def build(raw_dir, cue=None, server=None):
 
 def publish(raw_dir, cue=None, data_dir=None):
     """Register the video with the server's data folder, then write its page. Returns the page's path."""
-    register(review_store.data_dir(data_dir), raw_dir, cue)
-    return build(raw_dir, cue=cue)
+    data_dir = review_store.data_dir(data_dir)
+    register(data_dir, raw_dir, cue)
+    return build(raw_dir, cue=cue, server=server_address(data_dir))
 
 
 def main(argv=None):
@@ -424,7 +458,7 @@ PAGE_BODY = """<body data-server="{server}" data-video="{video}">
 PAGE_SCRIPT = """<script>
 (() => {
   const body = document.body, server = body.dataset.server, video = body.dataset.video;
-  const stars = [...document.querySelectorAll('.st')], off = document.getElementById('stars-off');
+  const stars = [...document.querySelectorAll('.st')], off = document.getElementById('stars-off'), offText = off.textContent;
   const player = document.getElementById('player'), clip = player.querySelector('video');
   const title = player.querySelector('.t'), detail = player.querySelector('.d');
   const setStars = on => { stars.forEach(s => { s.disabled = !on; }); off.hidden = on; };
@@ -439,7 +473,12 @@ PAGE_SCRIPT = """<script>
       fetch(server + '/api/scenes/star', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ video, scene: star.dataset.scene, take: star.dataset.starred === 'true' ? null : Number(star.dataset.take) })
-      }).then(r => r.ok ? location.reload() : Promise.reject(), () => Promise.reject()).catch(() => setStars(false));
+      }).then(async r => {
+        if (r.ok) return location.reload();
+        // The server answered but could not do it: say what it said and keep the stars usable.
+        const said = await r.json().then(j => j.error, () => '');
+        off.textContent = said || offText; off.hidden = false; stars.forEach(s => { s.disabled = false; });
+      }, () => { off.textContent = offText; setStars(false); });
       return;
     }
     const play = e.target.closest('[data-play]');

@@ -23,7 +23,8 @@ All writes go through scene_store.update(); the slow work (ffprobe, ffmpeg) is d
 only while results are copied into the file.
 
 After every run the command rewrites the video's overview page (overview_page.py) and registers the video with
-video-review's data folder, so the page's stars can reach the server.
+video-review's data folder, so the page's stars can reach the server. Give --data-dir the same folder the server is
+started with (it defaults to VIDEO_REVIEW_DATA_DIR, else the usual one), or the server will not find the video.
 """
 import argparse
 from datetime import datetime, timezone
@@ -361,6 +362,8 @@ def _describe(take):
 def main(argv=None):
     parser = argparse.ArgumentParser(description='Register the takes in a video folder and check their sound.')
     parser.add_argument('video_folder', help='the folder that holds scenes/ and scenes.json')
+    parser.add_argument('--data-dir', help="video-review's data folder, the one its server is started with "
+                                           "(default: VIDEO_REVIEW_DATA_DIR, else the usual one)")
     args = parser.parse_args(argv)
     folder = Path(args.video_folder)
     if not folder.is_dir():
@@ -385,7 +388,7 @@ def main(argv=None):
     # The video's overview page shows what is registered, so it is rewritten after every run. The takes are
     # already saved, so a page that cannot be written is said and does not fail the run.
     try:
-        print(f'Overview page: {overview_page.publish(folder)}')
+        print(f'Overview page: {overview_page.publish(folder, data_dir=args.data_dir)}')
     except (scene_store.SceneFileError, ValueError, OSError) as error:
         print(f'  overview page not updated: {error}')
     return 0

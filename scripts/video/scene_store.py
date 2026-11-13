@@ -379,6 +379,9 @@ def _locked(raw_dir):
             _unlock(handle)
 
 
+locked = _locked  # The same lock under a public name, for a short read-then-write job that is not a scene-file write (the overview page).
+
+
 def update(raw_dir, change):
     """Load the scene file, run change(store), save it, all under the lock. Use this for every write, so a star
     clicked while the take intake runs is not lost. Returns the saved store; the file must already exist
