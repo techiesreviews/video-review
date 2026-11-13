@@ -362,6 +362,21 @@ class ReviewServerTests:
         finally:server.overview_page.build=real
         assert self.saved_scene()['star']==1
 
+    def test_a_star_where_both_the_rough_cut_and_the_page_fail_says_both_in_one_answer(self):
+        self.reset_scenes()
+        real_cut,real_page=server.rough_cut.rebuild_rough_cut,server.overview_page.build
+        def broken(*args,**kwargs):raise OSError('disk full')
+        server.rough_cut.rebuild_rough_cut=broken;server.overview_page.build=broken
+        try:
+            try:self.star({'video':self.key,'scene':'01-intro','take':1})
+            except HTTPError as error:
+                assert error.code==500
+                message=json.load(error)['error']
+                assert 'saved' in message and 'rough cut could not be rebuilt' in message and 'page could not be rewritten' in message,message
+            else:raise AssertionError('A failed rebuild was reported as fine')
+        finally:server.rough_cut.rebuild_rough_cut,server.overview_page.build=real_cut,real_page
+        assert self.saved_scene()['star']==1
+
     def test_a_scene_file_that_cannot_be_read_is_reported_not_replaced(self):
         self.reset_scenes()
         (self.raw/'scenes.json').write_text('{nope',encoding='utf-8')

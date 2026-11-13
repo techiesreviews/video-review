@@ -26,6 +26,7 @@ transcript, so it cannot take this list; see the ticket "Rough cut from the best
 """
 import argparse
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -69,9 +70,13 @@ def build_cut(store, changed=()):
 
 
 def _cue_file(data_dir, folder, cue):
-    """The cue file to compare with: the one named, else the one the video was registered with, else the folder's own."""
+    """The cue file to compare with: the one named, else the one the video was registered with, else None (the
+    folder's own prompter.md). A registry that cannot be read is no reason to stop: it only means no remembered cue."""
     if cue is None and data_dir is not None:
-        found = overview_page.lookup(data_dir, overview_page.video_key(folder))
+        try:
+            found = overview_page.lookup(data_dir, overview_page.video_key(folder))
+        except (ValueError, OSError):
+            return None
         cue = found[1] if found else None
     return cue
 
@@ -105,9 +110,11 @@ def main(argv=None):
     if not folder.is_dir():
         print(f'The video folder {folder} does not exist.', file=sys.stderr)
         return 2
+    # Only looked up, never made: this command writes nothing outside the video folder.
+    data_dir = args.data_dir or os.environ.get('VIDEO_REVIEW_DATA_DIR') or review_store.ROOT / 'data'
     try:
-        cut = rebuild_rough_cut(folder, cue=args.cue, data_dir=review_store.data_dir(args.data_dir))
-    except scene_store.SceneFileError as error:
+        cut = rebuild_rough_cut(folder, cue=args.cue, data_dir=Path(data_dir).expanduser())
+    except (scene_store.SceneFileError, ValueError, OSError) as error:
         print(str(error), file=sys.stderr)
         return 2
     recorded = sum(1 for item in cut['scenes'] if item['recorded'])
