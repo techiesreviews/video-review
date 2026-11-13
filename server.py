@@ -52,11 +52,11 @@ class Handler(BaseHTTPRequestHandler):
         if path.suffix.lower() not in SCENE_FILE_TYPES or scenes not in path.parents or not path.is_file():return self.send_error(404)
         return path
     def scene_list(self,query):
-        found=self.scene_video(parse_qs(query).get('video',[''])[0])
+        key=parse_qs(query).get('video',[''])[0];found=self.scene_video(key)
         if not found:return self.send_json({'error':'Unknown video'},404)
         try:saved=scene_store.load(found[0])
         except scene_store.SceneFileError as error:return self.send_json({'error':str(error)},409)
-        self.send_json({'video':parse_qs(query)['video'][0],'saved_at':saved.get('saved_at'),'scenes':saved['scenes']},extra=self.cors())
+        self.send_json({'video':key,'saved_at':saved.get('saved_at'),'scenes':saved['scenes']},extra=self.cors())
     def do_GET(self):
         route=self.path.split('?',1)[0]
         if route=='/api/scenes':return self.scene_list(urlsplit(self.path).query)
@@ -111,6 +111,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
     def star(self,cmd):
         """Lex's star for a take (or off, with take null): writes the scene file, then rewrites the saved page."""
+        if not isinstance(cmd,dict):raise ValueError('Invalid star request')
         found=self.scene_video(str(cmd.get('video','')))
         if not found:return self.send_json({'error':'Unknown video'},404)
         folder,cue=found;scene,take=cmd.get('scene'),cmd.get('take')
@@ -152,6 +153,7 @@ def create_server(port=8879, data_dir=None):
     DATA=store.data_dir(data_dir)
     httpd=ThreadingHTTPServer(('127.0.0.1',port),Handler)
     PORT=httpd.server_port
+    overview_page.remember_port(DATA,PORT)
     return httpd
 
 if __name__=='__main__':

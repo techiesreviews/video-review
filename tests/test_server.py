@@ -216,6 +216,7 @@ class ReviewServerTests:
                           ({'video':self.key,'scene':'01-intro','take':True},400),
                           ({'video':self.key,'scene':7,'take':1},400),
                           ({'video':self.key,'take':1},400),
+                          ([],400),(1,400),('1',400),
                           ({'video':'nope-12345678','scene':'01-intro','take':1},404)]:
             try:self.star(body)
             except HTTPError as error:assert error.code==code,(body,error.code)
@@ -256,6 +257,26 @@ class ReviewServerTests:
         try:preflight('https://example.org')
         except HTTPError as error:assert error.code==403
         else:raise AssertionError('A preflight from another site was answered')
+
+    def test_two_stars_at_once_both_land_and_the_page_matches_the_scene_file(self):
+        self.reset_scenes()
+        results=[]
+        def click(take):
+            try:
+                with self.star({'video':self.key,'scene':'01-intro','take':take}) as r:results.append(r.status)
+            except HTTPError as error:results.append(error.code)
+        for round_ in range(5):
+            threads=[threading.Thread(target=click,args=(take,)) for take in (1,2,1,2,1,2)]
+            for thread in threads:thread.start()
+            for thread in threads:thread.join()
+        assert results==[200]*30,results
+        star=self.saved_scene()['star']
+        page=(self.raw/overview_page.FILE_NAME).read_text(encoding='utf-8')
+        assert f'title="Scene 1, take {star}"' in page
+        assert sorted(p.name for p in self.raw.iterdir() if p.name.endswith('.tmp'))==[]
+
+    def test_the_server_writes_the_port_it_really_uses_for_the_saved_pages(self):
+        assert overview_page.server_address(self.data)==f'http://127.0.0.1:{self.httpd.server_port}'
 
     def test_a_star_that_could_not_rewrite_the_page_says_so_but_is_kept(self):
         self.reset_scenes()

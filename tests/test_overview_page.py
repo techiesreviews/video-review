@@ -389,12 +389,71 @@ class WritingThePage(unittest.TestCase):
         self.assertIn('data-play="/scenes/key/scenes/', page)
         self.assertFalse((self.raw / 'overview.html').exists())
 
+    def test_a_page_is_never_built_from_a_scene_file_another_program_is_changing(self):
+        import threading, time
+        started = threading.Event()
+        def other_program():
+            with scene_store.locked(self.raw):
+                started.set()
+                time.sleep(0.4)
+        thread = threading.Thread(target=other_program)
+        thread.start()
+        self.assertTrue(started.wait(5))
+        begun = time.monotonic()
+        overview_page.build(self.raw)
+        thread.join()
+        self.assertGreaterEqual(time.monotonic() - begun, 0.3)
+
+    def test_the_page_and_thumbnail_temporary_names_differ_between_programs_and_threads(self):
+        names = set()
+        real_replace = os.replace
+        def spy(source, target):
+            names.add(Path(source).name)
+            return real_replace(source, target)
+        with mock.patch.object(overview_page.os, 'replace', side_effect=spy):
+            overview_page.build(self.raw)
+            overview_page.build(self.raw)
+        self.assertEqual(len(names), 2)
+
     def test_the_server_address_comes_from_the_port_setting(self):
         with mock.patch.dict(os.environ, {'VIDEO_REVIEW_PORT': '9123'}):
             page = overview_page.build(self.raw).read_text(encoding='utf-8')
         self.assertIn('data-server="http://127.0.0.1:9123"', page)
         page = overview_page.build(self.raw).read_text(encoding='utf-8')
         self.assertIn('data-server="http://127.0.0.1:8879"', page)
+
+
+class ServerAddress(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.data = Path(self.temp.name)
+
+    def test_the_port_the_server_wrote_comes_first(self):
+        overview_page.remember_port(self.data, 8881)
+        with mock.patch.dict(os.environ, {'VIDEO_REVIEW_PORT': '9123'}):
+            self.assertEqual(overview_page.server_address(self.data), 'http://127.0.0.1:8881')
+
+    def test_without_one_the_port_setting_then_the_usual_port_is_used(self):
+        with mock.patch.dict(os.environ, {'VIDEO_REVIEW_PORT': '9123'}):
+            self.assertEqual(overview_page.server_address(self.data), 'http://127.0.0.1:9123')
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('VIDEO_REVIEW_PORT', None)
+            self.assertEqual(overview_page.server_address(self.data), 'http://127.0.0.1:8879')
+
+    def test_an_unreadable_port_file_is_ignored(self):
+        (self.data / overview_page.PORT_NAME).write_text('{nope', encoding='utf-8')
+        with mock.patch.dict(os.environ, {'VIDEO_REVIEW_PORT': '9123'}):
+            self.assertEqual(overview_page.server_address(self.data), 'http://127.0.0.1:9123')
+
+    def test_publish_writes_the_port_the_server_wrote(self):
+        raw = self.data / 'Weekly'
+        raw.mkdir()
+        scene_store.save(raw, sample_store())
+        overview_page.remember_port(self.data, 8881)
+        with mock.patch.object(overview_page.subprocess, 'run', side_effect=FileNotFoundError):
+            page = overview_page.publish(raw, data_dir=self.data).read_text(encoding='utf-8')
+        self.assertIn('data-server="http://127.0.0.1:8881"', page)
 
 
 class KeysAndRegistry(unittest.TestCase):
