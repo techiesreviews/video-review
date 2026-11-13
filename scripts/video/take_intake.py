@@ -5,7 +5,8 @@
 
 The video folder is the one that holds `scenes/<scene id>/take-NN.mkv` and `scenes.json` (see scene_store.py).
 Every take file that is not yet in `scenes.json` is added with its length, the time it was recorded and three free
-sound checks. Takes that are already in the file are left alone. A file that is still being written, or that
+sound checks. Takes that are already in the file are left alone, except that when new takes of a scene arrive the
+length check of that scene's older takes is refreshed (it compares the takes with each other). A file that is still being written, or that
 ffmpeg cannot read yet, is skipped and picked up on the next run.
 
 The sound checks use only ffmpeg and ffprobe on this computer: no transcript, no paid service, no network.
@@ -303,9 +304,8 @@ def run(raw_dir, settle_seconds=None, sleep=time.sleep):
         found = analyse(scene, number, extension, path)
         if found is None:
             report['unreadable'].append((scene, number))
-        elif _fingerprint(path) != prints[path]:
-            report['growing'].append((scene, number))  # it grew while ffmpeg was listening: results are stale
         else:
+            found['path'] = path
             results.append(found)
     if not results:
         return report
@@ -316,6 +316,11 @@ def run(raw_dir, settle_seconds=None, sleep=time.sleep):
             entry = scene_store.find_scene(current, item['scene'])
             if any(t['number'] == item['number'] for t in entry['takes']):
                 continue  # another program registered it while we were listening
+            if _fingerprint(item['path']) != prints[item['path']]:
+                # It grew (or vanished) while this or another take was being analysed, so its length and sound
+                # results are stale. Left for the next run; checked here, just before saving, to keep the window small.
+                report['growing'].append((item['scene'], item['number']))
+                continue
             scene_store.add_take(current, item['scene'], item['number'], extension=item['extension'],
                                  duration=item['duration'], recorded_at=item['recorded_at'], sound=item['sound'])
             report['added'].append((item['scene'], item['number']))

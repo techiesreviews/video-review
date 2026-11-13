@@ -11,7 +11,8 @@ blocked_by: [01-scene-file]
 A command that looks at a video's folder and fills the scene file from the takes it finds.
 
 - `python scripts/video/take_intake.py <video folder>`: scans `scenes/<scene id>/take-NN.mkv`, adds every take that
-  is not yet in `scenes.json` (length from ffprobe, created time from the file), and leaves existing takes alone.
+  is not yet in `scenes.json` (length from ffprobe, created time from the file), and leaves existing takes alone
+  (only their length check is refreshed when a new take of the scene arrives, because it compares the takes).
 - A take file that is still being written (size changing) is skipped and picked up next run.
 - Free sound-only checks per take with ffmpeg, saved with the take:
   1. clean end: the take ends in a short stretch of silence, not mid-word;

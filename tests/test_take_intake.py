@@ -458,6 +458,28 @@ class GrowingFiles(IntakeCase):
         self.run_intake()
         self.assertEqual(self.take(scene, 2)['duration'], 75.0)
 
+    def test_a_take_that_grows_while_another_take_is_analysed_is_skipped_until_finished(self):
+        scene = self.scenes[0]
+        first = self.add_file(scene, 1, 60.0)
+        self.add_file(scene, 2, 60.0)
+        listen = self._silence
+        grew = []
+
+        def first_grows_while_second_is_heard(path, duration):
+            if path.name == 'take-02.mkv' and not grew:
+                grew.append(True)
+                first.write_bytes(b'z' * 5000)      # take 1 was checked already; its recording goes on
+            return listen(path, duration)
+
+        with mock.patch.object(take_intake, 'detect_silence', side_effect=first_grows_while_second_is_heard):
+            report = self.run_intake()
+        self.assertEqual(report['added'], [(scene, 2)])
+        self.assertEqual(report['growing'], [(scene, 1)])
+        self.assertIsNone(self.take(scene, 1))
+        self.media['take-01.mkv'] = (75.0, True, [(74.0, 75.0)])
+        self.run_intake()
+        self.assertEqual(self.take(scene, 1)['duration'], 75.0)
+
     def test_the_wait_is_skipped_when_there_is_nothing_new(self):
         waits = []
         self.run_intake(sleep=waits.append, settle_seconds=2)
