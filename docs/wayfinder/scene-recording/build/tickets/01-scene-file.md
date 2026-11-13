@@ -66,8 +66,8 @@ Rules as built:
 - `ensure_scene_list(raw_dir, cue_text)` saves the list at the first take; later calls return the saved file as is.
   `check_script(store, cue_text)` sets `script_changed` on a saved scene whose id (number plus title) is no longer in
   the script (changed title, changed number, or removed), or that kept its id but now sits in a different order among
-  the scenes both lists share (headings swapped without renumbering), and clears it when it matches again. Nothing is renamed or deleted;
-  scenes only in the new script come back under `added` and are not added.
+  the scenes both lists share (headings swapped without renumbering), and clears it when it matches again. Nothing is
+  renamed or deleted; scenes only in the new script come back under `added` and are not added.
 - Best take (`choose_best`): Lex's star; else the newest take (highest number); but if the newest ends early or has a
   long pause and an older take is clean, the newest clean older take is used and `flagged` is true. The favorite never
   decides. `save` refreshes `best` and `flagged` before writing, so readers always find them.
