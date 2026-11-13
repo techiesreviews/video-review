@@ -90,3 +90,10 @@ Rules as built:
 - Other helpers: `load`, `save`, `add_take`, `set_star`, `set_favorite`, `find_scene`, take-name helpers
   (`take_file_name`, `parse_take_file_name`, `take_full_name`, `parse_take_full_name`, `scene_folder`).
 - Limit: a program that calls `load` and `save` itself, outside `update`, can still overwrite another program's change.
+
+### Follow-ups
+
+- Previous findings (P3): R4-3 still open: the rewrap of the `check_script` docstring left a broken paragraph. Line 158 now stops after "Scenes that are only in", and line 159 runs to about 121 characters, which is still past the width the rest of the file wraps to. See the Standards group below.
+- Spec (P3): 6d4d800:docs/wayfinder/scene-recording/build/tickets/01-scene-file.md:47 — P3 ticket: "Done when 2: met" says the change "lands on `dev` through `kit pr`", but this branch is still in review and has not landed. The ticket asks for "landed on `dev`", so marking it met now is ahead of the facts. Fix: either write "met once `kit pr` lands it on `dev`", or add this line in the `kit pr` step after the merge.
+- Standards (P3): c4afd71:scripts/video/scene_store.py:158 — P3 style: the docstring paragraph breaks partway through a sentence ("Scenes that are only in" / "the script now are reported…"), and line 159 is about 121 characters long while the rest of the paragraph wraps at about 115. Fix: rewrap lines 157-160 as one paragraph at the file's usual width. The new comment at `scripts/video/scene_store.py:57` is also about 122 characters long; split it over two lines.
+
