@@ -285,6 +285,15 @@ class AgreesWithTheOverviewStrip(RoughCutCase):
         self.change(lambda store: scene_store.add_take(store, INTRO, 1, sound=CLEAN))
         self.assert_agree()
 
+    def test_when_a_star_and_a_new_take_overlap_the_late_rebuild_lists_the_final_scene_file(self):
+        """The star is saved, a registration saves a new take and rebuilds, then the star's own rebuild runs late."""
+        self.change(lambda store: scene_store.set_star(store, COSTS, 1))
+        self.change(lambda store: scene_store.add_take(store, COSTS, 3, duration=90.0, sound=CLEAN))
+        self.rebuild()
+        self.assert_agree()  # the late rebuild
+        self.assertEqual(self.entry(COSTS)['take'], 1)
+        self.assertEqual(self.saved()['total_seconds'], 145.0)
+
     def test_with_no_take_at_all(self):
         store = scene_store.new_store(scene_store.parse_cue_file(CUE))
         scene_store.save(self.raw, store)
