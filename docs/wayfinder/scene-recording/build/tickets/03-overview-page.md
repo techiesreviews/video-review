@@ -101,8 +101,8 @@ Rules as built (for ticket 04 and the Prompter slice):
 - Chips: "Script changed since recording" shows when the saved scene has `script_changed`, or when comparing the
   scene list with the cue file each time the page is made (`scene_store.check_script` on a copy, nothing saved) says
   the heading no longer matches; a cue file with no numbered sections says nothing. "Older take in front: the newest
-  has a sound problem" shows when `choose_best` picked an older take because the newest is clearly worse (the
-  scene's `flagged`), so Lex sees it without opening the archive.
+  has a sound problem" shows when `choose_best` reports the scene as flagged (it picked an older take because the newest is clearly
+  worse), so Lex sees it without opening the archive.
 - Script text: read from the cue file (`prompter.md` in the video folder, or the file named with `--cue`, which the
   registry remembers), only read, never changed. Directions (lines that start with a bracket), links and bold marks
   are left out. A scene whose heading is no longer in the script (title or number changed) is shown without text,
