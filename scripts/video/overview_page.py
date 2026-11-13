@@ -14,14 +14,16 @@ answer the stars are greyed out with one line saying why. The server also serves
 `/scenes/<video>`, where <video> is the key from video_key(); the server finds the folder in a small registry in
 its data folder, which this command (and the take intake) fills.
 
-The script text comes from the video's cue file, `prompter.md` in the video folder unless `--cue` names another.
-It is only read, never changed; a scene the script no longer has is shown without text.
+The script text comes from the video's cue file, `prompter.md` in the video folder unless `--cue` names another
+(the registry remembers it). It is only read, never changed. A scene the script no longer has is shown without text
+and with the "Script changed since recording" chip, worked out from the cue file each time the page is made.
 
 Thumbnails: one frame per take from ffmpeg, saved beside the take (take-03.mkv gets take-03.jpg). Without ffmpeg
 the page is built with plain placeholders. Nothing here reads or writes scenes.json (except to load it); star
 changes go through scene_store.update() in the server.
 """
 import argparse
+import copy
 import hashlib
 import html
 import os
@@ -46,6 +48,7 @@ DEFAULT_CUE_NAME = 'prompter.md'
 DEFAULT_PORT = 8879
 STARS_OFF_TEXT = 'Stars are off. Start video-review on this computer to change them.'
 RECORD_TILE_TEXT = 'Coming with the Prompter'
+OLDER_TAKE_TEXT = 'Older take in front: the newest has a sound problem'
 THUMB_EXTENSION = '.jpg'
 # A frame a second in: the very first frame of a recording is often black or mid-blink. A take shorter than two
 # seconds is looked at halfway instead.
@@ -236,11 +239,24 @@ def _take_card(scene, take, best, thumbs, prefix):
         f'<div class="note">{esc(_take_note(take))}</div></div>')
 
 
-def _scene_section(scene, text, thumbs, prefix):
+def _changed_in_script(store, cue_text):
+    """Ids of the saved scenes whose heading no longer matches the script, found by comparing the scene list with
+    the cue text now (scene_store.check_script on a copy, so nothing is saved). Empty when the cue text has no
+    numbered sections at all: that is not a script, so it says nothing about the scenes."""
+    if not scene_store.parse_cue_file(cue_text):
+        return set()
+    return set(scene_store.check_script(copy.deepcopy(store), cue_text)['changed'])
+
+
+def _scene_section(scene, text, thumbs, prefix, changed):
     esc = html.escape
-    best = scene_store.choose_best(scene)[0]
+    best, older_in_front = scene_store.choose_best(scene)
     takes = sorted(scene['takes'], key=lambda t: t['number'])
-    chip = '<span class="chip warn">Script changed since recording</span>' if scene.get('script_changed') else ''
+    chips = ''
+    if scene.get('script_changed') or scene['id'] in changed:
+        chips += '<span class="chip warn">Script changed since recording</span>'
+    if older_in_front:
+        chips += f'<span class="chip warn">{esc(OLDER_TAKE_TEXT)}</span>'
     body = f'<p class="stext">{esc(text)}</p>' if text else ''
     cards = ''.join(_take_card(scene, take, best, thumbs, prefix) for take in takes if take['number'] == best)
     others = ''.join(_take_card(scene, take, best, thumbs, prefix) for take in takes if take['number'] != best)
@@ -250,7 +266,7 @@ def _scene_section(scene, text, thumbs, prefix):
                f'<div class="row">{others}</div></details>') if len(takes) > 1 else ''
     return (f'<section class="scene" data-scene="{esc(scene["id"])}">'
             f'<div class="sh"><span class="dotg{"" if takes else " off"}"></span>'
-            f'<b class="stitle">{scene["number"]:02d} · {esc(scene["title"])}</b>{chip}</div>'
+            f'<b class="stitle">{scene["number"]:02d} · {esc(scene["title"])}</b>{chips}</div>'
             f'{body}<div class="row">{record}{cards}{empty}</div>{archive}</section>')
 
 
@@ -285,8 +301,10 @@ def render(store, name, cue_text=None, thumbs=(), server='', video='', link_pref
     link to a take or thumbnail (the server's page needs one; the saved file uses relative links)."""
     esc = html.escape
     texts = scene_texts(cue_text or '')
+    changed = _changed_in_script(store, cue_text or '')
     strip, recorded, takes, total, complete = _cut_strip(store)
-    scenes = ''.join(_scene_section(scene, texts.get(scene['id']), thumbs, link_prefix) for scene in store['scenes'])
+    scenes = ''.join(_scene_section(scene, texts.get(scene['id']), thumbs, link_prefix, changed)
+                     for scene in store['scenes'])
     summary = (f'<b>{recorded} of {len(store["scenes"])} scenes</b> recorded · {takes} take{"" if takes == 1 else "s"}'
                f' · rough cut <b>{_clock(total)}{"" if complete else "+"}</b>')
     return (PAGE_HEAD.replace('{title}', esc(name)) + PAGE_BODY.format(
@@ -354,8 +372,9 @@ def build(raw_dir, cue=None, server=None):
 def publish(raw_dir, cue=None, data_dir=None):
     """Register the video with the server's data folder, then write its page. Returns the page's path."""
     data_dir = review_store.data_dir(data_dir)
-    register(data_dir, raw_dir, cue)
-    return build(raw_dir, cue=cue, server=server_address(data_dir))
+    key = register(data_dir, raw_dir, cue)
+    registered = lookup(data_dir, key)
+    return build(raw_dir, cue=cue or (registered[1] if registered else None), server=server_address(data_dir))
 
 
 def main(argv=None):

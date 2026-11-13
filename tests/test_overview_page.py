@@ -119,6 +119,33 @@ class SceneCards(unittest.TestCase):
         self.assertIn('Script changed since recording', scene_html(page, '03-the-news-moves-fast'))
         self.assertNotIn('Script changed since recording', scene_html(page, COSTS))
 
+    def test_a_heading_renamed_in_the_script_shows_the_chip_even_when_nothing_flagged_it(self):
+        store = sample_store()
+        scene_store.find_scene(store, '03-the-news-moves-fast')['script_changed'] = False
+        scene_store.find_scene(store, COSTS)['script_changed'] = False
+        cue = CUE.replace('WHAT IT REALLY COSTS', 'WHAT IT REALLY COSTS YOU')
+        page = overview_page.render(store, 'Weekly update 03', cue_text=cue)
+        self.assertIn('Script changed since recording', scene_html(page, COSTS))
+        self.assertNotIn('Script changed since recording', scene_html(page, '01-intro'))
+        self.assertNotIn('Script changed since recording', scene_html(page, '03-the-news-moves-fast'))
+
+    def test_a_cue_file_without_numbered_sections_flags_nothing(self):
+        store = sample_store()
+        scene_store.find_scene(store, '03-the-news-moves-fast')['script_changed'] = False
+        page = overview_page.render(store, 'Weekly update 03', cue_text='Just some notes.\n')
+        self.assertNotIn('Script changed since recording', page)
+
+    def test_an_older_take_in_front_because_the_newest_is_worse_says_so_beside_the_title(self):
+        store = scene_store.new_store(scene_store.parse_cue_file(CUE))
+        scene_store.add_take(store, COSTS, 1, duration=60.0, sound=CLEAN)
+        scene_store.add_take(store, COSTS, 2, duration=40.0, sound=SHORT)
+        scene_store.apply_best(store)
+        costs = scene_html(render(store), COSTS)
+        head = costs.split('<div class="row">')[0]
+        self.assertIn(overview_page.OLDER_TAKE_TEXT, head)
+        self.assertIn('data-take="1" data-on="true"', costs)
+        self.assertNotIn(overview_page.OLDER_TAKE_TEXT, scene_html(render(), COSTS))  # a starred scene is not flagged
+
     def test_a_scene_without_takes_says_not_recorded_yet(self):
         intro = scene_html(render(), '01-intro')
         self.assertIn('Not recorded yet', intro)
@@ -414,6 +441,14 @@ class WritingThePage(unittest.TestCase):
             overview_page.build(self.raw)
             overview_page.build(self.raw)
         self.assertEqual(len(names), 2)
+
+    def test_a_cue_file_named_once_is_used_by_later_rebuilds_that_do_not_name_it(self):
+        other = Path(self.temp.name) / 'cues.md'
+        other.write_text('### 2 · WHAT IT REALLY COSTS\nOther words.\n', encoding='utf-8')
+        overview_page.publish(self.raw, cue=other, data_dir=self.data)
+        page = overview_page.publish(self.raw, data_dir=self.data).read_text(encoding='utf-8')
+        self.assertIn('Other words.', page)
+        self.assertNotIn('Two out of three', page)
 
     def test_the_server_address_comes_from_the_port_setting(self):
         with mock.patch.dict(os.environ, {'VIDEO_REVIEW_PORT': '9123'}):
