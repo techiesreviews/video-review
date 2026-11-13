@@ -54,7 +54,8 @@ TAKE_FULL = re.compile(r'^scene-(\d+-.+)-take-(\d+)(\.[A-Za-z0-9]+)?$')
 WINDOWS_RETRIES = 10
 LOCK_NAME = 'scenes.json.lock'
 LOCK_WAIT_SECONDS = 10  # how long update() waits for another program's lock before giving up
-# What "someone else holds the lock" looks like: flock says EAGAIN/EWOULDBLOCK, Windows locking says EACCES or EDEADLOCK.
+# What "someone else holds the lock" looks like: flock says EAGAIN or EWOULDBLOCK, Windows locking says EACCES
+# or EDEADLOCK.
 LOCK_BUSY_ERRNOS = {code for code in (errno.EAGAIN, errno.EWOULDBLOCK, errno.EACCES,
                                       getattr(errno, 'EDEADLK', None), getattr(errno, 'EDEADLOCK', None)) if code}
 
@@ -67,9 +68,12 @@ class SceneFileError(Exception):
 
 def slugify(title):
     """Lower-case words joined by dashes: "What's next?" becomes "whats-next"."""
-    plain = unicodedata.normalize('NFKD', title).encode('ascii', 'ignore').decode('ascii').lower()
-    plain = re.sub(r"['’`]", '', plain)
-    return re.sub(r'[^a-z0-9]+', '-', plain).strip('-') or 'untitled'
+    letters = []
+    for char in unicodedata.normalize('NFKD', title):
+        if unicodedata.combining(char) or char in "'’`":
+            continue  # accents and apostrophes vanish: "Café" is "cafe", "what's" is "whats"
+        letters.append(char.lower() if char.isascii() and char.isalnum() else '-')  # dashes of any kind separate words
+    return re.sub(r'-+', '-', ''.join(letters)).strip('-') or 'untitled'
 
 
 def scene_id(number, title):
@@ -155,9 +159,9 @@ def check_script(store, cue_text):
     A saved scene gets script_changed true when its id (number plus title) is no longer in the script (title
     changed, number changed, or removed), or when it kept its id but now sits in a different place among the
     scenes both lists still share (headings swapped or moved without renumbering). A scene that matches again
-    loses the flag. Scenes that are only in
-    the script now are reported under "added" and are not added to the file. Returns {"changed": [...], "added": [...]}.
-    An edit that keeps the same id (only capital letters or punctuation in the title) is ignored on purpose.
+    loses the flag. Scenes that are only in the script now are reported under "added" and are not added to the
+    file. Returns {"changed": [...], "added": [...]}. An edit that keeps the same id (only capital letters or
+    punctuation in the title) is ignored on purpose.
     """
     current = [scene['id'] for scene in parse_cue_file(cue_text)]
     saved = [scene['id'] for scene in store['scenes']]
@@ -292,9 +296,11 @@ def load(raw_dir):
         raw = _retry_on_windows(lambda: path.read_text(encoding='utf-8'))
     except FileNotFoundError:
         return None
+    except UnicodeDecodeError as error:
+        raise SceneFileError(f'{path} is not valid UTF-8 text: {error}') from error
     try:
         store = json.loads(raw)
-    except ValueError as error:  # includes UnicodeDecodeError and JSONDecodeError
+    except ValueError as error:
         raise SceneFileError(f'{path} is not valid JSON: {error}') from error
     if not isinstance(store, dict) or not isinstance(store.get('scenes'), list) or not all(
             isinstance(scene, dict) and 'id' in scene and isinstance(scene.get('takes'), list)
