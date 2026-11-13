@@ -1,22 +1,65 @@
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 import argparse, json, mimetypes, re, os, sys
-from urllib.parse import urlsplit,parse_qs
+from urllib.parse import urlsplit,parse_qs,unquote,quote
 sys.path.insert(0,str(Path(__file__).resolve().parent))
+sys.path.insert(0,str(Path(__file__).resolve().parent/'scripts'/'video'))
 import review_store as store
+import overview_page
+import scene_store
 
 ROOT=Path(__file__).resolve().parent
 WEB=ROOT/'web'
 DATA=ROOT/'data'
 PORT=8879
+# The overview page saved in a video's folder is opened by double click, so the browser calls the server from the
+# origin "null". Only the two scene routes accept it.
+FILE_PAGE_ORIGIN='null'
+SCENE_FILE_TYPES=('.mkv','.mp4','.mov','.jpg')
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args): pass
-    def send_json(self, data, status=200):
+    def send_json(self, data, status=200, extra=None):
         payload=json.dumps(data,ensure_ascii=False).encode('utf-8')
-        self.send_response(status);self.send_header('Content-Type','application/json; charset=utf-8');self.send_header('Content-Length',str(len(payload)));self.send_header('Cache-Control','no-store');self.end_headers();self.wfile.write(payload)
+        self.send_response(status);self.send_header('Content-Type','application/json; charset=utf-8');self.send_header('Content-Length',str(len(payload)));self.send_header('Cache-Control','no-store')
+        for name,value in (extra or {}).items():self.send_header(name,value)
+        self.end_headers();self.wfile.write(payload)
+    def own_origin(self):return self.headers.get('Origin') in [f'http://127.0.0.1:{PORT}',f'http://localhost:{PORT}']
+    def cors(self):
+        """Headers that let the saved overview page (origin "null") read an answer."""
+        return {'Access-Control-Allow-Origin':FILE_PAGE_ORIGIN} if self.headers.get('Origin')==FILE_PAGE_ORIGIN else {}
+    def scene_video(self,key):
+        """(folder, cue file) of a video registered with overview_page, or None."""
+        try:return overview_page.lookup(DATA,key)
+        except ValueError:return None
+    def scene_path(self,rest):
+        """For /scenes/<video>: send the overview page and return None. For /scenes/<video>/<file>: the take file or
+        thumbnail to send, or None after a 404. Only files directly under the video's scenes/ folder, of a take or
+        thumbnail type, and really inside it (not through .. or a link), are served."""
+        key,_,relative=rest.partition('/')
+        found=self.scene_video(key)
+        if not found:return self.send_error(404)
+        folder,cue=found
+        if not relative:
+            try:page=overview_page.build_html(folder,cue=cue,link_prefix=f'/scenes/{quote(key)}/',server='')
+            except (scene_store.SceneFileError,OSError):return self.send_error(404)
+            payload=page.encode('utf-8')
+            self.send_response(200);self.send_header('Content-Type','text/html; charset=utf-8');self.send_header('Content-Length',str(len(payload)));self.send_header('Cache-Control','no-store');self.end_headers();self.wfile.write(payload)
+            return None
+        parts=unquote(relative).split('/')
+        if parts[0]!='scenes' or len(parts)<2 or any(part in ('','.','..') or '\\' in part or '\0' in part for part in parts):return self.send_error(404)
+        scenes=(folder/'scenes').resolve();path=(folder.joinpath(*parts)).resolve()
+        if path.suffix.lower() not in SCENE_FILE_TYPES or scenes not in path.parents or not path.is_file():return self.send_error(404)
+        return path
+    def scene_list(self,query):
+        found=self.scene_video(parse_qs(query).get('video',[''])[0])
+        if not found:return self.send_json({'error':'Unknown video'},404)
+        try:saved=scene_store.load(found[0])
+        except scene_store.SceneFileError as error:return self.send_json({'error':str(error)},409)
+        self.send_json({'video':parse_qs(query)['video'][0],'saved_at':saved.get('saved_at'),'scenes':saved['scenes']},extra=self.cors())
     def do_GET(self):
         route=self.path.split('?',1)[0]
+        if route=='/api/scenes':return self.scene_list(urlsplit(self.path).query)
         if route=='/api/videos':
             return self.send_json([{**{k:v for k,v in x.items() if k!='path'},'fileVersion':store.file_version(x['path'])} for x in store.videos(DATA)])
         if route=='/api/comments':return self.send_json({'comments':store.comments(DATA)})
@@ -28,7 +71,10 @@ class Handler(BaseHTTPRequestHandler):
             try:return self.send_json(store.get_transcript(DATA,route[len('/api/transcript/'):]))
             except ValueError as error:return self.send_json({'error':str(error)},404)
         if route=='/api/view-request':return self.send_json(store.read(DATA/'view-request.json',{}))
-        if route.startswith('/media/'):
+        if route.startswith('/scenes/'):
+            path=self.scene_path(route[len('/scenes/'):])
+            if path is None:return
+        elif route.startswith('/media/'):
             key=route[7:];item=next((x for x in store.videos(DATA) if x['id']==key),None)
             if not item:return self.send_error(404)
             path=Path(item['path'])
@@ -57,15 +103,32 @@ class Handler(BaseHTTPRequestHandler):
                     if not chunk:break
                     self.wfile.write(chunk);remaining-=len(chunk)
         except (BrokenPipeError,ConnectionResetError,ConnectionAbortedError):pass
+    def do_OPTIONS(self):
+        # The browser asks first before the saved overview page may send a star from the origin "null".
+        if self.path!='/api/scenes/star' or self.headers.get('Origin')!=FILE_PAGE_ORIGIN:return self.send_error(403)
+        self.send_response(204)
+        for name,value in {**self.cors(),'Access-Control-Allow-Methods':'POST','Access-Control-Allow-Headers':'Content-Type','Access-Control-Allow-Private-Network':'true','Access-Control-Max-Age':'600','Content-Length':'0'}.items():self.send_header(name,value)
+        self.end_headers()
+    def star(self,cmd):
+        """Lex's star for a take (or off, with take null): writes the scene file, then rewrites the saved page."""
+        found=self.scene_video(str(cmd.get('video','')))
+        if not found:return self.send_json({'error':'Unknown video'},404)
+        folder,cue=found;scene,take=cmd.get('scene'),cmd.get('take')
+        if not isinstance(scene,str) or (take is not None and type(take) is not int):raise ValueError('Invalid star request')
+        saved=scene_store.update(folder,lambda current:scene_store.set_star(current,scene,take))
+        try:overview_page.build(folder,cue=cue,server=f'http://127.0.0.1:{PORT}')
+        except (OSError,scene_store.SceneFileError) as error:return self.send_json({'error':f'The star is saved, but the page could not be rewritten: {error}'},500,extra=self.cors())
+        self.send_json({'ok':True,'scenes':saved['scenes']},extra=self.cors())
     def do_POST(self):
-        if self.path not in ['/api/comments','/api/view','/api/library'] and not self.path.startswith('/api/transcript/'):return self.send_error(404)
-        if self.headers.get('Origin') not in [f'http://127.0.0.1:{PORT}',f'http://localhost:{PORT}']:return self.send_error(403)
+        if self.path not in ['/api/comments','/api/view','/api/library','/api/scenes/star'] and not self.path.startswith('/api/transcript/'):return self.send_error(404)
+        if not self.own_origin() and not (self.path=='/api/scenes/star' and self.headers.get('Origin')==FILE_PAGE_ORIGIN):return self.send_error(403)
         if self.headers.get('Content-Type','').split(';')[0]!='application/json':return self.send_error(415)
         try:
             size=int(self.headers.get('Content-Length','0'))
             limit=8*1024*1024 if self.path.startswith('/api/transcript/') else 65536
             if size<=0 or size>limit:raise ValueError('Invalid request size')
             cmd=json.loads(self.rfile.read(size))
+            if self.path=='/api/scenes/star':return self.star(cmd)
             if self.path=='/api/library':
                 if cmd.get('action')=='remove':store.archive_video(DATA,cmd['videoId'])
                 elif cmd.get('action')=='restore':store.restore_video(DATA,cmd['videoId'])
@@ -81,7 +144,8 @@ class Handler(BaseHTTPRequestHandler):
             if cmd.get('action') in ['add','reply']:cmd['author']='you'
             data,_=store.apply(DATA,cmd)
             self.send_json(data)
-        except (ValueError,KeyError,TypeError,json.JSONDecodeError) as e:self.send_json({'error':str(e)},400)
+        except scene_store.SceneFileError as e:self.send_json({'error':str(e)},409,extra=self.cors())
+        except (ValueError,KeyError,TypeError,json.JSONDecodeError) as e:self.send_json({'error':str(e)},400,extra=self.cors())
 
 def create_server(port=8879, data_dir=None):
     global DATA, PORT
