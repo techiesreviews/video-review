@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import sys
 import tempfile
 import threading
@@ -222,7 +223,7 @@ class ScriptChanged(RoughCutCase):
 
     def test_the_cue_file_the_overview_page_remembers_is_used_when_the_data_folder_is_given(self):
         data = Path(tempfile.mkdtemp())
-        self.addCleanup(lambda: __import__('shutil').rmtree(data, True))
+        self.addCleanup(shutil.rmtree, data, True)
         other = self.raw / 'other-cues.md'
         other.write_text(CUE.replace('ROOM 1: WHAT CHANGED?', 'ROOM ONE'), encoding='utf-8')
         overview_page.register(data, self.raw, cue=other)
@@ -327,7 +328,7 @@ class CommandLine(RoughCutCase):
 
     def test_the_command_writes_the_list_and_says_what_it_holds(self):
         data = Path(tempfile.mkdtemp())
-        self.addCleanup(lambda: __import__('shutil').rmtree(data, True))
+        self.addCleanup(shutil.rmtree, data, True)
         code, out, err = self.run_main(self.raw, '--data-dir', data)
         self.assertEqual((code, err), (0, ''))
         self.assertIn('Rough cut: 2 of 5 scenes, 183 s', out)
@@ -335,14 +336,14 @@ class CommandLine(RoughCutCase):
 
     def test_the_command_writes_nothing_outside_the_video_folder(self):
         data = Path(tempfile.mkdtemp()) / 'not-made-yet'
-        self.addCleanup(lambda: __import__('shutil').rmtree(data.parent, True))
+        self.addCleanup(shutil.rmtree, data.parent, True)
         code, out, err = self.run_main(self.raw, '--data-dir', data)
         self.assertEqual(code, 0)
         self.assertFalse(data.exists())
 
     def test_the_data_folder_setting_is_used_to_find_the_remembered_cue_file(self):
         data = Path(tempfile.mkdtemp())
-        self.addCleanup(lambda: __import__('shutil').rmtree(data, True))
+        self.addCleanup(shutil.rmtree, data, True)
         other = self.raw / 'other-cues.md'
         other.write_text(CUE.replace('ROOM 1: WHAT CHANGED?', 'ROOM ONE'), encoding='utf-8')
         overview_page.register(data, self.raw, cue=other)
@@ -352,7 +353,7 @@ class CommandLine(RoughCutCase):
 
     def test_a_registry_that_cannot_be_read_does_not_stop_the_list(self):
         data = Path(tempfile.mkdtemp())
-        self.addCleanup(lambda: __import__('shutil').rmtree(data, True))
+        self.addCleanup(shutil.rmtree, data, True)
         (data / overview_page.REGISTRY_NAME).write_text('{nope', encoding='utf-8')
         self.assertEqual(self.run_main(self.raw, '--data-dir', data)[0], 0)
         self.assertEqual(len(self.saved()['scenes']), 5)
