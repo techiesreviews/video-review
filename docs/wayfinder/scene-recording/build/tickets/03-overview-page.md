@@ -124,4 +124,5 @@ Rules as built (for ticket 04 and the Prompter slice):
 
 - Previous findings (P3): R2-1 still open: the commits since the last review did not touch the ticket's front matter or its "Done when 4" line. `docs/wayfinder/scene-recording/build/tickets/03-overview-page.md:4` still says `status: closed`, and line 66 still says "met once `kit pr` lands it on `dev`".
 - Spec (P3): 052f6d1:docs/wayfinder/scene-recording/build/tickets/03-overview-page.md:4 — P3 ticket: this is R2-1, carried over. The front matter says `status: closed`, but "Done when 4" (line 66) says it is only met once `kit pr` lands the change on `dev`. Fix: leave the status open until the change has landed. Or, if the process closes tickets just before `kit pr`, change line 66 to say exactly that.
+- Validation gaps (gap, second look): Add a test that pauses an older rebuild, registers a new take, completes a newer rebuild, then resumes the older one. Check that the final page still shows the new take’s thumbnail.
 
