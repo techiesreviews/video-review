@@ -219,7 +219,6 @@ class Takes(unittest.TestCase):
         scene_store.set_star(store, '02-what-it-really-costs', None)
         self.assertIsNone(scene_store.find_scene(store, '02-what-it-really-costs')['star'])
 
-
     def test_favorite_needs_an_existing_take_and_does_not_change_best(self):
         store = store_with_takes((1, CLEAN), (2, CLEAN))
         with self.assertRaises(ValueError):
@@ -423,6 +422,25 @@ class UpdateUnderLock(unittest.TestCase):
             os.utime(lock, (old, old))
             scene_store.update(raw, lambda store: scene_store.add_take(store, '01-intro', 1))
             self.assertEqual(len(scene_store.find_scene(scene_store.load(raw), '01-intro')['takes']), 1)
+
+    def test_saving_the_first_scene_list_waits_for_the_lock_too(self):
+        with tempfile.TemporaryDirectory() as raw:
+            (Path(raw) / scene_store.LOCK_NAME).write_text('someone-else', encoding='utf-8')
+            with mock.patch.object(scene_store, 'LOCK_WAIT_SECONDS', 0.2):
+                with self.assertRaises(scene_store.SceneFileError):
+                    scene_store.ensure_scene_list(raw, CUE)
+            self.assertIsNone(scene_store.load(raw))
+
+    def test_a_program_never_removes_a_lock_that_became_someone_elses(self):
+        with tempfile.TemporaryDirectory() as raw:
+            scene_store.ensure_scene_list(raw, CUE)
+            lock = Path(raw) / scene_store.LOCK_NAME
+
+            def takeover(store):
+                lock.write_text('another-program-token', encoding='utf-8')
+
+            scene_store.update(raw, takeover)
+            self.assertEqual(lock.read_text(encoding='utf-8'), 'another-program-token')
 
     def test_a_fresh_lock_held_too_long_gives_a_clear_error(self):
         with tempfile.TemporaryDirectory() as raw:
