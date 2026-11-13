@@ -21,6 +21,9 @@ The computer's favorite of a scene is the take that passes the most checks, the 
 
 All writes go through scene_store.update(); the slow work (ffprobe, ffmpeg) is done before it, so the lock is held
 only while results are copied into the file.
+
+After every run the command rewrites the video's overview page (overview_page.py) and registers the video with
+video-review's data folder, so the page's stars can reach the server.
 """
 import argparse
 from datetime import datetime, timezone
@@ -34,6 +37,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import overview_page  # noqa: E402
 import scene_store  # noqa: E402
 
 # Thresholds. Each has its reason; change them here, nowhere else.
@@ -378,6 +382,12 @@ def main(argv=None):
         print(f'  scenes/{name}: not in the scene list, skipped')
     waiting = len(report['growing']) + len(report['unreadable'])
     print(f'{len(report["added"])} new take(s) registered, {waiting} left for the next run.')
+    # The video's overview page shows what is registered, so it is rewritten after every run. The takes are
+    # already saved, so a page that cannot be written is said and does not fail the run.
+    try:
+        print(f'Overview page: {overview_page.publish(folder)}')
+    except (scene_store.SceneFileError, ValueError, OSError) as error:
+        print(f'  overview page not updated: {error}')
     return 0
 
 

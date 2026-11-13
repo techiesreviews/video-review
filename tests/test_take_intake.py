@@ -18,6 +18,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts/video'))
+import overview_page  # noqa: E402
 import scene_store  # noqa: E402
 import take_intake  # noqa: E402
 
@@ -639,6 +640,14 @@ class WritesGoThroughUpdate(IntakeCase):
 
 
 class CommandLine(IntakeCase):
+    def setUp(self):
+        super().setUp()
+        self.data = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.data, True)
+        patcher = mock.patch.dict(os.environ, {'VIDEO_REVIEW_DATA_DIR': str(self.data)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def run_main(self, *args):
         out = io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
@@ -678,6 +687,34 @@ class CommandLine(IntakeCase):
         self.assertIn(f'{scene} take 2: still being written', text)
         self.assertIn(f'{scene} take 3: could not be read yet', text)
         self.assertIn('1 new take(s) registered, 2 left for the next run', text)
+
+    def test_a_run_rewrites_the_overview_page_and_registers_the_video(self):
+        scene = self.scenes[0]
+        self.add_file(scene, 1, 60.0)
+        with mock.patch.object(take_intake, 'SETTLE_SECONDS', 0):
+            code, text = self.run_main(self.raw)
+        self.assertEqual(code, 0)
+        page = (self.raw / overview_page.FILE_NAME).read_text(encoding='utf-8')
+        self.assertIn('Take 1 (1:00)', page)
+        self.assertEqual(overview_page.lookup(self.data, overview_page.video_key(self.raw))[0], self.raw.resolve())
+        self.assertIn(overview_page.FILE_NAME, text)
+
+    def test_a_run_that_finds_nothing_still_rewrites_the_page(self):
+        (self.raw / overview_page.FILE_NAME).write_text('old', encoding='utf-8')
+        code, text = self.run_main(self.raw)
+        self.assertEqual(code, 0)
+        self.assertIn('0 new', text)
+        self.assertNotEqual((self.raw / overview_page.FILE_NAME).read_text(encoding='utf-8'), 'old')
+
+    def test_a_page_that_cannot_be_written_is_said_but_does_not_fail_the_intake(self):
+        self.add_file(self.scenes[0], 1, 60.0)
+        with mock.patch.object(take_intake, 'SETTLE_SECONDS', 0), \
+                mock.patch.object(overview_page, 'publish', side_effect=OSError('disk full')):
+            code, text = self.run_main(self.raw)
+        self.assertEqual(code, 0)
+        self.assertIn('1 new take(s) registered', text)
+        self.assertIn('overview page not updated: disk full', text)
+        self.assertEqual(self.take(self.scenes[0], 1)['duration'], 60.0)
 
     def test_nothing_new_is_a_normal_result(self):
         code, text = self.run_main(self.raw)
