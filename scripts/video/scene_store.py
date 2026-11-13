@@ -72,8 +72,15 @@ def slugify(title):
     for char in unicodedata.normalize('NFKD', title):
         if unicodedata.combining(char) or char in "'’`":
             continue  # accents and apostrophes vanish: "Café" is "cafe", "what's" is "whats"
-        letters.append(char.lower() if char.isascii() and char.isalnum() else '-')  # dashes of any kind separate words
+        # Any other mark, dashes of every kind included, separates words.
+        letters.append(char.lower() if char.isalnum() else '-')
     return re.sub(r'-+', '-', ''.join(letters)).strip('-') or 'untitled'
+
+
+def title_key(title):
+    """A title as compared between script versions: capitals, spacing and dash style do not count, symbols do."""
+    text = unicodedata.normalize('NFKC', title).casefold()
+    return ' '.join(re.sub(r'[\u2010-\u2015\u2212-]', '-', text).split())
 
 
 def scene_id(number, title):
@@ -157,19 +164,22 @@ def check_script(store, cue_text):
     """Compare the saved scene list with the script now. Flags changed scenes; renames and deletes nothing.
 
     A saved scene gets script_changed true when its id (number plus title) is no longer in the script (title
-    changed, number changed, or removed), or when it kept its id but now sits in a different place among the
-    scenes both lists still share (headings swapped or moved without renumbering). A scene that matches again
-    loses the flag. Scenes that are only in the script now are reported under "added" and are not added to the
-    file. Returns {"changed": [...], "added": [...]}. An edit that keeps the same id (only capital letters or
-    punctuation in the title) is ignored on purpose.
+    changed, number changed, or removed), when its title differs in more than capitals, spacing or dash style
+    (so "C++" becoming "C#" counts even though both make the same id), or when it kept its id but now sits in a
+    different place among the scenes both lists still share (headings swapped or moved without renumbering). A
+    scene that matches again loses the flag. Scenes that are only in the script now are reported under "added"
+    and are not added to the file. Returns {"changed": [...], "added": [...]}.
     """
-    current = [scene['id'] for scene in parse_cue_file(cue_text)]
+    now = parse_cue_file(cue_text)
+    titles = {scene['id']: title_key(scene['title']) for scene in now}
+    current = [scene['id'] for scene in now]
     saved = [scene['id'] for scene in store['scenes']]
     shared_now = [key for key in current if key in saved]
     shared_then = [key for key in saved if key in current]
     for scene in store['scenes']:
         key = scene['id']
-        scene['script_changed'] = key not in current or shared_now.index(key) != shared_then.index(key)
+        scene['script_changed'] = (key not in current or titles[key] != title_key(scene['title'])
+                                   or shared_now.index(key) != shared_then.index(key))
     return {
         'changed': [scene['id'] for scene in store['scenes'] if scene['script_changed']],
         'added': [key for key in current if key not in saved],

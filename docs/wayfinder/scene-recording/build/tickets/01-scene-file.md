@@ -41,10 +41,11 @@ and writes it through one module.
 
 ## Done (2026-11-13)
 
-Done when 1: met — `tests/test_scene_store.py` covers scene ids from headings, take names both ways, the scene list saved
-once, a changed title flagged, star wins, newest by default, the clearly-worse case, and a half-written file never read as
-a broken one (plus swapped headings, the lock and two programs writing at once).
-Done when 2: met once `kit pr` lands it on `dev` — `bash scripts/agents/run-tests.sh` passes (the PR's checks run the same script).
+Done when 1: met — `tests/test_scene_store.py` covers scene ids from headings, take names both ways, the scene list
+saved once, a changed title flagged, star wins, newest by default, the clearly-worse case, and a half-written file
+never read as a broken one (plus swapped headings, the lock and two programs writing at once).
+Done when 2: met once `kit pr` lands it on `dev`; `bash scripts/agents/run-tests.sh` passes and the PR's checks
+run the same script.
 Done when 3: met — the file's fields are listed below.
 
 Built `scripts/video/scene_store.py` with `tests/test_scene_store.py` and two fixtures
@@ -85,15 +86,8 @@ Rules as built:
   this way, and do slow work (ffprobe, ffmpeg) before calling `update`: `change` should only copy results into the
   store, because another program waits at most 10 seconds for the lock. `ensure_scene_list` takes the same lock.
   The small lock file stays in the video's folder beside `scenes.json`.
-- Edits to a script heading that keep the same id (only capital letters or punctuation) are ignored on purpose; the
-  one-hash title line of a cue file is never a scene.
+- A title edit that changes only capital letters, spacing or dash style is ignored on purpose; any other change
+  (even symbols, such as "C++" to "C#") flags the scene. The one-hash title line of a cue file is never a scene.
 - Other helpers: `load`, `save`, `add_take`, `set_star`, `set_favorite`, `find_scene`, take-name helpers
   (`take_file_name`, `parse_take_file_name`, `take_full_name`, `parse_take_full_name`, `scene_folder`).
 - Limit: a program that calls `load` and `save` itself, outside `update`, can still overwrite another program's change.
-
-### Follow-ups
-
-- Spec (P3): a4f05d4:scripts/video/scene_store.py:39 — P3 fault: the new `slugify` turns every non-ASCII character that does not break down to plain ASCII into a dash, including letters in the middle of a word. So "Straße" becomes `strasse`… no: it becomes `stra-e`, and "Smørrebrød" becomes `sm-rrebr-d`. The ticket asks for "words joined by dashes", and this splits a single word. The old code dropped those letters (`strae`), which was also lossy but kept the word whole. Ids stay stable either way, so the only cost is ugly ids for titles with letters like ß, ø, æ or ł. Fix: treat letters and digits as part of the word even when they are not ASCII, and drop them instead of turning them into a dash, for example `if not char.isascii(): continue if char.isalnum() else '-'`. Better still, map the common ones first (ß→ss, ø→o, æ→ae).
-- Standards (P3): a4f05d4:docs/wayfinder/scene-recording/build/tickets/01-scene-file.md:47 — P3 style: the rewritten "Done when 2" line runs to about 131 characters, while the lines around it wrap at about 121. This is the same kind of problem R4-3 raised. Fix: wrap after "passes" so the line matches the paragraph.
-- Validation gaps (gap): There is no test for a title with a non-ASCII letter that has no ASCII form, so the behaviour above is untested. Add to `SceneIds` in tests/test_scene_store.py: `self.assertEqual(scene_store.scene_id(4, 'Straße'), '04-strasse')` (or whatever result the fix settles on), so the rule is pinned down.
-

@@ -91,6 +91,9 @@ class SceneIds(unittest.TestCase):
         scene_store.check_script(store, '### **1 · AI — what changes**\n')
         self.assertFalse(store['scenes'][0]['script_changed'])
 
+    def test_letters_outside_latin_still_make_a_readable_id(self):
+        self.assertEqual(scene_store.scene_id(2, 'Привет, мир'), '02-привет-мир')
+
     def test_empty_file_has_no_scenes(self):
         self.assertEqual(scene_store.parse_cue_file(''), [])
 
@@ -166,7 +169,16 @@ class ScriptChanges(unittest.TestCase):
         self.assertEqual(report, {'changed': ['02-what-it-really-costs'], 'added': ['02-what-it-costs']})
 
     def test_a_capital_letter_edit_keeps_the_same_scene(self):
-        self.assertEqual(self.flagged(CUE.replace('WHAT IT REALLY COSTS', 'What it really costs')), [])
+        self.assertEqual(self.flagged(CUE.replace('WHAT IT REALLY COSTS', 'What it really  costs')), [])
+
+    def test_titles_that_differ_only_in_symbols_are_flagged_with_the_saved_id_kept(self):
+        store = scene_store.new_store(scene_store.parse_cue_file('### **2 · C++**\n'))
+        scene_store.add_take(store, '02-c', 1)
+        report = scene_store.check_script(store, '### **2 · C#**\n')
+        self.assertEqual(report['changed'], ['02-c'])
+        self.assertEqual(report['added'], [])
+        self.assertTrue(store['scenes'][0]['script_changed'])
+        self.assertEqual(len(store['scenes'][0]['takes']), 1)
 
     def test_changed_title_is_flagged(self):
         self.assertEqual(self.flagged(CUE.replace('WHAT IT REALLY COSTS', 'WHAT IT COSTS')),
