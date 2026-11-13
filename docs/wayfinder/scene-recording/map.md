@@ -63,12 +63,14 @@ the first slice has build tickets.
   scene under the video's raw-files folder, OBS saves straight there with the right name, tags in one small file
   per video, kept by video-review.
 
+- [An overview page for every video](tickets/09-overview-page-for-every-video.md): one Borumi-style page per video
+  ([mockup](prototypes/video-overview-page-borumi-style.html)): scenes with their takes, the best in front, older
+  takes archived. A saved file that opens by double click; the star can be changed from it while video-review runs.
+
 ## Open tickets (the frontier)
 
-- [An overview page for every video](tickets/09-overview-page-for-every-video.md) — prototype, with Lex. A
-  [first mockup](prototypes/video-overview-page-mockup.html) is ready.
-- [How takes show up in video-review](tickets/07-how-takes-show-up-in-video-review.md) — prototype,
-  waits for naming and best-take answers.
+- [How takes show up in video-review](tickets/07-how-takes-show-up-in-video-review.md): the scene view is decided
+  (the overview page); what is left is how the best takes go on to the rough cut.
 
 ## Not yet specified
 
