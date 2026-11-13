@@ -22,7 +22,8 @@ The computer's favorite of a scene is the take that passes the most checks, the 
 All writes go through scene_store.update(); the slow work (ffprobe, ffmpeg) is done before it, so the lock is held
 only while results are copied into the file.
 
-After every run the command rewrites the video's overview page (overview_page.py) and registers the video with
+After every run the command rebuilds the video's rough cut list (rough_cut.py: the best take of every scene, in
+script order), rewrites its overview page (overview_page.py) and registers the video with
 video-review's data folder, so the page's stars can reach the server. Give --data-dir the same folder the server is
 started with (it defaults to VIDEO_REVIEW_DATA_DIR, else the usual one), or the server will not find the video.
 """
@@ -39,6 +40,8 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import overview_page  # noqa: E402
+import review_store  # noqa: E402
+import rough_cut  # noqa: E402
 import scene_store  # noqa: E402
 
 # Thresholds. Each has its reason; change them here, nowhere else.
@@ -385,8 +388,15 @@ def main(argv=None):
         print(f'  scenes/{name}: not in the scene list, skipped')
     waiting = len(report['growing']) + len(report['unreadable'])
     print(f'{len(report["added"])} new take(s) registered, {waiting} left for the next run.')
-    # The video's overview page shows what is registered, so it is rewritten after every run. The takes are
-    # already saved, so a page that cannot be written is said and does not fail the run.
+    # The rough cut list and the video's overview page show what is registered, so both are rewritten after every
+    # run, with or without new takes. The takes are already saved, so one that cannot be written is said and does
+    # not fail the run or stop the other.
+    try:
+        cut = rough_cut.rebuild_rough_cut(folder, data_dir=review_store.data_dir(args.data_dir))
+        print(f'Rough cut: {sum(1 for item in cut["scenes"] if item["recorded"])} of {len(cut["scenes"])} scenes, '
+              f'{folder / rough_cut.FILE_NAME}')
+    except (scene_store.SceneFileError, ValueError, OSError) as error:
+        print(f'  rough cut not updated: {error}')
     try:
         print(f'Overview page: {overview_page.publish(folder, data_dir=args.data_dir)}')
     except (scene_store.SceneFileError, ValueError, OSError) as error:

@@ -240,7 +240,7 @@ class AgreesWithTheOverviewStrip(RoughCutCase):
     def strip(self):
         """[(scene number, take number or None)] from the page's strip, and its header total."""
         page = overview_page.render(scene_store.load(self.raw), 'Sample', cue_text=CUE)
-        bar = re.search(r'<div class="cut"[^>]*>(.*?)</div><p class="cutlabel">', page, re.S).group(1)
+        bar = re.search(r'<div class="cut"[^>]*>(.*?)</div>\s*<p class="cutlabel">', page, re.S).group(1)
         parts = re.findall(r'title="Scene (\d+)(?:, take (\d+)|: not recorded yet)"', bar)
         header = re.search(r'rough cut <b>([^<]+)</b>', page).group(1)
         return [(int(scene), int(take) if take else None) for scene, take in parts], header

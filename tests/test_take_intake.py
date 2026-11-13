@@ -738,7 +738,7 @@ class CommandLine(IntakeCase):
         self.assertEqual((first['scene'], first['take'], first['duration'], first['file']),
                          (scene, 1, 60.0, f'scenes/{scene}/take-01.mkv'))
         self.assertIn(rough_cut.FILE_NAME, text)
-        self.add_file(scene, 2, 62.0)
+        self.add_file(scene, 2, 62.0, [(61.0, 62.0)])
         with mock.patch.object(take_intake, 'SETTLE_SECONDS', 0):
             self.run_main(self.raw)
         self.assertEqual(self.saved_rough_cut()['scenes'][0]['take'], 2)
@@ -759,8 +759,8 @@ class CommandLine(IntakeCase):
 
     def test_the_rough_cut_and_the_page_strip_agree_after_a_run(self):
         scene = self.scenes[0]
-        self.add_file(scene, 1, 60.0)
-        self.add_file(scene, 2, 62.0)
+        self.add_file(scene, 1, 60.0, [(59.0, 60.0)])
+        self.add_file(scene, 2, 62.0, [(61.0, 62.0)])
         with mock.patch.object(take_intake, 'SETTLE_SECONDS', 0):
             self.run_main(self.raw)
         page = (self.raw / overview_page.FILE_NAME).read_text(encoding='utf-8')
@@ -768,8 +768,7 @@ class CommandLine(IntakeCase):
 
     def test_the_cue_file_the_video_was_registered_with_decides_the_changed_script_flag(self):
         other = self.raw / 'other-cues.md'
-        scene_title = scene_store.find_scene(scene_store.load(self.raw), self.scenes[0])['title']
-        other.write_text(CUE.replace(scene_title, scene_title + ' RENAMED', 1), encoding='utf-8')
+        other.write_text(CUE.replace('1 · INTRO', '1 · INTRO RENAMED'), encoding='utf-8')
         overview_page.register(self.data, self.raw, cue=other)
         self.run_main(self.raw)
         self.assertTrue(self.saved_rough_cut()['scenes'][0]['script_changed'])
