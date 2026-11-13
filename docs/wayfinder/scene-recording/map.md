@@ -51,11 +51,15 @@ the first slice has build tickets.
 - [How Lex checks earlier takes](tickets/08-how-lex-checks-earlier-takes.md): both ways, the video-review page
   first, then playing a take on the main screen.
 
+- [What counts as a scene](tickets/03-what-counts-as-a-scene.md): a scene is a numbered script section; a scene
+  list saved at the first record; files named scene-NN-title-take-NN; script changes adjusted when they happen.
+- [Who marks the best take, and when](tickets/05-who-marks-the-best-take.md): Lex decides, newest starred by
+  default; the computer suggests a favorite from free sound checks, shown only on the review page; unstarred
+  scenes use the newest unless it is clearly worse.
+
 ## Open tickets (the frontier)
 
-- [What counts as a scene](tickets/03-what-counts-as-a-scene.md) — grilling.
 - [Check OBS on LexTop](tickets/04-check-obs-on-lextop.md) — task, needs LexTop online.
-- [Who marks the best take, and when](tickets/05-who-marks-the-best-take.md) — grilling.
 - [Where takes live and how they are named](tickets/06-where-takes-live-and-how-they-are-named.md) —
   grilling, waits for the scene and OBS answers.
 - [How takes show up in video-review](tickets/07-how-takes-show-up-in-video-review.md) — prototype,
@@ -67,6 +71,7 @@ the first slice has build tickets.
 - How files travel from LexTop to ubulex, and where the helper runs.
 - Transcripts per take (HappyScribe cost) or only for the best take.
 - The handoff of best takes to the existing cutter and the Resolve timeline.
+- Paid transcript comparison with the script for the computer's favorite (only when Lex asks for a video).
 - Re-takes of one scene after the rough cut has started.
 - Playing an older take on the main screen from the Prompter rail (decided, built after the review page).
 
