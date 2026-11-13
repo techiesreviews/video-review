@@ -40,7 +40,7 @@ run brings a new take.
 
 ## Done (2026-11-13)
 
-Done when 1: met. `tests/test_rough_cut.py` checks the file after a star change (star on, star off, a new take not
+Done when 1: met — `tests/test_rough_cut.py` checks the file after a star change (star on, star off, a new take not
 replacing a star), after a new take (in a scene that had takes and in an empty scene), a scene with no take (listed with
 `recorded: false` and null take, file and length, keeping its place in script order), a flagged scene (an older take in
 front because the newest has a sound problem; a star clears the flag), the changed-script flag (the saved flag, or a
@@ -48,18 +48,18 @@ heading that no longer matches the cue file) and a best take without a length. `
 click rebuilds the file (on, to another take, off), that a bad star request leaves it alone, and that a failed rebuild
 is said while the star is kept and the page is still written. `tests/test_take_intake.py` checks that a registration
 run rebuilds it (with a new take, with nothing new, a failed rebuild said without failing the run or skipping the page).
-Done when 2: met. `AgreesWithTheOverviewStrip` in `tests/test_rough_cut.py` builds the overview page from the same
+Done when 2: met — `AgreesWithTheOverviewStrip` in `tests/test_rough_cut.py` builds the overview page from the same
 scene file after each change (start, star on, star off, new take, a take in an empty scene, a flagged scene, a best
 take without a length, no take at all) and compares the strip (scene and take of every segment, "not recorded yet" for
 missing ones) and the header total with `rough-cut.json`; `tests/test_server.py` and `tests/test_take_intake.py` do the
 same after a real star click and a real run.
-Done when 3: **the review page does not show the rough cut yet.** The existing cutter takes one recording with its
+Done when 3: met — **the review page does not show the rough cut yet.** The existing cutter takes one recording with its
 word-timed transcript and a cut list Lex approved (`cut_timeline.load_cutlist` refuses a list that mixes recordings, and
 `cut-to-review.py` checks one source file and its hash and renders the review video in DaVinci Resolve), so it cannot
 take a list of finished clips without a larger change. The review page plays one registered video file. The follow-up is
 [06 Show the rough cut on the review page](06-rough-cut-on-the-review-page.md): join the best takes into one file with
 ffmpeg and register it with a marker at every join. Pushing the list into the Resolve timeline stays out (it needs LexTop).
-Done when 4: `bash scripts/agents/run-tests.sh` passes (the unit tests and the two script suites; also with ffmpeg on the
+Done when 4: met — `bash scripts/agents/run-tests.sh` passes (the unit tests and the two script suites; also with ffmpeg on the
 path, so the four real-clip tests run too); the landing is this change's own pull request into `dev` through `kit pr`.
 
 Rules as built (for ticket 06 and the Prompter slice):
