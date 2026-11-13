@@ -211,17 +211,22 @@ def _fingerprint(path):
 
 
 def settle(candidates, seconds, sleep):
-    """Split candidates into (steady, growing): a file whose size or modified time changed after the wait, that
-    vanished, or that is still empty is growing. One wait covers all files."""
+    """Split candidates into (steady, growing, prints): a file whose size or modified time changed after the wait,
+    that vanished, or that is still empty is growing. One wait covers all files. prints holds each steady file's
+    size and modified time, so run() can check again after the slow media work that nothing changed meanwhile."""
     if not candidates:
-        return [], []
+        return [], [], {}
     before = {c[3]: _fingerprint(c[3]) for c in candidates}
     sleep(seconds)
-    steady, growing = [], []
+    steady, growing, prints = [], [], {}
     for candidate in candidates:
         now = _fingerprint(candidate[3])
-        (steady if now and now == before[candidate[3]] and now[0] > 0 else growing).append(candidate)
-    return steady, growing
+        if now and now == before[candidate[3]] and now[0] > 0:
+            steady.append(candidate)
+            prints[candidate[3]] = now
+        else:
+            growing.append(candidate)
+    return steady, growing, prints
 
 
 def recorded_at(path):
@@ -282,7 +287,7 @@ def run(raw_dir, settle_seconds=None, sleep=time.sleep):
         raise scene_store.SceneFileError(
             f'No {scene_store.FILE_NAME} in {raw_dir}: the scene list is saved when the first take is recorded.')
     candidates, unknown = find_new_takes(raw_dir, store)
-    steady, growing = settle(candidates, SETTLE_SECONDS if settle_seconds is None else settle_seconds, sleep)
+    steady, growing, prints = settle(candidates, SETTLE_SECONDS if settle_seconds is None else settle_seconds, sleep)
     report = {'added': [], 'growing': [(c[0], c[1]) for c in growing], 'unreadable': [],
               'unknown_folders': unknown, 'details': {}}
     results = []
@@ -290,6 +295,8 @@ def run(raw_dir, settle_seconds=None, sleep=time.sleep):
         found = analyse(scene, number, extension, path)
         if found is None:
             report['unreadable'].append((scene, number))
+        elif _fingerprint(path) != prints[path]:
+            report['growing'].append((scene, number))  # it grew while ffmpeg was listening: results are stale
         else:
             results.append(found)
     if not results:
@@ -329,7 +336,9 @@ def _describe(take):
         notes.append('length off')
     if sound.get('long_pause'):
         notes.append('long pause')
-    return ', '.join(notes) if notes else 'all checks passed'
+    if notes:
+        return ', '.join(notes)
+    return 'all checks passed' if 'length_off' in sound else 'sound checks passed, length not compared yet'
 
 
 def main(argv=None):

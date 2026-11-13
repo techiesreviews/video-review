@@ -419,6 +419,28 @@ class GrowingFiles(IntakeCase):
         self.assertEqual(report['added'], [(scene, 1)])
         self.assertEqual(report['growing'], [(scene, 2)])
 
+    def test_a_file_that_grows_while_ffmpeg_is_listening_is_skipped_until_it_is_finished(self):
+        scene = self.scenes[0]
+        self.add_file(scene, 1, 60.0)
+        growing = self.add_file(scene, 2, 60.0)
+        listen = self._silence
+        grew = []
+
+        def grow_during_listening(path, duration):
+            if path == growing and not grew:
+                grew.append(True)
+                growing.write_bytes(b'z' * 5000)       # the recording went on after the steady look
+            return listen(path, duration)
+
+        with mock.patch.object(take_intake, 'detect_silence', side_effect=grow_during_listening):
+            report = self.run_intake()
+        self.assertEqual(report['added'], [(scene, 1)])
+        self.assertEqual(report['growing'], [(scene, 2)])
+        self.assertIsNone(self.take(scene, 2))
+        self.media['take-02.mkv'] = (75.0, True, [(74.0, 75.0)])    # the finished recording is longer
+        self.run_intake()
+        self.assertEqual(self.take(scene, 2)['duration'], 75.0)
+
     def test_the_wait_is_skipped_when_there_is_nothing_new(self):
         waits = []
         self.run_intake(sleep=waits.append, settle_seconds=2)
@@ -587,6 +609,13 @@ class CommandLine(IntakeCase):
         self.assertIn('take 2', text)
         self.assertIn('long pause', text)
         self.assertIn('2 new', text)
+
+    def test_a_lone_take_does_not_claim_its_length_was_checked(self):
+        self.add_file(self.scenes[0], 1, 60.0)
+        with mock.patch.object(take_intake, 'SETTLE_SECONDS', 0):
+            code, text = self.run_main(self.raw)
+        self.assertIn('length not compared yet', text)
+        self.assertNotIn('all checks passed', text)
 
     def test_nothing_new_is_a_normal_result(self):
         code, text = self.run_main(self.raw)
