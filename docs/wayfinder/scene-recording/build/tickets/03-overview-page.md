@@ -90,7 +90,7 @@ Rules as built (for ticket 04 and the Prompter slice):
   `{"video": key, "scene": id, "take": number-or-null}` (null takes the star off), writes through
   `scene_store.update()`, then rewrites `overview.html`; a star that is saved while the page cannot be rewritten
   answers 500 with a message that says so. A take number that is not there, a scene that is not there and a
-  request that is not whole numbers answer 400 and change nothing; a scene file that cannot be read answers 409.
+  request that is not whole numbers, or that leaves out `take`, answer 400 and change nothing; a scene file that cannot be read answers 409.
 - `GET /scenes/<key>` serves the same page with links through the server (`/scenes/<key>/scenes/<scene>/take-NN.mkv`
   and the thumbnail), with byte ranges. Only take files and thumbnails directly under the video's `scenes/` folder
   are served (not `scenes.json`, the cue file, other files, `..` or a link that leaves the folder).
@@ -98,6 +98,11 @@ Rules as built (for ticket 04 and the Prompter slice):
   for the star route (with its preflight) and for reading the scene list; every other write still needs the server's
   own address. The limit: any page in a sandboxed frame can also send a star to a registered video, which can only
   change which take is in front and is undone by one click.
+- Chips: "Script changed since recording" shows when the saved scene has `script_changed`, or when comparing the
+  scene list with the cue file each time the page is made (`scene_store.check_script` on a copy, nothing saved) says
+  the heading no longer matches; a cue file with no numbered sections says nothing. "Older take in front: the newest
+  has a sound problem" shows when `choose_best` picked an older take because the newest is clearly worse (the
+  scene's `flagged`), so Lex sees it without opening the archive.
 - Script text: read from the cue file (`prompter.md` in the video folder, or the file named with `--cue`, which the
   registry remembers), only read, never changed. Directions (lines that start with a bracket), links and bold marks
   are left out. A scene whose heading is no longer in the script (title or number changed) is shown without text,

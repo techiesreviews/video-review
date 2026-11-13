@@ -200,6 +200,16 @@ class ReviewServerTests:
         assert 'Picture this.' in page
         assert f'data-server="http://127.0.0.1:{self.httpd.server_port}"' in page
 
+    def test_a_request_that_leaves_out_the_take_does_not_take_the_star_off(self):
+        self.reset_scenes()
+        with self.star({'video':self.key,'scene':'01-intro','take':1}):pass
+        before=(self.raw/'scenes.json').read_bytes();page=(self.raw/overview_page.FILE_NAME).read_bytes()
+        try:self.star({'video':self.key,'scene':'01-intro'})
+        except HTTPError as error:assert error.code==400
+        else:raise AssertionError('A star request without a take was accepted')
+        assert (self.raw/'scenes.json').read_bytes()==before and (self.raw/overview_page.FILE_NAME).read_bytes()==page
+        assert self.saved_scene()['star']==1
+
     def test_a_star_can_be_taken_off_again(self):
         self.reset_scenes()
         with self.star({'video':self.key,'scene':'01-intro','take':1}):pass
@@ -216,6 +226,7 @@ class ReviewServerTests:
                           ({'video':self.key,'scene':'01-intro','take':True},400),
                           ({'video':self.key,'scene':7,'take':1},400),
                           ({'video':self.key,'take':1},400),
+                          ({'video':self.key,'scene':'01-intro'},400),
                           ([],400),(1,400),('1',400),
                           ({'video':'nope-12345678','scene':'01-intro','take':1},404)]:
             try:self.star(body)

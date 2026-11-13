@@ -111,7 +111,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
     def star(self,cmd):
         """Lex's star for a take (or off, with take null): writes the scene file, then rewrites the saved page."""
-        if not isinstance(cmd,dict):raise ValueError('Invalid star request')
+        if not isinstance(cmd,dict) or 'take' not in cmd:raise ValueError('Invalid star request')
         found=self.scene_video(str(cmd.get('video','')))
         if not found:return self.send_json({'error':'Unknown video'},404,extra=self.cors())
         folder,cue=found;scene,take=cmd.get('scene'),cmd.get('take')
