@@ -224,6 +224,17 @@ class ReviewServerTests:
         assert (self.raw/'scenes.json').read_bytes()==before
         assert not (self.raw/overview_page.FILE_NAME).exists()
 
+    def test_every_star_answer_can_be_read_by_the_saved_page(self):
+        # The page opened by double click only shows what the server said when the answer carries this header.
+        for body,code in [({'video':'nope-12345678','scene':'01-intro','take':1},404),
+                          ({'video':self.key,'scene':'01-intro','take':9},400),
+                          ([],400)]:
+            try:self.star(body,'null')
+            except HTTPError as error:
+                assert error.code==code,(body,error.code)
+                assert error.headers['Access-Control-Allow-Origin']=='null',body
+            else:raise AssertionError(f'A bad star request was accepted: {body}')
+
     def test_a_star_needs_json_and_a_known_origin(self):
         body={'video':self.key,'scene':'01-intro','take':1}
         try:self.star(body,'https://example.org')

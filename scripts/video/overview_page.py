@@ -329,6 +329,8 @@ def build(raw_dir, cue=None, server=None):
     The slow part (thumbnails) is done first. The scene file is then read, the page made and written while the scene
     file's lock is held, so a page is never made from a scene file that another program is just changing, and two
     rewrites cannot finish in the wrong order and leave an older page behind."""
+    # A take added after this read has no picture until the next rewrite; the intake rewrites the page right after
+    # it adds takes, so that gap closes by itself.
     thumbs = ensure_thumbnails(raw_dir, _load(raw_dir))
     path = Path(raw_dir) / FILE_NAME
     temporary = path.with_name(f'{FILE_NAME}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp')

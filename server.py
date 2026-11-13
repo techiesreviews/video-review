@@ -113,7 +113,7 @@ class Handler(BaseHTTPRequestHandler):
         """Lex's star for a take (or off, with take null): writes the scene file, then rewrites the saved page."""
         if not isinstance(cmd,dict):raise ValueError('Invalid star request')
         found=self.scene_video(str(cmd.get('video','')))
-        if not found:return self.send_json({'error':'Unknown video'},404)
+        if not found:return self.send_json({'error':'Unknown video'},404,extra=self.cors())
         folder,cue=found;scene,take=cmd.get('scene'),cmd.get('take')
         if not isinstance(scene,str) or (take is not None and type(take) is not int):raise ValueError('Invalid star request')
         saved=scene_store.update(folder,lambda current:scene_store.set_star(current,scene,take))
