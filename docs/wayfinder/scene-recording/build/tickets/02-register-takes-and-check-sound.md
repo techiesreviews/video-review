@@ -77,3 +77,9 @@ Rules as built (so tickets 03 and 04 know what is in `scenes.json`):
   `scene-NN-title-take-NN` name. Files with the long name are skipped without a message, so that slice must save
   under the short name or extend this command (the scene file's `file` field would then hold the real name). A
   recording that OBS pauses for more than 2 seconds could also look finished while half written.
+
+### Follow-ups
+
+- Previous findings (P3): R3-1 still open: the "What" section of the ticket (line 14) still says the command "leaves existing takes alone". The "Rules as built" notes (lines 64–67) now describe how `length_off` is refreshed, but line 14 was not changed, so the ticket still contradicts itself.
+- Spec (P3): 53fe46c:docs/wayfinder/scene-recording/build/tickets/02-register-takes-and-check-sound.md:14 — P3 ticket: (still open as R3-1) the "What" section says the command "leaves existing takes alone", but `_refresh_scene` (`scripts/video/take_intake.py:272`) rewrites `sound.length_off` on older takes whenever a new take arrives in their scene. Fix: change the line to something like "leaves existing takes alone apart from refreshing their `length_off` and the scene's favorite", to match lines 64–67.
+
