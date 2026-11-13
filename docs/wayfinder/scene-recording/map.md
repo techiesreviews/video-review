@@ -67,10 +67,12 @@ the first slice has build tickets.
   ([mockup](prototypes/video-overview-page-borumi-style.html)): scenes with their takes, the best in front, older
   takes archived. A saved file that opens by double click; the star can be changed from it while video-review runs.
 
+- [How takes show up in video-review](tickets/07-how-takes-show-up-in-video-review.md): the scene view is the
+  overview page; the rough cut is rebuilt automatically whenever a best take changes (no send button).
+
 ## Open tickets (the frontier)
 
-- [How takes show up in video-review](tickets/07-how-takes-show-up-in-video-review.md): the scene view is decided
-  (the overview page); what is left is how the best takes go on to the rough cut.
+None are open for Lex. The fog below turns into build tickets next.
 
 ## Not yet specified
 
@@ -79,7 +81,7 @@ the first slice has build tickets.
 - Transcripts per take (HappyScribe cost) or only for the best take.
 - The handoff of best takes to the existing cutter and the Resolve timeline.
 - Paid transcript comparison with the script for the computer's favorite (only when Lex asks for a video).
-- Re-takes of one scene after the rough cut has started.
+- Re-takes of one scene after the rough cut has started, and what the automatic rebuild does to a hand-edited timeline.
 - Playing an older take on the main screen from the Prompter rail (decided, built after the review page).
 
 ## Out of scope
