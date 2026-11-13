@@ -40,8 +40,11 @@ FILE_NAME = 'rough-cut.json'
 VERSION = 1
 
 
-def _number(value):
-    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+def _length(value):
+    """A take's length in seconds, or None when it has none."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return value
 
 
 def build_cut(store, changed=()):
@@ -51,7 +54,7 @@ def build_cut(store, changed=()):
     for scene in store['scenes']:
         best, flagged = scene_store.choose_best(scene)
         take = next((t for t in scene['takes'] if t['number'] == best), None)
-        duration = _number(take.get('duration')) if take else None
+        duration = _length(take.get('duration')) if take else None
         if take is not None:
             if duration is None:
                 known = False
