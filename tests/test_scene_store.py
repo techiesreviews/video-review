@@ -82,6 +82,15 @@ class SceneIds(unittest.TestCase):
         self.assertEqual(scene_store.scene_id(2, 'What it really costs'), '02-what-it-really-costs')
         self.assertEqual(scene_store.scene_id(12, 'Café   & "Tea"!'), '12-cafe-tea')
 
+    def test_hyphen_en_dash_and_em_dash_make_the_same_id(self):
+        ids = {scene_store.scene_id(3, f'AI{dash}what changes') for dash in ('-', '–', '—', ' — ')}
+        self.assertEqual(ids, {'03-ai-what-changes'})
+
+    def test_switching_dash_style_does_not_flag_the_scene(self):
+        store = scene_store.new_store(scene_store.parse_cue_file('### **1 · AI - what changes**\n'))
+        scene_store.check_script(store, '### **1 · AI — what changes**\n')
+        self.assertFalse(store['scenes'][0]['script_changed'])
+
     def test_empty_file_has_no_scenes(self):
         self.assertEqual(scene_store.parse_cue_file(''), [])
 
@@ -348,6 +357,15 @@ class SafeWrites(unittest.TestCase):
                 scene_store.save(raw, bad)
             self.assertEqual(scene_store.load(raw), good)
             self.assertEqual(files_in(raw), ['scenes.json'])
+
+    def test_a_file_with_invalid_utf8_is_an_error_and_is_left_alone(self):
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / 'scenes.json'
+            path.write_bytes(b'{"scenes": [], "note": "\xff\xfe"}')
+            for action in (lambda: scene_store.load(raw), lambda: scene_store.ensure_scene_list(raw, CUE)):
+                with self.assertRaises(scene_store.SceneFileError):
+                    action()
+            self.assertEqual(path.read_bytes(), b'{"scenes": [], "note": "\xff\xfe"}')
 
     def test_a_scene_without_takes_is_an_error(self):
         with tempfile.TemporaryDirectory() as raw:
