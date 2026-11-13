@@ -103,6 +103,12 @@ class SceneListSavedOnce(unittest.TestCase):
         self.assertEqual((scene['takes'], scene['star'], scene['favorite'], scene['best']), ([], None, None, None))
         self.assertFalse(scene['flagged'] or scene['script_changed'])
 
+    def test_a_cue_file_without_numbered_sections_saves_nothing(self):
+        with tempfile.TemporaryDirectory() as raw:
+            with self.assertRaises(ValueError):
+                scene_store.ensure_scene_list(raw, '### **PREP**\nwords\n')
+            self.assertIsNone(scene_store.load(raw))
+
     def test_missing_file_loads_as_none(self):
         with tempfile.TemporaryDirectory() as raw:
             self.assertIsNone(scene_store.load(raw))
