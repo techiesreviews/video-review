@@ -144,6 +144,13 @@ class ParseSilence(unittest.TestCase):
     def test_pairs_become_intervals_and_an_open_silence_runs_to_the_end(self):
         self.assertEqual(take_intake.parse_silence(SILENCE_TEXT, 30.0), [(0.0, 1.5), (12.25, 15.75), (28.9, 30.0)])
 
+    def test_a_very_small_time_in_exponent_form_is_read_as_small(self):
+        # ffmpeg 6 and older print 0.0000226757 as 2.26757e-05; reading it as 2.26757 would invent a long pause.
+        text = 'silence_start: 2.26757e-05\nsilence_end: 5 | silence_duration: 5\n'
+        found = take_intake.parse_silence(text, 30.0)
+        self.assertEqual(found, [(2.26757e-05, 5.0)])
+        self.assertFalse(take_intake.long_pause(30.0, found))
+
     def test_text_without_silence_gives_nothing(self):
         self.assertEqual(take_intake.parse_silence('size=N/A time=00:00:30.00\n', 30.0), [])
 
@@ -379,6 +386,16 @@ class ExistingTakes(IntakeCase):
         self.assertEqual(new['sound']['long_pause'], old['sound']['long_pause'])
         self.assertEqual(scene_store.find_scene(scene_store.load(self.raw), scene)['star'], 1)
 
+    def test_a_refresh_adds_the_length_check_and_keeps_the_hand_set_checks(self):
+        scene = self.scenes[0]
+        self.add_file(scene, 1, 100.0)
+        self.run_intake()
+        scene_store.update(self.raw, lambda store: scene_store.find_scene(store, scene)['takes'][0].update(
+            sound={'ends_early': True, 'long_pause': True}))
+        self.add_file(scene, 2, 100.0)
+        self.run_intake()
+        self.assertEqual(self.take(scene, 1)['sound'], {'ends_early': True, 'long_pause': True, 'length_off': False})
+
     def test_a_take_registered_without_sound_data_gets_none_added(self):
         scene = self.scenes[0]
         scene_store.update(self.raw, lambda store: scene_store.add_take(store, scene, 1, duration=100.0))
@@ -456,6 +473,14 @@ class GrowingFiles(IntakeCase):
         self.media['take-01.mkv'] = (60.0, True, [(59.0, 60.0)])
         self.run_intake()
         self.assertIsNotNone(self.take(scene, 1))
+
+    def test_a_file_that_vanishes_before_it_is_saved_is_skipped_not_a_crash(self):
+        scene = self.scenes[0]
+        path = self.add_file(scene, 1, 60.0)
+        with mock.patch.object(take_intake, 'recorded_at', side_effect=FileNotFoundError):
+            report = self.run_intake()
+        self.assertEqual(report['unreadable'], [(scene, 1)])
+        self.assertTrue(path.exists())
 
     def test_a_failed_silence_check_skips_the_take_for_this_run(self):
         scene = self.scenes[0]
@@ -616,6 +641,21 @@ class CommandLine(IntakeCase):
             code, text = self.run_main(self.raw)
         self.assertIn('length not compared yet', text)
         self.assertNotIn('all checks passed', text)
+
+    def test_the_lines_for_skipped_takes_say_why(self):
+        scene = self.scenes[0]
+        self.add_file(scene, 1, 60.0)
+        growing = self.add_file(scene, 2, 60.0)
+        self.add_file(scene, 3, 60.0)
+        del self.media['take-03.mkv']          # the probe cannot read it yet
+        real_settle = take_intake.settle
+        still_recording = lambda seconds: growing.write_bytes(b'z' * 5000)  # noqa: E731
+        with mock.patch.object(take_intake, 'settle', lambda found, seconds, sleep: real_settle(found, 0, still_recording)):
+            code, text = self.run_main(self.raw)
+        self.assertEqual(code, 0)
+        self.assertIn(f'{scene} take 2: still being written', text)
+        self.assertIn(f'{scene} take 3: could not be read yet', text)
+        self.assertIn('1 new take(s) registered, 2 left for the next run', text)
 
     def test_nothing_new_is_a_normal_result(self):
         code, text = self.run_main(self.raw)
