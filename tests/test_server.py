@@ -10,6 +10,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'/'video'))
 import server
 import overview_page
+import rough_cut
 import scene_store
 
 CUE='### 1 · INTRO\nPicture this.\n### 2 · WHAT IT COSTS\nTwo out of three.\n'
@@ -199,6 +200,53 @@ class ReviewServerTests:
         assert 'style="flex:30" title="Scene 1, take 1"' in page
         assert 'Picture this.' in page
         assert f'data-server="http://127.0.0.1:{self.httpd.server_port}"' in page
+
+    def saved_rough_cut(self):return json.loads((self.raw/rough_cut.FILE_NAME).read_text(encoding='utf-8'))
+
+    def test_a_star_click_rebuilds_the_rough_cut_on_its_own(self):
+        self.reset_scenes()
+        (self.raw/rough_cut.FILE_NAME).unlink(missing_ok=True)
+        with self.star({'video':self.key,'scene':'01-intro','take':1}) as r:assert json.load(r)['ok']
+        scenes=self.saved_rough_cut()['scenes']
+        assert [(s['scene'],s['take'],s['recorded']) for s in scenes]==[('01-intro',1,True),('02-what-it-costs',None,False)]
+        assert scenes[0]['file']=='scenes/01-intro/take-01.mkv' and scenes[0]['duration']==30.0
+        with self.star({'video':self.key,'scene':'01-intro','take':2}) as r:assert json.load(r)['ok']
+        assert self.saved_rough_cut()['scenes'][0]['take']==2
+        with self.star({'video':self.key,'scene':'01-intro','take':None}) as r:assert json.load(r)['ok']
+        assert self.saved_rough_cut()['scenes'][0]['take']==2
+
+    def test_the_rough_cut_and_the_page_strip_agree_after_a_star_click(self):
+        self.reset_scenes()
+        with self.star({'video':self.key,'scene':'01-intro','take':1}):pass
+        page=(self.raw/overview_page.FILE_NAME).read_text(encoding='utf-8')
+        first=self.saved_rough_cut()['scenes'][0]
+        assert f'title="Scene {first["number"]}, take {first["take"]}"' in page
+        assert 'title="Scene 2: not recorded yet"' in page and self.saved_rough_cut()['scenes'][1]['recorded'] is False
+
+    def test_a_bad_star_request_leaves_the_rough_cut_alone(self):
+        self.reset_scenes()
+        with self.star({'video':self.key,'scene':'01-intro','take':1}):pass
+        before=(self.raw/rough_cut.FILE_NAME).read_bytes()
+        try:self.star({'video':self.key,'scene':'01-intro','take':9})
+        except HTTPError as error:assert error.code==400
+        else:raise AssertionError('A star for a take that is not there was accepted')
+        assert (self.raw/rough_cut.FILE_NAME).read_bytes()==before
+
+    def test_a_star_whose_rough_cut_could_not_be_rebuilt_says_so_but_is_kept_and_the_page_is_still_written(self):
+        self.reset_scenes()
+        real=server.rough_cut.rebuild_rough_cut
+        def broken(*args,**kwargs):raise OSError('disk full')
+        server.rough_cut.rebuild_rough_cut=broken
+        try:
+            try:self.star({'video':self.key,'scene':'01-intro','take':1})
+            except HTTPError as error:
+                assert error.code==500
+                message=json.load(error)['error']
+                assert 'saved' in message and 'rough cut' in message
+            else:raise AssertionError('A failed rough cut rebuild was reported as fine')
+        finally:server.rough_cut.rebuild_rough_cut=real
+        assert self.saved_scene()['star']==1
+        assert 'style="flex:30" title="Scene 1, take 1"' in (self.raw/overview_page.FILE_NAME).read_text(encoding='utf-8')
 
     def test_a_request_that_leaves_out_the_take_does_not_take_the_star_off(self):
         self.reset_scenes()

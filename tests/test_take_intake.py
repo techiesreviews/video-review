@@ -19,6 +19,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts/video'))
 import overview_page  # noqa: E402
+import rough_cut  # noqa: E402
 import scene_store  # noqa: E402
 import take_intake  # noqa: E402
 
@@ -722,6 +723,67 @@ class CommandLine(IntakeCase):
         self.assertEqual(code, 0)
         self.assertIn('1 new take(s) registered', text)
         self.assertIn('overview page not updated: disk full', text)
+        self.assertEqual(self.take(self.scenes[0], 1)['duration'], 60.0)
+
+    def saved_rough_cut(self):
+        return json.loads((self.raw / rough_cut.FILE_NAME).read_text(encoding='utf-8'))
+
+    def test_a_run_that_brings_a_new_take_rebuilds_the_rough_cut(self):
+        scene = self.scenes[0]
+        self.add_file(scene, 1, 60.0)
+        with mock.patch.object(take_intake, 'SETTLE_SECONDS', 0):
+            code, text = self.run_main(self.raw)
+        self.assertEqual(code, 0)
+        first = self.saved_rough_cut()['scenes'][0]
+        self.assertEqual((first['scene'], first['take'], first['duration'], first['file']),
+                         (scene, 1, 60.0, f'scenes/{scene}/take-01.mkv'))
+        self.assertIn(rough_cut.FILE_NAME, text)
+        self.add_file(scene, 2, 62.0)
+        with mock.patch.object(take_intake, 'SETTLE_SECONDS', 0):
+            self.run_main(self.raw)
+        self.assertEqual(self.saved_rough_cut()['scenes'][0]['take'], 2)
+
+    def test_the_rough_cut_lists_scenes_without_a_take_as_missing(self):
+        self.add_file(self.scenes[0], 1, 60.0)
+        with mock.patch.object(take_intake, 'SETTLE_SECONDS', 0):
+            self.run_main(self.raw)
+        scenes = self.saved_rough_cut()['scenes']
+        self.assertEqual(len(scenes), len(self.scenes))
+        self.assertEqual([item['recorded'] for item in scenes], [True] + [False] * (len(self.scenes) - 1))
+
+    def test_a_run_that_finds_nothing_still_rebuilds_the_rough_cut(self):
+        (self.raw / rough_cut.FILE_NAME).write_text('old', encoding='utf-8')
+        code, text = self.run_main(self.raw)
+        self.assertEqual(code, 0)
+        self.assertEqual(self.saved_rough_cut()['version'], rough_cut.VERSION)
+
+    def test_the_rough_cut_and_the_page_strip_agree_after_a_run(self):
+        scene = self.scenes[0]
+        self.add_file(scene, 1, 60.0)
+        self.add_file(scene, 2, 62.0)
+        with mock.patch.object(take_intake, 'SETTLE_SECONDS', 0):
+            self.run_main(self.raw)
+        page = (self.raw / overview_page.FILE_NAME).read_text(encoding='utf-8')
+        self.assertIn(f'title="Scene 1, take {self.saved_rough_cut()["scenes"][0]["take"]}"', page)
+
+    def test_the_cue_file_the_video_was_registered_with_decides_the_changed_script_flag(self):
+        other = self.raw / 'other-cues.md'
+        scene_title = scene_store.find_scene(scene_store.load(self.raw), self.scenes[0])['title']
+        other.write_text(CUE.replace(scene_title, scene_title + ' RENAMED', 1), encoding='utf-8')
+        overview_page.register(self.data, self.raw, cue=other)
+        self.run_main(self.raw)
+        self.assertTrue(self.saved_rough_cut()['scenes'][0]['script_changed'])
+
+    def test_a_rough_cut_that_cannot_be_written_is_said_but_does_not_fail_the_intake_or_skip_the_page(self):
+        self.add_file(self.scenes[0], 1, 60.0)
+        (self.raw / overview_page.FILE_NAME).write_text('old', encoding='utf-8')
+        with mock.patch.object(take_intake, 'SETTLE_SECONDS', 0), \
+                mock.patch.object(rough_cut, 'rebuild_rough_cut', side_effect=OSError('disk full')):
+            code, text = self.run_main(self.raw)
+        self.assertEqual(code, 0)
+        self.assertIn('1 new take(s) registered', text)
+        self.assertIn('rough cut not updated: disk full', text)
+        self.assertNotEqual((self.raw / overview_page.FILE_NAME).read_text(encoding='utf-8'), 'old')
         self.assertEqual(self.take(self.scenes[0], 1)['duration'], 60.0)
 
     def test_nothing_new_is_a_normal_result(self):
