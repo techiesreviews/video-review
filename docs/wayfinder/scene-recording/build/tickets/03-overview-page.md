@@ -119,3 +119,9 @@ Rules as built (for ticket 04 and the Prompter slice):
   server said in the line above the strip and keeps the stars usable; only a server that does not answer greys them. The strip's total shows a `+` when a best take has no known length.
 - Only the page's wording is new; colours and layout follow the Borumi-style mock-up. A browser that cannot play
   `.mkv` (Firefox) shows "This browser cannot play this file." under the player.
+
+### Follow-ups
+
+- Previous findings (P3): R2-1 still open: the commits since the last review did not touch the ticket's front matter or its "Done when 4" line. `docs/wayfinder/scene-recording/build/tickets/03-overview-page.md:4` still says `status: closed`, and line 66 still says "met once `kit pr` lands it on `dev`".
+- Spec (P3): 052f6d1:docs/wayfinder/scene-recording/build/tickets/03-overview-page.md:4 — P3 ticket: this is R2-1, carried over. The front matter says `status: closed`, but "Done when 4" (line 66) says it is only met once `kit pr` lands the change on `dev`. Fix: leave the status open until the change has landed. Or, if the process closes tickets just before `kit pr`, change line 66 to say exactly that.
+
