@@ -137,15 +137,19 @@ def probe_media(path):
     return duration, has_audio
 
 
+# A number as ffmpeg prints it: older versions write a very small one like 2.26757e-05.
+NUMBER = r'-?\d+(?:\.\d*)?(?:[eE][-+]?\d+)?'
+
+
 def parse_silence(text, duration):
     """(start, end) pairs from ffmpeg's silencedetect lines. A silence still open at the end runs to the end."""
     silences, start = [], None
     for line in text.splitlines():
-        found = re.search(r'silence_start: (-?[\d.]+)', line)
+        found = re.search(rf'silence_start: ({NUMBER})', line)
         if found:
             start = max(0.0, float(found.group(1)))
             continue
-        found = re.search(r'silence_end: (-?[\d.]+)', line)
+        found = re.search(rf'silence_end: ({NUMBER})', line)
         if found and start is not None:
             silences.append((start, float(found.group(1))))
             start = None
@@ -257,8 +261,12 @@ def analyse(scene, number, extension, path):
         if silences is None:
             return None
         sound = {'ends_early': ends_early(duration, silences), 'long_pause': long_pause(duration, silences)}
+    try:
+        created = recorded_at(path)
+    except OSError:
+        return None  # the file vanished or was renamed meanwhile
     return {'scene': scene, 'number': number, 'extension': extension, 'duration': round(duration, 3),
-            'recorded_at': recorded_at(path), 'sound': sound}
+            'recorded_at': created, 'sound': sound}
 
 
 def _refresh_scene(store, scene):

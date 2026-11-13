@@ -73,3 +73,7 @@ Rules as built (so tickets 03 and 04 know what is in `scenes.json`):
   It is only set on scenes that got a new take, only with two or more takes, saved as `favorite` and never as `star`.
 - Not done on purpose: no transcript, no network, no OBS or Prompter link. ffmpeg and ffprobe must be installed; the
   command says so when they are not.
+- For the OBS slice: only files named `take-NN.<ext>` are registered, while ticket 06 has OBS save the longer
+  `scene-NN-title-take-NN` name. Files with the long name are skipped without a message, so that slice must save
+  under the short name or extend this command (the scene file's `file` field would then hold the real name). A
+  recording that OBS pauses for more than 2 seconds could also look finished while half written.
