@@ -59,7 +59,7 @@ off. Start video-review on this computer to change them." ([desktop](03-overview
 [phone](03-overview-page/server-stopped-phone.png)); with the server running, the stars are live, a click on an
 archived take's star wrote `star: 1` into `scenes.json`, moved that take to the front, and the strip and the header
 changed from 0:29 to 0:27 ([after the click](03-overview-page/server-running-after-star-click.png)). A click on a
-take plays it in the page (the video reached the end of its first second with no error), and the page the server
+take plays it in the page (the player showed 0:01 of 0:08 with no error), and the page the server
 serves at `/scenes/<video>` has live stars too.
 Done when 3: met. At 375 px wide the page has no sideways scroll, with the server stopped and running
 ([phone, server running](03-overview-page/server-running-phone.png)).
