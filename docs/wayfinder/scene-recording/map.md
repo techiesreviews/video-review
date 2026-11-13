@@ -57,11 +57,16 @@ the first slice has build tickets.
   default; the computer suggests a favorite from free sound checks, shown only on the review page; unstarred
   scenes use the newest unless it is clearly worse.
 
+- [Check OBS on LexTop](tickets/04-check-obs-on-lextop.md): the Prompter and OBS run on LexTop, recordings go to
+  `D:\Stream`, OBS is current; the remaining OBS facts are checked in the first build step.
+- [Where takes live and how they are named](tickets/06-where-takes-live-and-how-they-are-named.md): one folder per
+  scene under the video's raw-files folder, OBS saves straight there with the right name, tags in one small file
+  per video, kept by video-review.
+
 ## Open tickets (the frontier)
 
-- [Check OBS on LexTop](tickets/04-check-obs-on-lextop.md) — task, needs LexTop online.
-- [Where takes live and how they are named](tickets/06-where-takes-live-and-how-they-are-named.md) —
-  grilling, waits for the scene and OBS answers.
+- [An overview page for every video](tickets/09-overview-page-for-every-video.md) — prototype, with Lex. A
+  [first mockup](prototypes/video-overview-page-mockup.html) is ready.
 - [How takes show up in video-review](tickets/07-how-takes-show-up-in-video-review.md) — prototype,
   waits for naming and best-take answers.
 
