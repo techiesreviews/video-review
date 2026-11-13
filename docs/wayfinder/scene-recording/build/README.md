@@ -27,6 +27,7 @@ needs the Prompter or OBS yet; those come in the next slice, after the OBS check
 | 2 | [Register takes and check their sound](tickets/02-register-takes-and-check-sound.md) | builder |
 | 2 | [The overview page](tickets/03-overview-page.md) | builder |
 | 3 | [Rough cut from the best takes](tickets/04-rough-cut-from-best-takes.md) | builder |
+| 4 | [Show the rough cut on the review page](tickets/06-rough-cut-on-the-review-page.md) | builder (after Lex answers its question) |
 
 ## Next slice (after the OBS check)
 
