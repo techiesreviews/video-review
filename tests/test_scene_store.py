@@ -1,10 +1,12 @@
 """Checks for the per-video scene file (scripts/video/scene_store.py). Only small invented files, no real footage."""
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
 import threading
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts/video'))
@@ -15,6 +17,7 @@ CUE = (FIXTURES / 'scene-cue-file.md').read_text(encoding='utf-8')
 CLEAN = {'ends_early': False, 'long_pause': False}
 SHORT = {'ends_early': True, 'long_pause': False}
 PAUSY = {'ends_early': False, 'long_pause': True}
+LENGTH_OFF = {'ends_early': False, 'length_off': True, 'long_pause': False}
 
 
 def store_with_takes(*takes, **scene_fields):
@@ -45,6 +48,10 @@ class SceneIds(unittest.TestCase):
         titles = [scene['title'] for scene in scene_store.parse_cue_file(CUE)]
         self.assertNotIn('PREP', titles)
         self.assertNotIn('HOOK AND INTRO', titles)
+
+    def test_the_one_hash_title_line_is_not_a_scene(self):
+        self.assertEqual(scene_store.parse_cue_file('# 2026 · Year in review · cues v2\n### **1 · INTRO**\n'),
+                         [{'id': '01-intro', 'number': 1, 'title': 'INTRO'}])
 
     def test_time_suffix_and_plain_markdown_forms(self):
         text = '## 7 · Big Finish · 1:02:30\n### **8 · Short one**\nspoken words · 12:00\n'
@@ -126,6 +133,13 @@ class ScriptChanges(unittest.TestCase):
     def test_same_script_flags_nothing(self):
         self.assertEqual(self.flagged(CUE), [])
 
+    def test_report_lists_changed_and_added_ids(self):
+        report = scene_store.check_script(self.store, CUE.replace('WHAT IT REALLY COSTS', 'WHAT IT COSTS'))
+        self.assertEqual(report, {'changed': ['02-what-it-really-costs'], 'added': ['02-what-it-costs']})
+
+    def test_a_capital_letter_edit_keeps_the_same_scene(self):
+        self.assertEqual(self.flagged(CUE.replace('WHAT IT REALLY COSTS', 'What it really costs')), [])
+
     def test_changed_title_is_flagged(self):
         self.assertEqual(self.flagged(CUE.replace('WHAT IT REALLY COSTS', 'WHAT IT COSTS')),
                          ['02-what-it-really-costs'])
@@ -180,6 +194,15 @@ class Takes(unittest.TestCase):
         takes = scene_store.find_scene(store, '01-intro')['takes']
         self.assertEqual([(t['number'], t['duration']) for t in takes], [(1, 5)])
 
+    def test_take_number_is_a_whole_number_and_extension_can_change(self):
+        store = scene_store.new_store(scene_store.parse_cue_file(CUE))
+        scene_store.add_take(store, '01-intro', '3')
+        scene_store.add_take(store, '01-intro', 3, duration=4)
+        takes = scene_store.find_scene(store, '01-intro')['takes']
+        self.assertEqual([(t['number'], t['file']) for t in takes], [(3, 'take-03.mkv')])
+        scene_store.add_take(store, '01-intro', 3, extension='.mp4')
+        self.assertEqual(takes[0]['file'], 'take-03.mp4')
+
     def test_unknown_scene_or_field_is_refused(self):
         store = scene_store.new_store(scene_store.parse_cue_file(CUE))
         with self.assertRaises(KeyError):
@@ -195,6 +218,15 @@ class Takes(unittest.TestCase):
             scene_store.set_star(store, '02-what-it-really-costs', 7)
         scene_store.set_star(store, '02-what-it-really-costs', None)
         self.assertIsNone(scene_store.find_scene(store, '02-what-it-really-costs')['star'])
+
+
+    def test_favorite_needs_an_existing_take_and_does_not_change_best(self):
+        store = store_with_takes((1, CLEAN), (2, CLEAN))
+        with self.assertRaises(ValueError):
+            scene_store.set_favorite(store, '02-what-it-really-costs', 7)
+        scene_store.set_favorite(store, '02-what-it-really-costs', 1)
+        self.assertEqual(scene_store.find_scene(store, '02-what-it-really-costs')['favorite'], 1)
+        self.assertEqual(best(store), (2, False))
 
 
 class BestTake(unittest.TestCase):
@@ -243,6 +275,14 @@ class BestTake(unittest.TestCase):
         store = store_with_takes((1, None), (2, SHORT))
         self.assertEqual(best(store), (2, False))
 
+    def test_a_missing_check_counts_as_not_run_not_as_clean(self):
+        store = store_with_takes((1, {'ends_early': False}), (2, SHORT))
+        self.assertEqual(best(store), (2, False))
+
+    def test_length_off_alone_is_not_clearly_worse(self):
+        store = store_with_takes((1, CLEAN), (2, LENGTH_OFF))
+        self.assertEqual(best(store), (2, False))
+
     def test_clean_newest_is_not_flagged(self):
         store = store_with_takes((1, SHORT), (2, CLEAN))
         self.assertEqual(best(store), (2, False))
@@ -260,6 +300,29 @@ class SafeWrites(unittest.TestCase):
             store = store_with_takes((1, CLEAN))
             scene_store.save(raw, store)
             self.assertEqual(scene_store.load(raw), store)
+
+    def test_save_writes_best_and_flagged_to_the_file(self):
+        with tempfile.TemporaryDirectory() as raw:
+            scene_store.save(raw, store_with_takes((1, CLEAN), (2, SHORT)))
+            scene = scene_store.find_scene(scene_store.load(raw), '02-what-it-really-costs')
+            self.assertEqual((scene['best'], scene['flagged']), (1, True))
+
+    def test_a_failed_write_keeps_the_old_file_and_leaves_no_temporary_file(self):
+        with tempfile.TemporaryDirectory() as raw:
+            good = store_with_takes((1, CLEAN))
+            scene_store.save(raw, good)
+            bad = store_with_takes((1, CLEAN))
+            bad['markers'] = [object()]
+            with self.assertRaises(TypeError):
+                scene_store.save(raw, bad)
+            self.assertEqual(scene_store.load(raw), good)
+            self.assertEqual(sorted(p.name for p in Path(raw).iterdir()), ['scenes.json'])
+
+    def test_a_scene_without_takes_is_an_error(self):
+        with tempfile.TemporaryDirectory() as raw:
+            (Path(raw) / 'scenes.json').write_text('{"scenes": [{"id": "01-intro"}]}', encoding='utf-8')
+            with self.assertRaises(scene_store.SceneFileError):
+                scene_store.load(raw)
 
     def test_save_leaves_no_temporary_file_behind(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -313,6 +376,61 @@ class SafeWrites(unittest.TestCase):
                 stop.set()
                 thread.join()
             self.assertEqual(errors, [])
+
+
+class UpdateUnderLock(unittest.TestCase):
+    def test_changes_from_many_programs_are_all_kept(self):
+        with tempfile.TemporaryDirectory() as raw:
+            scene_store.ensure_scene_list(raw, CUE)
+
+            def worker(number):
+                scene_store.update(raw, lambda store: scene_store.add_take(store, '01-intro', number))
+
+            threads = [threading.Thread(target=worker, args=(n,)) for n in range(1, 21)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            takes = scene_store.find_scene(scene_store.load(raw), '01-intro')['takes']
+            self.assertEqual([t['number'] for t in takes], list(range(1, 21)))
+            self.assertEqual(sorted(p.name for p in Path(raw).iterdir()), ['scenes.json'])
+
+    def test_update_needs_a_saved_file(self):
+        with tempfile.TemporaryDirectory() as raw:
+            with self.assertRaises(scene_store.SceneFileError):
+                scene_store.update(raw, lambda store: None)
+            self.assertEqual(list(Path(raw).iterdir()), [])
+
+    def test_a_failing_change_releases_the_lock_and_saves_nothing(self):
+        with tempfile.TemporaryDirectory() as raw:
+            scene_store.ensure_scene_list(raw, CUE)
+
+            def broken(store):
+                scene_store.add_take(store, '01-intro', 1)
+                raise RuntimeError('stop')
+
+            with self.assertRaises(RuntimeError):
+                scene_store.update(raw, broken)
+            self.assertEqual(scene_store.find_scene(scene_store.load(raw), '01-intro')['takes'], [])
+            scene_store.update(raw, lambda store: scene_store.add_take(store, '01-intro', 2))
+
+    def test_a_lock_left_by_a_stopped_program_is_taken_over(self):
+        with tempfile.TemporaryDirectory() as raw:
+            scene_store.ensure_scene_list(raw, CUE)
+            lock = Path(raw) / scene_store.LOCK_NAME
+            lock.write_text('', encoding='utf-8')
+            old = lock.stat().st_mtime - scene_store.LOCK_STALE_SECONDS - 5
+            os.utime(lock, (old, old))
+            scene_store.update(raw, lambda store: scene_store.add_take(store, '01-intro', 1))
+            self.assertEqual(len(scene_store.find_scene(scene_store.load(raw), '01-intro')['takes']), 1)
+
+    def test_a_fresh_lock_held_too_long_gives_a_clear_error(self):
+        with tempfile.TemporaryDirectory() as raw:
+            scene_store.ensure_scene_list(raw, CUE)
+            (Path(raw) / scene_store.LOCK_NAME).write_text('', encoding='utf-8')
+            with mock.patch.object(scene_store, 'LOCK_WAIT_SECONDS', 0.2):
+                with self.assertRaises(scene_store.SceneFileError):
+                    scene_store.update(raw, lambda store: None)
 
 
 class SampleFile(unittest.TestCase):
