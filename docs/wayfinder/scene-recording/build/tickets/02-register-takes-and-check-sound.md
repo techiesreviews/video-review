@@ -58,8 +58,9 @@ Rules as built (so tickets 03 and 04 know what is in `scenes.json`):
   scene list are reported and skipped. Only files named exactly `take-NN` with `.mkv`, `.mp4` or `.mov` count.
 - A take already in `scenes.json` is not looked at again. A new take gets `duration` (ffprobe), `recorded_at` (the
   file's creation time on Windows and macOS, its last-written time elsewhere, UTC) and `sound`.
-- A file whose size or modified time changes within 2 seconds, or that is empty, is skipped as still being written.
-  A file ffprobe or ffmpeg cannot read yet is skipped too. Both are picked up on the next run.
+- A file whose size or modified time changes within 2 seconds, or that is empty, is skipped as still being written;
+  so is one that changes while ffprobe and ffmpeg are working on it (its results would be stale). A file they cannot
+  read yet is skipped too. All of these are picked up on the next run.
 - `sound` holds `ends_early`, `length_off`, `long_pause` as in ticket 01. A take without a sound track is registered
   with no `sound` (not checked). `length_off` is compared with the middle length of the *other* takes of the scene, so
   a scene's first take has no `length_off` until a second take arrives; when new takes arrive, the `length_off` of the
