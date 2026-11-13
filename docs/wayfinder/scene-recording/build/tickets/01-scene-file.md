@@ -65,18 +65,20 @@ Rules as built:
   become dashes.
 - `ensure_scene_list(raw_dir, cue_text)` saves the list at the first take; later calls return the saved file as is.
   `check_script(store, cue_text)` sets `script_changed` on a saved scene whose id (number plus title) is no longer in
-  the script (changed title, moved, or removed) and clears it when it matches again. Nothing is renamed or deleted;
+  the script (changed title, changed number, or removed), or that kept its id but now sits in a different order among
+  the scenes both lists share (headings swapped without renumbering), and clears it when it matches again. Nothing is renamed or deleted;
   scenes only in the new script come back under `added` and are not added.
 - Best take (`choose_best`): Lex's star; else the newest take (highest number); but if the newest ends early or has a
   long pause and an older take is clean, the newest clean older take is used and `flagged` is true. The favorite never
   decides. `save` refreshes `best` and `flagged` before writing, so readers always find them.
 - Safe writes: temporary file in the same folder, then rename; leftover `.tmp` files are never read. A `scenes.json`
   that is not valid raises `SceneFileError` instead of looking empty.
-- Every write goes through `update(raw_dir, change)`: it takes a lock file (`scenes.json.lock`, taken over when older
-  than 120 seconds), loads, runs `change(store)`, saves and releases, so a star clicked during a take intake is not
-  lost. Tickets 02-04 must write this way, and do slow work (ffprobe, ffmpeg) before calling `update`: `change` should
-  only copy results into the store, because another program waits at most 10 seconds for the lock.
-  `ensure_scene_list` takes the same lock.
+- Every write goes through `update(raw_dir, change)`: it takes a lock the operating system holds on
+  `scenes.json.lock` (released by the system even when a program crashes, so nothing goes stale), loads, runs
+  `change(store)`, saves and releases, so a star clicked during a take intake is not lost. Tickets 02-04 must write
+  this way, and do slow work (ffprobe, ffmpeg) before calling `update`: `change` should only copy results into the
+  store, because another program waits at most 10 seconds for the lock. `ensure_scene_list` takes the same lock.
+  The small lock file stays in the video's folder beside `scenes.json`.
 - Edits to a script heading that keep the same id (only capital letters or punctuation) are ignored on purpose; the
   one-hash title line of a cue file is never a scene.
 - Other helpers: `load`, `save`, `add_take`, `set_star`, `set_favorite`, `find_scene`, take-name helpers

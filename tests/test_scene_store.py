@@ -1,7 +1,7 @@
 """Checks for the per-video scene file (scripts/video/scene_store.py). Only small invented files, no real footage."""
 import json
-import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import threading
@@ -11,6 +11,18 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts/video'))
 import scene_store  # noqa: E402
+
+# Small programs for the tests that need a second process.
+HOLD_THEN_DIE = (
+    'import sys, time; sys.path.insert(0, sys.argv[1]); import scene_store\n'
+    'with scene_store._locked(sys.argv[2]):\n'
+    '    print("holding", flush=True)\n'
+    '    time.sleep(60)\n')
+WRITE_TAKES = (
+    'import sys; sys.path.insert(0, sys.argv[1]); import scene_store\n'
+    'first = int(sys.argv[3])\n'
+    'for n in range(first + 1, first + 11):\n'
+    '    scene_store.update(sys.argv[2], lambda store, n=n: scene_store.add_take(store, "01-intro", n))\n')
 
 FIXTURES = ROOT / 'tests/fixtures'
 CUE = (FIXTURES / 'scene-cue-file.md').read_text(encoding='utf-8')
@@ -27,6 +39,11 @@ def store_with_takes(*takes, **scene_fields):
         scene_store.add_take(store, '02-what-it-really-costs', number, sound=sound)
     store['scenes'][1].update(scene_fields)
     return store
+
+
+def files_in(folder):
+    """Names in a folder, without the small lock file that stays beside scenes.json."""
+    return sorted(p.name for p in Path(folder).iterdir() if p.name != scene_store.LOCK_NAME)
 
 
 def best(store, scene_id='02-what-it-really-costs'):
@@ -148,6 +165,23 @@ class ScriptChanges(unittest.TestCase):
         moved = CUE.replace('2 · WHAT IT REALLY COSTS', '9 · WHAT IT REALLY COSTS')
         self.assertEqual(self.flagged(moved), ['02-what-it-really-costs'])
         self.assertEqual([s['id'] for s in self.store['scenes']][1], '02-what-it-really-costs')
+
+    def test_swapped_headings_are_flagged_with_ids_and_takes_kept(self):
+        scene_store.add_take(self.store, '02-what-it-really-costs', 1)
+        swapped = CUE.replace('### **2 · WHAT IT REALLY COSTS · 02:00**', '### **TMP**').replace(
+            '### **3 · THE NEWS MOVES FAST · 10:00**', '### **2 · WHAT IT REALLY COSTS · 02:00**').replace(
+            '### **TMP**', '### **3 · THE NEWS MOVES FAST · 10:00**')
+        # The two sections trade places in the file but keep their numbers and titles.
+        before = swapped.index('3 · THE NEWS MOVES FAST')
+        self.assertLess(before, swapped.index('2 · WHAT IT REALLY COSTS'))
+        self.assertEqual(self.flagged(swapped), ['02-what-it-really-costs', '03-the-news-moves-fast'])
+        self.assertEqual([s['id'] for s in self.store['scenes']][1:3],
+                         ['02-what-it-really-costs', '03-the-news-moves-fast'])
+        self.assertEqual(len(scene_store.find_scene(self.store, '02-what-it-really-costs')['takes']), 1)
+
+    def test_removing_a_scene_does_not_flag_the_ones_after_it(self):
+        without = CUE.replace('### **3 · THE NEWS MOVES FAST · 10:00**', '### not a heading')
+        self.assertEqual(self.flagged(without), ['03-the-news-moves-fast'])
 
     def test_removed_scene_is_flagged_and_kept(self):
         without = CUE.replace('### **3 · THE NEWS MOVES FAST · 10:00**', '### not a heading')
@@ -315,7 +349,7 @@ class SafeWrites(unittest.TestCase):
             with self.assertRaises(TypeError):
                 scene_store.save(raw, bad)
             self.assertEqual(scene_store.load(raw), good)
-            self.assertEqual(sorted(p.name for p in Path(raw).iterdir()), ['scenes.json'])
+            self.assertEqual(files_in(raw), ['scenes.json'])
 
     def test_a_scene_without_takes_is_an_error(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -326,7 +360,7 @@ class SafeWrites(unittest.TestCase):
     def test_save_leaves_no_temporary_file_behind(self):
         with tempfile.TemporaryDirectory() as raw:
             scene_store.save(raw, store_with_takes())
-            self.assertEqual(sorted(p.name for p in Path(raw).iterdir()), ['scenes.json'])
+            self.assertEqual(files_in(raw), ['scenes.json'])
 
     def test_half_written_temporary_file_is_not_a_broken_file(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -392,13 +426,13 @@ class UpdateUnderLock(unittest.TestCase):
                 thread.join()
             takes = scene_store.find_scene(scene_store.load(raw), '01-intro')['takes']
             self.assertEqual([t['number'] for t in takes], list(range(1, 21)))
-            self.assertEqual(sorted(p.name for p in Path(raw).iterdir()), ['scenes.json'])
+            self.assertEqual(files_in(raw), ['scenes.json'])
 
     def test_update_needs_a_saved_file(self):
         with tempfile.TemporaryDirectory() as raw:
             with self.assertRaises(scene_store.SceneFileError):
                 scene_store.update(raw, lambda store: None)
-            self.assertEqual(list(Path(raw).iterdir()), [])
+            self.assertEqual(files_in(raw), [])
 
     def test_a_failing_change_releases_the_lock_and_saves_nothing(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -413,42 +447,45 @@ class UpdateUnderLock(unittest.TestCase):
             self.assertEqual(scene_store.find_scene(scene_store.load(raw), '01-intro')['takes'], [])
             scene_store.update(raw, lambda store: scene_store.add_take(store, '01-intro', 2))
 
-    def test_a_lock_left_by_a_stopped_program_is_taken_over(self):
-        with tempfile.TemporaryDirectory() as raw:
-            scene_store.ensure_scene_list(raw, CUE)
-            lock = Path(raw) / scene_store.LOCK_NAME
-            lock.write_text('', encoding='utf-8')
-            old = lock.stat().st_mtime - scene_store.LOCK_STALE_SECONDS - 5
-            os.utime(lock, (old, old))
-            scene_store.update(raw, lambda store: scene_store.add_take(store, '01-intro', 1))
-            self.assertEqual(len(scene_store.find_scene(scene_store.load(raw), '01-intro')['takes']), 1)
-
     def test_saving_the_first_scene_list_waits_for_the_lock_too(self):
         with tempfile.TemporaryDirectory() as raw:
-            (Path(raw) / scene_store.LOCK_NAME).write_text('someone-else', encoding='utf-8')
-            with mock.patch.object(scene_store, 'LOCK_WAIT_SECONDS', 0.2):
+            with scene_store._locked(raw), mock.patch.object(scene_store, 'LOCK_WAIT_SECONDS', 0.2):
                 with self.assertRaises(scene_store.SceneFileError):
                     scene_store.ensure_scene_list(raw, CUE)
             self.assertIsNone(scene_store.load(raw))
 
-    def test_a_program_never_removes_a_lock_that_became_someone_elses(self):
+    def test_a_lock_held_too_long_gives_a_clear_error(self):
         with tempfile.TemporaryDirectory() as raw:
             scene_store.ensure_scene_list(raw, CUE)
-            lock = Path(raw) / scene_store.LOCK_NAME
+            with scene_store._locked(raw), mock.patch.object(scene_store, 'LOCK_WAIT_SECONDS', 0.2):
+                with self.assertRaises(scene_store.SceneFileError):
+                    scene_store.update(raw, lambda store: None)
 
-            def takeover(store):
-                lock.write_text('another-program-token', encoding='utf-8')
-
-            scene_store.update(raw, takeover)
-            self.assertEqual(lock.read_text(encoding='utf-8'), 'another-program-token')
-
-    def test_a_fresh_lock_held_too_long_gives_a_clear_error(self):
+    def test_a_program_that_stops_without_cleaning_up_does_not_block_the_next(self):
         with tempfile.TemporaryDirectory() as raw:
             scene_store.ensure_scene_list(raw, CUE)
-            (Path(raw) / scene_store.LOCK_NAME).write_text('', encoding='utf-8')
+            holder = subprocess.Popen(
+                [sys.executable, '-I', '-c', HOLD_THEN_DIE, str(ROOT / 'scripts/video'), raw],
+                stdout=subprocess.PIPE, text=True)
+            self.assertEqual(holder.stdout.readline().strip(), 'holding')
             with mock.patch.object(scene_store, 'LOCK_WAIT_SECONDS', 0.2):
                 with self.assertRaises(scene_store.SceneFileError):
                     scene_store.update(raw, lambda store: None)
+            holder.kill()  # no chance to clean up
+            holder.wait()
+            holder.stdout.close()
+            scene_store.update(raw, lambda store: scene_store.add_take(store, '01-intro', 1))
+            self.assertEqual(len(scene_store.find_scene(scene_store.load(raw), '01-intro')['takes']), 1)
+
+    def test_separate_programs_writing_at_once_lose_nothing(self):
+        with tempfile.TemporaryDirectory() as raw:
+            scene_store.ensure_scene_list(raw, CUE)
+            writers = [subprocess.Popen([sys.executable, '-I', '-c', WRITE_TAKES, str(ROOT / 'scripts/video'),
+                                         raw, str(first)]) for first in (0, 100, 200)]
+            for writer in writers:
+                self.assertEqual(writer.wait(timeout=60), 0)
+            numbers = [t['number'] for t in scene_store.find_scene(scene_store.load(raw), '01-intro')['takes']]
+            self.assertEqual(numbers, sorted([*range(1, 11), *range(101, 111), *range(201, 211)]))
 
 
 class SampleFile(unittest.TestCase):

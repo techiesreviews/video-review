@@ -28,6 +28,12 @@ import time
 import unicodedata
 import uuid
 
+try:
+    import fcntl
+except ImportError:  # Windows (Git Bash)
+    fcntl = None
+    import msvcrt
+
 FILE_NAME = 'scenes.json'
 VERSION = 1
 STORE_FIELDS = ('version', 'saved_at', 'scenes', 'markers')
@@ -46,8 +52,7 @@ TAKE_FILE = re.compile(r'^take-(\d+)(\.[A-Za-z0-9]+)$')
 TAKE_FULL = re.compile(r'^scene-(\d+-.+)-take-(\d+)(\.[A-Za-z0-9]+)?$')
 WINDOWS_RETRIES = 10
 LOCK_NAME = 'scenes.json.lock'
-LOCK_STALE_SECONDS = 120  # a lock older than this was left by a program that stopped; it is taken over
-LOCK_WAIT_SECONDS = 10   # how long update() waits for another program's lock before giving up
+LOCK_WAIT_SECONDS = 10  # how long update() waits for another program's lock before giving up
 
 
 class SceneFileError(Exception):
@@ -143,17 +148,21 @@ def ensure_scene_list(raw_dir, cue_text):
 def check_script(store, cue_text):
     """Compare the saved scene list with the script now. Flags changed scenes; renames and deletes nothing.
 
-    A saved scene whose id (number plus title) is no longer in the script gets script_changed true, whether its
-    title changed, it moved, or it was removed. A scene that matches again loses the flag. Scenes that are only in
+    A saved scene gets script_changed true when its id (number plus title) is no longer in the script (title
+    changed, number changed, or removed), or when it kept its id but now sits in a different place among the scenes
+    both lists still share (headings swapped or moved without renumbering). A scene that matches again loses the flag. Scenes that are only in
     the script now are reported under "added" and are not added to the file. Returns {"changed": [...], "added": [...]}.
     An edit that keeps the same id (only capital letters or punctuation in the title) is ignored on purpose.
     """
     current = [scene['id'] for scene in parse_cue_file(cue_text)]
     saved = [scene['id'] for scene in store['scenes']]
+    shared_now = [key for key in current if key in saved]
+    shared_then = [key for key in saved if key in current]
     for scene in store['scenes']:
-        scene['script_changed'] = scene['id'] not in current
+        key = scene['id']
+        scene['script_changed'] = key not in current or shared_now.index(key) != shared_then.index(key)
     return {
-        'changed': [key for key in saved if key not in current],
+        'changed': [scene['id'] for scene in store['scenes'] if scene['script_changed']],
         'added': [key for key in current if key not in saved],
     }
 
@@ -306,45 +315,45 @@ def save(raw_dir, store):
         raise
 
 
+def _try_lock(handle):
+    if fcntl:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    else:
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+
+
+def _unlock(handle):
+    if fcntl:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    else:
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+
+
 @contextmanager
 def _locked(raw_dir):
-    """One program at a time between load and save: a lock file made with O_EXCL, taken over when stale."""
+    """One program at a time between load and save, using a lock the operating system holds on scenes.json.lock.
+
+    The system lets go of it when the program ends, even if it crashed, so there is no stale lock to clean up and
+    no way for one program to remove another's. The small lock file itself stays in the folder.
+    """
     folder = Path(raw_dir)
     folder.mkdir(parents=True, exist_ok=True)
-    lock = folder / LOCK_NAME
-    token = f'{os.getpid()}-{uuid.uuid4().hex}'
     deadline = time.monotonic() + LOCK_WAIT_SECONDS
-    while True:
-        try:
-            handle = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    with open(folder / LOCK_NAME, 'a+b') as handle:
+        while True:
             try:
-                os.write(handle, token.encode('ascii'))
-            except BaseException:
-                os.close(handle)  # closed first: Windows cannot delete an open file
-                lock.unlink(missing_ok=True)
-                raise
-            os.close(handle)
-            break
-        except FileExistsError:
-            try:
-                if time.time() - lock.stat().st_mtime > LOCK_STALE_SECONDS:
-                    lock.unlink(missing_ok=True)
-                    continue
-            except FileNotFoundError:
-                continue
-            if time.monotonic() > deadline:
-                raise SceneFileError(f'{lock} is held by another program; try again in a moment. '
-                                     f'A lock left by a stopped program is cleared after {LOCK_STALE_SECONDS} seconds.')
-            time.sleep(0.05)
-    try:
-        yield
-    finally:
-        # Only remove our own lock: if it was taken over as stale, it now belongs to another program.
+                _try_lock(handle)
+                break
+            except OSError:
+                if time.monotonic() > deadline:
+                    raise SceneFileError(f'{handle.name} is held by another program; try again in a moment.') from None
+                time.sleep(0.05)
         try:
-            if lock.read_text(encoding='ascii') == token:
-                lock.unlink(missing_ok=True)
-        except (OSError, UnicodeDecodeError):
-            pass  # never hide the real error from change or save; a lock we cannot read goes stale on its own
+            yield
+        finally:
+            _unlock(handle)
 
 
 def update(raw_dir, change):
