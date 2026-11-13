@@ -72,9 +72,17 @@ the first slice has build tickets.
 
 ## Open tickets (the frontier)
 
-None are open for Lex. The fog below turns into build tickets next.
+No decision is open for Lex. The way is clear for the first slice; its [build tickets](build/README.md):
+
+- [The per-video scene file](build/tickets/01-scene-file.md)
+- [Check OBS remote control on LexTop](build/tickets/05-check-obs-websocket-on-lextop.md) — Lex, on LexTop
+- [Register takes and check their sound](build/tickets/02-register-takes-and-check-sound.md)
+- [The overview page](build/tickets/03-overview-page.md)
+- [Rough cut from the best takes](build/tickets/04-rough-cut-from-best-takes.md)
 
 ## Not yet specified
+
+These become build tickets in the next slice, once the OBS check answers what is possible:
 
 - How the long-recording mode cuts a scene out of the markers (marker file, who cuts, when).
 - How files travel from LexTop to ubulex, and where the helper runs.
