@@ -45,10 +45,14 @@ the first slice has build tickets.
 - [How a take starts and stops](tickets/01-how-a-take-starts-and-stops.md): all three ways are in: an OBS
   helper that files each take, Prompter buttons, and one long recording with markers.
 
+- [Pick the Prompter layout](tickets/02-pick-the-prompter-layout.md): a dim light that is the record button, a
+  star on the best take, previous/next skip scenes, a hidden scene rail; the Prompter stays a prompter. The
+  [final mockup](prototypes/prompter-recording-chosen.html) shows it.
+- [How Lex checks earlier takes](tickets/08-how-lex-checks-earlier-takes.md): both ways, the video-review page
+  first, then playing a take on the main screen.
+
 ## Open tickets (the frontier)
 
-- [Pick the Prompter layout](tickets/02-pick-the-prompter-layout.md) — prototype, with Lex. Five mockups
-  are ready: [open them](prototypes/prompter-recording-mockups.html).
 - [What counts as a scene](tickets/03-what-counts-as-a-scene.md) — grilling.
 - [Check OBS on LexTop](tickets/04-check-obs-on-lextop.md) — task, needs LexTop online.
 - [Who marks the best take, and when](tickets/05-who-marks-the-best-take.md) — grilling.
@@ -64,6 +68,7 @@ the first slice has build tickets.
 - Transcripts per take (HappyScribe cost) or only for the best take.
 - The handoff of best takes to the existing cutter and the Resolve timeline.
 - Re-takes of one scene after the rough cut has started.
+- Playing an older take on the main screen from the Prompter rail (decided, built after the review page).
 
 ## Out of scope
 
