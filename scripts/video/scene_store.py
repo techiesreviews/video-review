@@ -319,8 +319,11 @@ def _locked(raw_dir):
             handle = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             try:
                 os.write(handle, token.encode('ascii'))
-            finally:
-                os.close(handle)
+            except BaseException:
+                os.close(handle)  # closed first: Windows cannot delete an open file
+                lock.unlink(missing_ok=True)
+                raise
+            os.close(handle)
             break
         except FileExistsError:
             try:
@@ -330,7 +333,8 @@ def _locked(raw_dir):
             except FileNotFoundError:
                 continue
             if time.monotonic() > deadline:
-                raise SceneFileError(f'{lock} is held by another program; try again in a moment.')
+                raise SceneFileError(f'{lock} is held by another program; try again in a moment. '
+                                     f'A lock left by a stopped program is cleared after {LOCK_STALE_SECONDS} seconds.')
             time.sleep(0.05)
     try:
         yield
@@ -339,8 +343,8 @@ def _locked(raw_dir):
         try:
             if lock.read_text(encoding='ascii') == token:
                 lock.unlink(missing_ok=True)
-        except (FileNotFoundError, UnicodeDecodeError):
-            pass
+        except (OSError, UnicodeDecodeError):
+            pass  # never hide the real error from change or save; a lock we cannot read goes stale on its own
 
 
 def update(raw_dir, change):
