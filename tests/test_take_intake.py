@@ -409,11 +409,11 @@ class GrowingFiles(IntakeCase):
 class LengthAcrossTakes(IntakeCase):
     def test_takes_of_one_scene_are_compared_with_each_other(self):
         scene = self.scenes[0]
-        self.add_file(scene, 1, 100.0)
-        self.add_file(scene, 2, 104.0)
-        self.add_file(scene, 3, 40.0)
+        for number, length in ((1, 100.0), (2, 104.0), (3, 98.0), (4, 40.0)):
+            self.add_file(scene, number, length)
         self.run_intake()
-        self.assertEqual([self.take(scene, n)['sound']['length_off'] for n in (1, 2, 3)], [False, False, True])
+        self.assertEqual([self.take(scene, n)['sound']['length_off'] for n in (1, 2, 3, 4)],
+                         [False, False, False, True])
 
     def test_other_scenes_are_not_part_of_the_comparison(self):
         self.add_file(self.scenes[0], 1, 100.0)
