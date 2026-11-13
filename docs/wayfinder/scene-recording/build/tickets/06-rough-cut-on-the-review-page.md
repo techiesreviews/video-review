@@ -3,7 +3,7 @@ title: Show the rough cut on the review page
 type: task (HITL until Lex answers the question below, then AFK)
 status: open
 assignee: unassigned
-blocked_by: [04-rough-cut-from-best-takes, Lex's answer to the question below]
+blocked_by: [04-rough-cut-from-best-takes]
 ---
 
 ## What
