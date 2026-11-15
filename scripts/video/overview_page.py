@@ -532,8 +532,9 @@ PAGE_SCRIPT = """<script>
   const title = player.querySelector('.t'), detail = player.querySelector('.d');
   const setStars = on => { stars.forEach(s => { s.disabled = !on; }); off.hidden = on; };
   fetch(server + '/api/scenes?video=' + encodeURIComponent(video) + '&code=' + encodeURIComponent(code))
-    .then(r => r.ok ? r.json() : Promise.reject(), () => Promise.reject())
-    .then(() => setStars(true), () => setStars(false));
+    .then(r => r.ok ? r.json() : r.json().then(j => Promise.reject(j.error), () => Promise.reject()), () => Promise.reject())
+    // The server answered but said no (this page is out of date): show what it said; no answer: the usual line.
+    .then(() => setStars(true), said => { off.textContent = said || offText; setStars(false); });
   document.addEventListener('click', e => {
     const star = e.target.closest('.st');
     if (star) {

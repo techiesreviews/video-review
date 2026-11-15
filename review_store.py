@@ -21,7 +21,8 @@ write=file_store.write_json
 
 def locked(path):
     """One program or thread at a time on this data file (file_store's lock, its own per file, so the browser and the
-    AI never overwrite each other's changes). Held by another program for over 10 seconds: a ValueError to show."""
+    AI never overwrite each other's changes). Held by another program past file_store.LOCK_WAIT_SECONDS: a ValueError
+    to show."""
     return file_store.locked(file_store.lock_for(path),busy=f'{Path(path).name} is busy; try again in a moment.')
 
 def videos(directory):return read(directory/'manifest.json',[])

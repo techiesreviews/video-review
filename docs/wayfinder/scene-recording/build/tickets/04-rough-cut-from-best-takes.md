@@ -67,8 +67,8 @@ Rules as built (for ticket 06 and the Prompter slice):
 - `scripts/video/rough_cut.py` (new): `rebuild_rough_cut(video folder, cue=None, data_dir=None)` writes `rough-cut.json`
   next to `scenes.json` and returns the list; the command `python scripts/video/rough_cut.py <video folder>` does the same
   by hand. It reads `scenes.json` and writes the list while holding the scene file's lock (`scene_store.locked`), writes
-  through `scene_store.write_text_atomic` (new: the temporary-file-then-rename write that `save()` already used, now
-  shared), and never changes `scenes.json`. A folder without a usable scene file raises `SceneFileError` and leaves the
+  through `file_store.write_text` (the temporary-file-then-rename write every data and video folder file uses; it was
+  `scene_store.write_text_atomic` until TOOLS-297), and never changes `scenes.json`. A folder without a usable scene file raises `SceneFileError` and leaves the
   old list alone.
 - The file: `version`, `total_seconds`, `lengths_known` (false when a recorded scene's best take has no length) and
   `scenes`, one per scene in script order: `scene`, `number`, `title`, `recorded`, `take`, `file` (relative to the video
