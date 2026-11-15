@@ -86,8 +86,8 @@ Rules as built (for ticket 04 and the Prompter slice):
   the scene file's lock (`scene_store.locked`, the same lock under a public name), so a page never comes from a scene
   file another program is changing and two rewrites cannot finish in the wrong order. Temporary file names carry a
   random part (several requests share one process).
-- `GET /api/scenes?video=<key>` returns the saved scene list. `POST /api/scenes/star` takes
-  `{"video": key, "scene": id, "take": number-or-null}` (null takes the star off), writes through
+- `GET /api/scenes?video=<key>&code=<page code>` returns the saved scene list. `POST /api/scenes/star` takes
+  `{"video": key, "code": page code, "scene": id, "take": number-or-null}` (null takes the star off), writes through
   `scene_store.update()`, then rewrites `overview.html`; a star that is saved while the page cannot be rewritten
   answers 500 with a message that says so. A take number that is not there, a scene that is not there and a
   request that is not whole numbers, or that leaves out `take`, answer 400 and change nothing; a scene file that cannot be read answers 409.
@@ -96,8 +96,12 @@ Rules as built (for ticket 04 and the Prompter slice):
   are served (not `scenes.json`, the cue file, other files, `..` or a link that leaves the folder).
 - A page opened by double click calls the server from the browser origin `null`. The server accepts that origin only
   for the star route (with its preflight) and for reading the scene list; every other write still needs the server's
-  own address. The limit: any page in a sandboxed frame can also send a star to a registered video, which can only
-  change which take is in front and is undone by one click.
+  own address. Any page in a sandboxed frame can send `null` too, so since TOOLS-297 a `null` request also needs the
+  video's page code: a random code the registry keeps per video and the saved page carries in `data-code`. Without the
+  right code (or for an unknown video) it gets 403 with "This saved page is out of date…", which the page shows. Pages
+  saved before page codes get theirs when the server starts. The page the server serves itself needs no code.
+- Every request to the server must carry `Host: 127.0.0.1:<port>` or `localhost:<port>`; any other Host gets 403
+  before any route (DNS rebinding, TOOLS-297).
 - Chips: "Script changed since recording" shows when the saved scene has `script_changed`, or when comparing the
   scene list with the cue file each time the page is made (`scene_store.check_script` on a copy, nothing saved) says
   the heading no longer matches; a cue file with no numbered sections says nothing. "Older take in front: the newest

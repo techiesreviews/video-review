@@ -65,9 +65,10 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get('Origin')!=FILE_PAGE_ORIGIN or overview_page.code_matches(DATA,key,code):return False
         self.send_json({'error':overview_page.STALE_PAGE_TEXT},403,extra=self.cors());return True
     def scene_list(self,query):
-        asked=parse_qs(query);key=asked.get('video',[''])[0];found=self.scene_video(key)
-        if not found:return self.send_json({'error':'Unknown video'},404)
+        asked=parse_qs(query);key=asked.get('video',[''])[0]
         if self.page_code_missing(key,asked.get('code',[''])[0]):return
+        found=self.scene_video(key)
+        if not found:return self.send_json({'error':'Unknown video'},404)
         try:saved=scene_store.load(found[0])
         except scene_store.SceneFileError as error:return self.send_json({'error':str(error)},409)
         self.send_json({'video':key,'saved_at':saved.get('saved_at'),'scenes':saved['scenes']},extra=self.cors())
@@ -126,9 +127,11 @@ class Handler(BaseHTTPRequestHandler):
     def star(self,cmd):
         """Lex's star for a take (or off, with take null): writes the scene file, then rebuilds the rough cut list and rewrites the saved page."""
         if not isinstance(cmd,dict) or 'take' not in cmd:raise ValueError('Invalid star request')
-        key=str(cmd.get('video',''));found=self.scene_video(key)
-        if not found:return self.send_json({'error':'Unknown video'},404,extra=self.cors())
+        # From the origin "null" the code is checked first, so an unknown video and a wrong code look the same.
+        key=str(cmd.get('video',''))
         if self.page_code_missing(key,cmd.get('code')):return
+        found=self.scene_video(key)
+        if not found:return self.send_json({'error':'Unknown video'},404,extra=self.cors())
         folder,cue=found;scene,take=cmd.get('scene'),cmd.get('take')
         if not isinstance(scene,str) or (take is not None and type(take) is not int):raise ValueError('Invalid star request')
         saved=scene_store.update(folder,lambda current:scene_store.set_star(current,scene,take))
@@ -171,8 +174,11 @@ class Handler(BaseHTTPRequestHandler):
 
 def start_background_jobs():
     """Pages saved before page codes get theirs, in the background so the server answers at once. Returns the thread."""
-    job=threading.Thread(target=overview_page.give_old_pages_a_code,args=(DATA,),daemon=True);job.start()
-    return job
+    def job():
+        try:overview_page.give_old_pages_a_code(DATA)
+        except (ValueError,OSError) as error:print(f'Saved overview pages were not given their codes yet ({error}); the next take does it.',file=sys.stderr,flush=True)
+    thread=threading.Thread(target=job,daemon=True);thread.start()
+    return thread
 
 def create_server(port=8879, data_dir=None):
     global DATA, PORT

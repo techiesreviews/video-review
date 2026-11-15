@@ -290,7 +290,7 @@ class ReviewServerTests:
 
     def test_every_star_answer_can_be_read_by_the_saved_page(self):
         # The page opened by double click only shows what the server said when the answer carries this header.
-        for body,code in [({'video':'nope-12345678','scene':'01-intro','take':1},404),
+        for body,code in [({'video':'nope-12345678','scene':'01-intro','take':1},403),
                           ({'video':self.key,'scene':'01-intro','take':9,'code':self.code()},400),
                           ({'video':self.key,'scene':'01-intro','take':1},403),
                           ([],400)]:
@@ -354,6 +354,32 @@ class ReviewServerTests:
             assert code and code!=old_code
             assert f'data-code="{code}"' in page.read_text(encoding='utf-8')
         finally:self.reset_scenes()
+
+    def test_from_the_origin_null_an_unknown_video_looks_like_a_wrong_code(self):
+        # Otherwise a website could test guessed folder names: a readable 404 would mean "no such video".
+        for video in (self.key,'nope-12345678'):
+            try:self.star({'video':video,'scene':'01-intro','take':1,'code':'guess'},'null')
+            except HTTPError as error:
+                assert error.code==403,(video,error.code)
+                assert 'out of date' in json.load(error)['error']
+            else:raise AssertionError('accepted')
+
+    def test_a_busy_or_broken_registry_does_not_crash_the_start_up_page_job(self):
+        registry_path=self.data/overview_page.REGISTRY_NAME
+        before=registry_path.read_bytes()
+        try:
+            registry_path.write_text('{nope',encoding='utf-8')
+            errors=[]
+            with mock.patch('sys.stderr') as stderr:
+                server.start_background_jobs().join(10)
+                errors.append(''.join(str(call.args[0]) for call in stderr.write.call_args_list))
+            assert 'next take' in errors[0],errors
+        finally:registry_path.write_bytes(before)
+        with mock.patch.object(server.overview_page.file_store,'LOCK_WAIT_SECONDS',0.2):
+            with server.overview_page.file_store.locked(server.overview_page.file_store.lock_for(registry_path)):
+                with mock.patch('sys.stderr') as stderr:server.start_background_jobs().join(10)
+                assert 'next take' in ''.join(str(call.args[0]) for call in stderr.write.call_args_list)
+        assert registry_path.read_bytes()==before
 
     def raw_request(self,host,path='/api/videos',method='GET',headers=None):
         connection=http.client.HTTPConnection('127.0.0.1',self.httpd.server_port,timeout=3)

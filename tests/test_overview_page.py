@@ -6,9 +6,11 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from unittest import mock
 
@@ -643,6 +645,54 @@ class CommandLine(unittest.TestCase):
         self.assertFalse(gone.exists())
         self.assertEqual(overview_page.give_old_pages_a_code(self.data), [])  # once is enough
         self.assertEqual(overview_page.page_code(self.data, key), code)
+
+
+class SavedPageScript(unittest.TestCase):
+    """The saved page's own script, run in Node with a fake page (skipped without Node)."""
+    def run_page_script(self, answer):
+        """Run the saved page's script in Node with a fake page and a fake fetch; return what the stars line says and
+        whether the stars are on. answer: what fetch does ('network', or [status, body text])."""
+        node = shutil.which('node')
+        if not node:
+            self.skipTest('node is not installed')
+        harness = textwrap.dedent('''
+            const answer = JSON.parse(process.argv[1]);
+            const off = { textContent: process.argv[2], hidden: true };
+            const star = { disabled: true };
+            globalThis.document = {
+              body: { dataset: { server: 'http://127.0.0.1:8879', video: 'v-1', code: 'the-code' } },
+              querySelectorAll: () => [star],
+              getElementById: () => off,
+              addEventListener: () => {},
+            };
+            const player = { querySelector: () => ({ addEventListener: () => {} }) };
+            const realGet = document.getElementById;
+            document.getElementById = id => id === 'player' ? player : realGet(id);
+            let asked = '';
+            globalThis.fetch = url => {
+              asked = url;
+              if (answer === 'network') return Promise.reject(new TypeError('Failed to fetch'));
+              const [status, text] = answer;
+              return Promise.resolve({ ok: status < 300, json: () => Promise.resolve().then(() => JSON.parse(text)) });
+            };
+            ''') + overview_page.PAGE_SCRIPT.split('<script>')[1].split('</script>')[0] + textwrap.dedent('''
+            setTimeout(() => console.log(JSON.stringify({ said: off.textContent, hidden: off.hidden, on: !star.disabled, asked })), 50);
+            ''')
+        done = subprocess.run([node, '-e', harness, json.dumps(answer), overview_page.STARS_OFF_TEXT],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_the_saved_page_shows_the_server_s_reason_or_the_usual_line(self):
+        seen = self.run_page_script([200, '{"scenes": []}'])
+        self.assertEqual((seen['on'], seen['hidden']), (True, True))
+        self.assertTrue(seen['asked'].endswith('/api/scenes?video=v-1&code=the-code'), seen['asked'])
+        seen = self.run_page_script([403, json.dumps({'error': overview_page.STALE_PAGE_TEXT})])
+        self.assertEqual((seen['on'], seen['hidden'], seen['said']), (False, False, overview_page.STALE_PAGE_TEXT))
+        for answer in ('network', [403, 'not json'], [500, 'null'], [500, '{"error": 7}']):
+            seen = self.run_page_script(answer)
+            self.assertEqual((seen['on'], seen['hidden'], seen['said']), (False, False, overview_page.STARS_OFF_TEXT),
+                             answer)
 
 
 if __name__ == '__main__':
