@@ -23,6 +23,7 @@ import review_store as store  # noqa: E402
 SLOW_RECUT = (
     'import sys, time\n'
     'sys.path.insert(0, sys.argv[1]); import review_store\n'
+    # rebase_comments is the name before TOOLS-297, kept so this test also shows the old code losing a change.
     'name = "_rebase" if hasattr(review_store, "_rebase") else "rebase_comments"\n'
     'real = getattr(review_store, name)\n'
     'def slow(*args):\n'

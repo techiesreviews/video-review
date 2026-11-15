@@ -364,6 +364,19 @@ class ReviewServerTests:
                 assert 'out of date' in json.load(error)['error']
             else:raise AssertionError('accepted')
 
+    def test_a_broken_registry_refuses_the_saved_page_with_an_answer(self):
+        registry_path=self.data/overview_page.REGISTRY_NAME
+        before=registry_path.read_bytes()
+        try:
+            registry_path.write_text('{nope',encoding='utf-8')
+            req=Request(self.origin+'/api/scenes?video='+self.key+'&code=x',headers={'Origin':'null'})
+            try:urlopen(req,timeout=3)
+            except HTTPError as error:
+                assert error.code==403
+                assert 'out of date' in json.load(error)['error']
+            else:raise AssertionError('answered 200')
+        finally:registry_path.write_bytes(before)
+
     def test_a_busy_or_broken_registry_does_not_crash_the_start_up_page_job(self):
         registry_path=self.data/overview_page.REGISTRY_NAME
         before=registry_path.read_bytes()

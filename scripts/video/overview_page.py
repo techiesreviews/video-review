@@ -113,8 +113,12 @@ def page_code(data_dir, key):
 
 
 def code_matches(data_dir, key, code):
-    """True only for the right page code of a registered video (compared in constant time)."""
-    expected = page_code(data_dir, key)
+    """True only for the right page code of a registered video (compared in constant time). A registry that cannot be
+    read matches nothing."""
+    try:
+        expected = page_code(data_dir, key)
+    except (ValueError, OSError):
+        return False
     return bool(expected) and isinstance(code, str) and hmac.compare_digest(expected.encode(), code.encode())
 
 
