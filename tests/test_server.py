@@ -1,8 +1,10 @@
+import http.client
 import json
 from pathlib import Path
 import sys
 import tempfile
 import threading
+from unittest import mock
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
@@ -184,7 +186,7 @@ class ReviewServerTests:
             else:raise AssertionError('A scene list was served for '+query)
 
     def test_the_saved_page_may_ask_for_the_scene_list(self):
-        req=Request(self.origin+'/api/scenes?video='+self.key,headers={'Origin':'null'})
+        req=Request(self.origin+'/api/scenes?video='+self.key+'&code='+self.code(),headers={'Origin':'null'})
         with urlopen(req,timeout=3) as r:assert r.headers['Access-Control-Allow-Origin']=='null'
         req=Request(self.origin+'/api/scenes?video='+self.key,headers={'Origin':'https://example.org'})
         with urlopen(req,timeout=3) as r:assert 'Access-Control-Allow-Origin' not in r.headers
@@ -200,6 +202,9 @@ class ReviewServerTests:
         assert 'style="flex:30" title="Scene 1, take 1"' in page
         assert 'Picture this.' in page
         assert f'data-server="http://127.0.0.1:{self.httpd.server_port}"' in page
+        assert f'data-code="{self.code()}"' in page
+
+    def code(self):return overview_page.page_code(self.data,self.key)
 
     def saved_rough_cut(self):return json.loads((self.raw/rough_cut.FILE_NAME).read_text(encoding='utf-8'))
 
@@ -286,7 +291,8 @@ class ReviewServerTests:
     def test_every_star_answer_can_be_read_by_the_saved_page(self):
         # The page opened by double click only shows what the server said when the answer carries this header.
         for body,code in [({'video':'nope-12345678','scene':'01-intro','take':1},404),
-                          ({'video':self.key,'scene':'01-intro','take':9},400),
+                          ({'video':self.key,'scene':'01-intro','take':9,'code':self.code()},400),
+                          ({'video':self.key,'scene':'01-intro','take':1},403),
                           ([],400)]:
             try:self.star(body,'null')
             except HTTPError as error:
@@ -305,13 +311,72 @@ class ReviewServerTests:
 
     def test_the_saved_page_opened_by_double_click_may_send_a_star(self):
         self.reset_scenes()
-        with self.star({'video':self.key,'scene':'01-intro','take':1},'null') as r:
+        with self.star({'video':self.key,'scene':'01-intro','take':1,'code':self.code()},'null') as r:
             assert r.headers['Access-Control-Allow-Origin']=='null'
         assert self.saved_scene()['star']==1
         # ... but the same null origin may not write comments or anything else
         try:self.request('/api/comments',{'action':'add'},{'Content-Type':'application/json','Origin':'null'})
         except HTTPError as error:assert error.code==403
         else:raise AssertionError('A null origin could write a comment')
+
+    def test_another_website_without_the_page_code_cannot_press_stars(self):
+        # S2: any website can send the origin "null" from a sandboxed frame. Only the saved page knows its code.
+        self.reset_scenes()
+        before=(self.raw/'scenes.json').read_bytes()
+        for extra in ({},{'code':''},{'code':'guess'},{'code':123},'one letter short'):
+            if extra=='one letter short':extra={'code':self.code()[:-1]}
+            body={'video':self.key,'scene':'01-intro','take':1,**extra}
+            try:self.star(body,'null')
+            except HTTPError as error:
+                assert error.code==403,(extra,error.code)
+                assert error.headers['Access-Control-Allow-Origin']=='null'
+                assert 'out of date' in json.load(error)['error']
+            else:raise AssertionError(f'A star from the origin "null" without the right code was accepted: {extra}')
+        assert (self.raw/'scenes.json').read_bytes()==before
+
+    def test_another_website_without_the_page_code_cannot_read_the_take_list(self):
+        for query in ('','&code=','&code=guess'):
+            req=Request(self.origin+'/api/scenes?video='+self.key+query,headers={'Origin':'null'})
+            try:urlopen(req,timeout=3)
+            except HTTPError as error:assert error.code==403,(query,error.code)
+            else:raise AssertionError('The take list was sent to the origin "null" without the code: '+query)
+
+    def raw_request(self,host,path='/api/videos',method='GET',headers=None):
+        connection=http.client.HTTPConnection('127.0.0.1',self.httpd.server_port,timeout=3)
+        try:
+            connection.putrequest(method,path,skip_host=True)
+            if host is not None:connection.putheader('Host',host)
+            for name,value in (headers or {}).items():connection.putheader(name,value)
+            connection.endheaders()
+            response=connection.getresponse()
+            return response.status,response.read()
+        finally:connection.close()
+
+    def test_only_local_host_names_are_answered(self):
+        # S1 (DNS rebinding): a website can point its own name at 127.0.0.1; the browser then sends that name as Host.
+        port=self.httpd.server_port
+        for host in (f'127.0.0.1:{port}',f'localhost:{port}',f'LOCALHOST:{port}'):
+            assert self.raw_request(host)[0]==200,host
+        for host in ('evil.example',f'evil.example:{port}',f'127.0.0.1.evil.example:{port}',f'localhost.evil.example:{port}',
+                     f'192.168.1.5:{port}',f'127.0.0.1:{port+1}','127.0.0.1','localhost',f'127.0.0.1:{port}@evil.example','',None):
+            for path in ('/api/videos','/api/comments','/media/example-v1','/',f'/scenes/{self.key}'):
+                status,body=self.raw_request(host,path)
+                assert status==403,(host,path,status)
+                assert b'example.mp4' not in body and b'Example' not in body
+        status,_=self.raw_request(f'evil.example:{port}','/api/view','POST',{'Origin':f'http://127.0.0.1:{port}','Content-Type':'application/json','Content-Length':'2'})
+        assert status==403
+        status,_=self.raw_request(f'evil.example:{port}','/api/scenes/star','OPTIONS',{'Origin':'null'})
+        assert status==403
+
+    def test_a_save_that_keeps_failing_gets_an_answer_instead_of_a_dropped_connection(self):
+        # B3: a save that Windows kept refusing raised an error the server did not catch.
+        headers={'Content-Type':'application/json','Origin':self.origin}
+        with mock.patch('os.replace',side_effect=PermissionError(13,'The process cannot access the file')):
+            try:self.request('/api/view',{'videoId':'example-v1','playheadMs':10},headers)
+            except HTTPError as error:
+                assert error.code==500,error.code
+                assert 'could not be saved' in json.load(error)['error']
+            else:raise AssertionError('A failed save was reported as saved')
 
     def test_the_star_route_answers_the_preflight_only_for_the_saved_page(self):
         def preflight(origin):
