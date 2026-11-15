@@ -7,7 +7,7 @@ needs the Prompter or OBS yet; those come in the next slice, after the OBS check
 ## Rules
 
 - Plain English in every file, comment, commit and PR text. This repo is public: no tokens, no personal data.
-- Everything runs through `scripts/agents/kit` (`kit doctor` first, `kit slice`, `kit pr`). Checks:
+- Everything runs through `scripts/agents/kit` (`kit doctor` first, then `kit pr`); the build runs as a T3 helper with `kit brief <ticket>` as its task. Checks:
   `bash scripts/agents/run-tests.sh` (Python and Node tests, no installs).
 - Free tools only: ffmpeg and ffprobe for lengths, thumbnails and sound checks. No paid transcript
   (HappyScribe) runs unless Lex asks for it for one video.
