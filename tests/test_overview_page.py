@@ -609,6 +609,14 @@ class CommandLine(unittest.TestCase):
             self.assertFalse(overview_page.code_matches(self.data, key, wrong), wrong)
         self.assertFalse(overview_page.code_matches(self.data, 'nope-12345678', code))
 
+    def test_the_saved_page_shows_why_the_server_refused_its_take_list(self):
+        # A page that is out of date gets a 403 with a reason; the page must show that, not "start video-review".
+        script = overview_page.PAGE_SCRIPT
+        self.assertIn("r.json().then(j => Promise.reject(j.error)", script)
+        self.assertIn('off.textContent = said || offText; setStars(false);', script)
+        self.assertIn("'&code=' + encodeURIComponent(code)", script)
+        self.assertIn('JSON.stringify({ video, code,', script)
+
     def test_two_videos_get_different_page_codes(self):
         other = Path(self.temp.name) / 'Other'
         other.mkdir()

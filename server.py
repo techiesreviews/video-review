@@ -169,6 +169,11 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError,KeyError,TypeError,json.JSONDecodeError) as e:self.send_json({'error':str(e)},400,extra=self.cors())
         except OSError as e:self.send_json({'error':f'The change could not be saved: {e}'},500,extra=self.cors())
 
+def start_background_jobs():
+    """Pages saved before page codes get theirs, in the background so the server answers at once. Returns the thread."""
+    job=threading.Thread(target=overview_page.give_old_pages_a_code,args=(DATA,),daemon=True);job.start()
+    return job
+
 def create_server(port=8879, data_dir=None):
     global DATA, PORT
     DATA=store.data_dir(data_dir)
@@ -183,8 +188,7 @@ if __name__=='__main__':
     parser.add_argument('--data-dir',default=None)
     args=parser.parse_args()
     httpd=create_server(args.port,args.data_dir)
-    # Pages saved before page codes get theirs, in the background so the server answers at once.
-    threading.Thread(target=overview_page.give_old_pages_a_code,args=(DATA,),daemon=True).start()
+    start_background_jobs()
     print(f'Video Review: http://127.0.0.1:{PORT}',flush=True)
     try:httpd.serve_forever()
     except KeyboardInterrupt:pass

@@ -341,6 +341,20 @@ class ReviewServerTests:
             except HTTPError as error:assert error.code==403,(query,error.code)
             else:raise AssertionError('The take list was sent to the origin "null" without the code: '+query)
 
+    def test_starting_the_server_gives_a_page_saved_before_page_codes_its_code(self):
+        registry_path=self.data/overview_page.REGISTRY_NAME
+        registry=json.loads(registry_path.read_text(encoding='utf-8'))
+        old_code=registry[self.key].pop('code')
+        registry_path.write_text(json.dumps(registry),encoding='utf-8')
+        page=self.raw/overview_page.FILE_NAME
+        page.write_text('old page without a code',encoding='utf-8')
+        try:
+            server.start_background_jobs().join(30)
+            code=self.code()
+            assert code and code!=old_code
+            assert f'data-code="{code}"' in page.read_text(encoding='utf-8')
+        finally:self.reset_scenes()
+
     def raw_request(self,host,path='/api/videos',method='GET',headers=None):
         connection=http.client.HTTPConnection('127.0.0.1',self.httpd.server_port,timeout=3)
         try:

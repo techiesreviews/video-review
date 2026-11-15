@@ -103,6 +103,25 @@ class OneFileDoesNotWaitForAnother(DataFolder):
         self.assertEqual(store.find_video(self.data, 'cut-v1')['keepRanges'], [[0, 30]])
 
 
+class FingerprintOfTheRightFile(DataFolder):
+    def test_a_hash_of_a_file_the_entry_no_longer_points_to_is_not_saved(self):
+        # The hash now runs before the lock; if the entry moved to another file meanwhile, the old hash is not kept.
+        moved = self.data / 'moved.mp4'
+        moved.write_bytes(b'moved')
+        real = store.fingerprint
+
+        def move_meanwhile(path):
+            manifest = store.videos(self.data)
+            manifest[0]['path'] = str(moved)
+            store.write(self.data / 'manifest.json', manifest)
+            return real(path)
+
+        with mock.patch.object(store, 'fingerprint', side_effect=move_meanwhile):
+            store.update_render(self.data, 'cut-v1', None, [[0, 30]])
+        item = store.find_video(self.data, 'cut-v1')
+        self.assertEqual((item['path'], item['fingerprint'], item['keepRanges']), (str(moved), 'x', [[0, 30]]))
+
+
 class SavesSurviveWindows(DataFolder):
     def test_b3_a_save_tries_again_when_windows_holds_the_file_for_a_moment(self):
         # B3: on Windows a program reading the file makes the rename fail for a moment; the save gave up at once.
