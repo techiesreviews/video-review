@@ -649,7 +649,7 @@ class CommandLine(unittest.TestCase):
 
 class SavedPageScript(unittest.TestCase):
     """The saved page's own script, run in Node with a fake page (skipped without Node)."""
-    def run_page_script(self, answer):
+    def run_page_script(self, answer, click=False):
         """Run the saved page's script in Node with a fake page and a fake fetch; return what the stars line says and
         whether the stars are on. answer: what fetch does ('network', or [status, body text])."""
         node = shutil.which('node')
@@ -663,25 +663,41 @@ class SavedPageScript(unittest.TestCase):
               body: { dataset: { server: 'http://127.0.0.1:8879', video: 'v-1', code: 'the-code' } },
               querySelectorAll: () => [star],
               getElementById: () => off,
-              addEventListener: () => {},
+              addEventListener: (type, handler) => { if (type === 'click') globalThis.onClick = handler; },
             };
             const player = { querySelector: () => ({ addEventListener: () => {} }) };
             const realGet = document.getElementById;
             document.getElementById = id => id === 'player' ? player : realGet(id);
-            let asked = '';
-            globalThis.fetch = url => {
-              asked = url;
+            let asked = '', sent = null, calls = 0;
+            const click = process.argv[3] === 'click';
+            globalThis.location = { reload: () => { off.textContent = 'reloaded'; } };
+            globalThis.fetch = (url, options) => {
+              asked = url; calls += 1;
+              if (options) sent = JSON.parse(options.body);
+              if (click && calls === 1) return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
               if (answer === 'network') return Promise.reject(new TypeError('Failed to fetch'));
               const [status, text] = answer;
               return Promise.resolve({ ok: status < 300, json: () => Promise.resolve().then(() => JSON.parse(text)) });
             };
             ''') + overview_page.PAGE_SCRIPT.split('<script>')[1].split('</script>')[0] + textwrap.dedent('''
-            setTimeout(() => console.log(JSON.stringify({ said: off.textContent, hidden: off.hidden, on: !star.disabled, asked })), 50);
+            Object.assign(star, { dataset: { scene: '01-intro', take: '2', starred: 'false' } });
+            if (click) setTimeout(() => globalThis.onClick({ target: { closest: s => s === '.st' ? star : null } }), 20);
+            setTimeout(() => console.log(JSON.stringify({ said: off.textContent, hidden: off.hidden, on: !star.disabled, asked, sent })), 80);
             ''')
-        done = subprocess.run([node, '-e', harness, json.dumps(answer), overview_page.STARS_OFF_TEXT],
+        done = subprocess.run([node, '-e', harness, json.dumps(answer), overview_page.STARS_OFF_TEXT,
+                               'click' if click else 'load'],
                               capture_output=True, text=True, timeout=30)
         self.assertEqual(done.returncode, 0, done.stderr)
         return json.loads(done.stdout)
+
+    def test_a_star_click_sends_the_code_and_shows_a_refusal(self):
+        seen = self.run_page_script([200, '{}'], click=True)
+        self.assertEqual(seen['sent'], {'video': 'v-1', 'code': 'the-code', 'scene': '01-intro', 'take': 2})
+        self.assertEqual(seen['said'], 'reloaded')
+        seen = self.run_page_script([403, json.dumps({'error': overview_page.STALE_PAGE_TEXT})], click=True)
+        self.assertEqual((seen['said'], seen['hidden'], seen['on']), (overview_page.STALE_PAGE_TEXT, False, True))
+        seen = self.run_page_script('network', click=True)
+        self.assertEqual((seen['said'], seen['on']), (overview_page.STARS_OFF_TEXT, False))
 
     def test_the_saved_page_shows_the_server_s_reason_or_the_usual_line(self):
         seen = self.run_page_script([200, '{"scenes": []}'])
