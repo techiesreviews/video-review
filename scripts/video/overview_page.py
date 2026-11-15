@@ -534,7 +534,7 @@ PAGE_SCRIPT = """<script>
   fetch(server + '/api/scenes?video=' + encodeURIComponent(video) + '&code=' + encodeURIComponent(code))
     .then(r => r.ok ? r.json() : r.json().then(j => Promise.reject(j.error), () => Promise.reject()), () => Promise.reject())
     // The server answered but said no (this page is out of date): show what it said; no answer: the usual line.
-    .then(() => setStars(true), said => { off.textContent = said || offText; setStars(false); });
+    .then(() => setStars(true), said => { off.textContent = typeof said === 'string' && said ? said : offText; setStars(false); });
   document.addEventListener('click', e => {
     const star = e.target.closest('.st');
     if (star) {

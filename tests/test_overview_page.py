@@ -613,7 +613,7 @@ class CommandLine(unittest.TestCase):
         # A page that is out of date gets a 403 with a reason; the page must show that, not "start video-review".
         script = overview_page.PAGE_SCRIPT
         self.assertIn("r.json().then(j => Promise.reject(j.error)", script)
-        self.assertIn('off.textContent = said || offText; setStars(false);', script)
+        self.assertIn("off.textContent = typeof said === 'string' && said ? said : offText; setStars(false);", script)
         self.assertIn("'&code=' + encodeURIComponent(code)", script)
         self.assertIn('JSON.stringify({ video, code,', script)
 
