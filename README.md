@@ -134,7 +134,7 @@ Original-version comments keep their timebase when a newer cut is added.
 
 ## Repository contents
 
-`web/` is the interface used by both versions; `web/review-core.js` holds the comment rules they share. `cloud/worker.js` is the online version's Worker and MCP endpoint. `server.py` serves the offline app, configured video files and comment API. `mcp_server.py` exposes the same comments to an AI editor, and `review_store.py` holds the storage both share. `examples/` contains sanitized starter configuration. The Windows launcher is optional.
+`web/` is the interface used by both versions; `web/review-core.js` holds the comment rules they share. `cloud/worker.js` is the online version's Worker and MCP endpoint. `server.py` serves the offline app, configured video files and comment API. `mcp_server.py` exposes the same comments to an AI editor, and `review_store.py` holds the storage both share. `file_store.py` is the one way any file in the data folder or a video folder is locked and saved (an operating-system lock per file, never broken by a timeout, and safe saves that retry on Windows). The offline server answers only requests addressed to `127.0.0.1` or `localhost` on its own port, and a saved overview page opened by double click changes stars only with the hidden page code it was written with. `examples/` contains sanitized starter configuration. The Windows launcher is optional.
 
 Local manifests, comments, logs, media and generated exports are excluded by `.gitignore`. Before pushing, review `git status` to check that only application source is staged.
 

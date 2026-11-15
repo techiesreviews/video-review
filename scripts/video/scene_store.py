@@ -20,20 +20,14 @@ string.
 """
 from contextlib import contextmanager
 from datetime import datetime, timezone
-import errno
 import json
-import os
 from pathlib import Path
 import re
-import time
+import sys
 import unicodedata
-import uuid
 
-try:
-    import fcntl
-except ImportError:  # Windows (Git Bash)
-    fcntl = None
-    import msvcrt
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+import file_store  # noqa: E402  (the one lock and safe save for every data and video folder)
 
 FILE_NAME = 'scenes.json'
 VERSION = 1
@@ -51,13 +45,8 @@ HEADING = re.compile(
     r'(?:·[ \t]*\d{1,2}(?::\d{2}){1,2})?[ \t]*(?:\*\*)?[ \t]*$')
 TAKE_FILE = re.compile(r'^take-(\d+)(\.[A-Za-z0-9]+)$')
 TAKE_FULL = re.compile(r'^scene-(\d+-.+)-take-(\d+)(\.[A-Za-z0-9]+)?$')
-WINDOWS_RETRIES = 10
 LOCK_NAME = 'scenes.json.lock'
 LOCK_WAIT_SECONDS = 10  # how long update() waits for another program's lock before giving up
-# What "someone else holds the lock" looks like: flock says EAGAIN or EWOULDBLOCK, Windows locking says EACCES
-# or EDEADLOCK.
-LOCK_BUSY_ERRNOS = {code for code in (errno.EAGAIN, errno.EWOULDBLOCK, errno.EACCES,
-                                      getattr(errno, 'EDEADLK', None), getattr(errno, 'EDEADLOCK', None)) if code}
 
 
 class SceneFileError(Exception):
@@ -283,17 +272,6 @@ def scene_file_path(raw_dir):
     return Path(raw_dir) / FILE_NAME
 
 
-def _retry_on_windows(action):
-    """A reader holding the file open can make rename or open fail briefly on Windows; try again."""
-    for attempt in range(WINDOWS_RETRIES):
-        try:
-            return action()
-        except PermissionError:
-            if attempt == WINDOWS_RETRIES - 1:
-                raise
-            time.sleep(0.05)
-
-
 def load(raw_dir):
     """The scene file as a dict, or None when there is none yet.
 
@@ -303,7 +281,7 @@ def load(raw_dir):
     """
     path = scene_file_path(raw_dir)
     try:
-        raw = _retry_on_windows(lambda: path.read_text(encoding='utf-8'))
+        raw = file_store.read_text(path)
     except FileNotFoundError:
         return None
     except UnicodeDecodeError as error:
@@ -319,70 +297,18 @@ def load(raw_dir):
     return store
 
 
-def write_text_atomic(path, text):
-    """Write a whole file safely: a temporary file in the same folder, then a rename into place. A reader sees the old
-    file or the new one, never half of it, and a failed write leaves the old file and no temporary file."""
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f'{path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp')
-    try:
-        with open(temporary, 'w', encoding='utf-8', newline='\n') as handle:
-            handle.write(text)
-            handle.flush()
-            os.fsync(handle.fileno())
-        _retry_on_windows(lambda: os.replace(temporary, path))
-    except BaseException:
-        temporary.unlink(missing_ok=True)
-        raise
-
-
 def save(raw_dir, store):
-    """Refresh best and flagged, then write the file safely (write_text_atomic)."""
+    """Refresh best and flagged, then write the file safely (file_store.write_text)."""
     apply_best(store)
-    write_text_atomic(scene_file_path(raw_dir), json.dumps(store, indent=2, ensure_ascii=False) + '\n')
-
-
-def _try_lock(handle):
-    if fcntl:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    else:
-        handle.seek(0)
-        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-
-
-def _unlock(handle):
-    if fcntl:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-    else:
-        handle.seek(0)
-        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+    file_store.write_text(scene_file_path(raw_dir), json.dumps(store, indent=2, ensure_ascii=False) + '\n')
 
 
 @contextmanager
 def _locked(raw_dir):
-    """One program at a time between load and save, using a lock the operating system holds on scenes.json.lock.
-
-    The system lets go of it when the program ends, even if it crashed, so there is no stale lock to clean up and
-    no way for one program to remove another's. The small lock file itself stays in the folder.
-    """
-    folder = Path(raw_dir)
-    folder.mkdir(parents=True, exist_ok=True)
-    deadline = time.monotonic() + LOCK_WAIT_SECONDS
-    with open(folder / LOCK_NAME, 'a+b') as handle:
-        while True:
-            try:
-                _try_lock(handle)
-                break
-            except OSError as error:
-                if error.errno not in LOCK_BUSY_ERRNOS:
-                    raise  # a real failure (for example no locking on this drive), not a busy lock
-                if time.monotonic() > deadline:
-                    raise SceneFileError(f'{handle.name} is held by another program; try again in a moment.') from None
-                time.sleep(0.05)
-        try:
-            yield
-        finally:
-            _unlock(handle)
+    """One program at a time between load and save: file_store's lock on scenes.json.lock in the video folder. A
+    lock held past LOCK_WAIT_SECONDS gives a SceneFileError."""
+    with file_store.locked(Path(raw_dir) / LOCK_NAME, wait=LOCK_WAIT_SECONDS, error=SceneFileError):
+        yield
 
 
 locked = _locked  # The same lock under a public name, for a short read-then-write job that is not a scene-file write (the overview page).

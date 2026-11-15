@@ -596,6 +596,46 @@ class CommandLine(unittest.TestCase):
         self.assertEqual(path, self.raw / 'overview.html')
         self.assertIsNotNone(overview_page.lookup(self.data, overview_page.video_key(self.raw)))
 
+    def test_the_saved_page_carries_its_video_s_page_code_and_keeps_it(self):
+        page = overview_page.publish(self.raw, data_dir=self.data).read_text(encoding='utf-8')
+        key = overview_page.video_key(self.raw)
+        code = overview_page.page_code(self.data, key)
+        self.assertGreaterEqual(len(code), 32)
+        self.assertIn(f'data-code="{code}"', page)
+        overview_page.publish(self.raw, data_dir=self.data)
+        self.assertEqual(overview_page.page_code(self.data, key), code)
+        self.assertTrue(overview_page.code_matches(self.data, key, code))
+        for wrong in (None, '', code[:-1], code + 'x', 'é' * 32, 42):
+            self.assertFalse(overview_page.code_matches(self.data, key, wrong), wrong)
+        self.assertFalse(overview_page.code_matches(self.data, 'nope-12345678', code))
+
+    def test_two_videos_get_different_page_codes(self):
+        other = Path(self.temp.name) / 'Other'
+        other.mkdir()
+        scene_store.save(other, sample_store())
+        one = overview_page.page_code(self.data, overview_page.register(self.data, self.raw))
+        two = overview_page.page_code(self.data, overview_page.register(self.data, other))
+        self.assertNotEqual(one, two)
+
+    def test_a_page_saved_before_page_codes_gets_one_when_the_server_starts(self):
+        overview_page.publish(self.raw, data_dir=self.data)
+        registry_path = self.data / overview_page.REGISTRY_NAME
+        registry = json.loads(registry_path.read_text(encoding='utf-8'))
+        key = overview_page.video_key(self.raw)
+        del registry[key]['code']
+        gone = Path(self.temp.name) / 'Gone'
+        registry['gone-12345678'] = {'folder': str(gone), 'cue': None}
+        registry_path.write_text(json.dumps(registry), encoding='utf-8')
+        (self.raw / 'overview.html').write_text('old page without a code', encoding='utf-8')
+        self.assertIsNone(overview_page.page_code(self.data, key))
+        self.assertEqual(overview_page.give_old_pages_a_code(self.data), [key])
+        code = overview_page.page_code(self.data, key)
+        self.assertIn(f'data-code="{code}"', (self.raw / 'overview.html').read_text(encoding='utf-8'))
+        self.assertIsNotNone(overview_page.page_code(self.data, 'gone-12345678'))
+        self.assertFalse(gone.exists())
+        self.assertEqual(overview_page.give_old_pages_a_code(self.data), [])  # once is enough
+        self.assertEqual(overview_page.page_code(self.data, key), code)
+
 
 if __name__ == '__main__':
     unittest.main()

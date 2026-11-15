@@ -321,7 +321,7 @@ class WhenItCannotBeMade(RoughCutCase):
         self.rebuild()
         before = (self.raw / rough_cut.FILE_NAME).read_bytes()
         self.change(lambda store: scene_store.set_star(store, COSTS, 1))
-        with mock.patch.object(scene_store.os, 'replace', side_effect=OSError('disk full')):
+        with mock.patch.object(scene_store.file_store.os, 'replace', side_effect=OSError('disk full')):
             with self.assertRaises(OSError):
                 self.rebuild()
         self.assertEqual((self.raw / rough_cut.FILE_NAME).read_bytes(), before)
@@ -380,7 +380,7 @@ class CommandLine(RoughCutCase):
         self.assertFalse((self.raw / rough_cut.FILE_NAME).exists())
 
     def test_a_write_that_fails_is_one_plain_line_not_a_traceback(self):
-        with mock.patch.object(scene_store.os, 'replace', side_effect=OSError('disk full')):
+        with mock.patch.object(scene_store.file_store.os, 'replace', side_effect=OSError('disk full')):
             code, out, err = self.run_main(self.raw)
         self.assertEqual(code, 2)
         self.assertEqual(err.strip(), 'disk full')

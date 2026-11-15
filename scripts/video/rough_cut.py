@@ -32,6 +32,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+import file_store  # noqa: E402
 import overview_page  # noqa: E402
 import review_store  # noqa: E402
 import scene_store  # noqa: E402
@@ -98,7 +99,7 @@ def rebuild_rough_cut(raw_dir, cue=None, data_dir=None):
             raise scene_store.SceneFileError(
                 f'No {scene_store.FILE_NAME} in {raw_dir}: the scene list is saved when the first take is recorded.')
         cut = build_cut(store, overview_page.changed_in_script(store, cue_text))
-        scene_store.write_text_atomic(Path(raw_dir) / FILE_NAME, json.dumps(cut, indent=2, ensure_ascii=False) + '\n')
+        file_store.write_text(Path(raw_dir) / FILE_NAME, json.dumps(cut, indent=2, ensure_ascii=False) + '\n')
     return cut
 
 
