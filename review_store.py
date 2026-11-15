@@ -354,11 +354,12 @@ def update_render(directory,video_id,duration_ms=None,keep_ranges=None):
     path=directory/'manifest.json'
     # Hashing a long video can take a while; it happens before the lock, so nobody waits for it.
     media=find_video(directory,video_id)['path'];digest=fingerprint(media) if Path(media).is_file() else None
-    with locked(path):
+    # The comments stay locked until the new mapping is saved, so a comment added meanwhile is mapped with it.
+    with locked(path),locked(directory/'comments.json'):
         manifest=read(path,[]);item=next((x for x in manifest if x['id']==video_id),None)
         if not item:raise ValueError('Unknown video version')
         if keep_ranges is not None and keep_ranges!=item.get('keepRanges'):
-            rebase_comments(directory,item,keep_ranges,duration or item['durationMs'])
+            _rebase(directory,item,keep_ranges,duration or item['durationMs'])
         if duration_ms is not None:item['durationMs']=duration
         if keep_ranges is not None:item['keepRanges']=keep_ranges
         if digest is not None and item['path']==media:item['fingerprint']=digest
@@ -366,6 +367,11 @@ def update_render(directory,video_id,duration_ms=None,keep_ranges=None):
     return item
 
 def rebase_comments(directory,video,ranges,duration):
+    """Move a video's comments to their places in a new cut, by their frames in the original recording."""
+    with locked(directory/'comments.json'):_rebase(directory,video,ranges,duration)
+
+def _rebase(directory,video,ranges,duration):
+    """rebase_comments for a caller that already holds the comments lock (locks do not nest)."""
     def mapped(frame):
         cursor=0;best=(float('inf'),0)
         for a,b in ranges:
@@ -374,17 +380,16 @@ def rebase_comments(directory,video,ranges,duration):
             if a<=frame<b:return round((cursor+frame-a)*1000/video['fps'])
             cursor+=b-a
         return min(duration,round(best[1]*1000/video['fps']))
-    with locked(directory/'comments.json'):
-        data=read(directory/'comments.json',{'comments':[]})
-        for c in data['comments']:
-            if c['videoId']!=video['id']:continue
-            spans=c.get('sourceSpans') or c.get('editRequest',{}).get('sourceSpans') or source_spans(video,c['startMs'],c.get('endMs'))
-            if not spans:continue
-            c['sourceSpans']=spans;c['beforeRecut']={'startMs':c['startMs'],'endMs':c.get('endMs')}
-            start=mapped(spans[0].get('sourceStartFrame',spans[0].get('sourceFrame')))
-            end=mapped(spans[-1].get('sourceEndFrame',spans[-1].get('sourceFrame'))) if c.get('endMs') is not None else None
-            c['startMs']=start;c['endMs']=end if end is not None and end>start else None
-        write(directory/'comments.json',data)
+    data=read(directory/'comments.json',{'comments':[]})
+    for c in data['comments']:
+        if c['videoId']!=video['id']:continue
+        spans=c.get('sourceSpans') or c.get('editRequest',{}).get('sourceSpans') or source_spans(video,c['startMs'],c.get('endMs'))
+        if not spans:continue
+        c['sourceSpans']=spans;c['beforeRecut']={'startMs':c['startMs'],'endMs':c.get('endMs')}
+        start=mapped(spans[0].get('sourceStartFrame',spans[0].get('sourceFrame')))
+        end=mapped(spans[-1].get('sourceEndFrame',spans[-1].get('sourceFrame'))) if c.get('endMs') is not None else None
+        c['startMs']=start;c['endMs']=end if end is not None and end>start else None
+    write(directory/'comments.json',data)
 
 def register_video(directory,entry):
     """Add a new video version to the manifest. Existing IDs are never overwritten."""
