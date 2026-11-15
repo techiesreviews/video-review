@@ -39,7 +39,8 @@ class Busy(ValueError):
 
 
 def retry_on_windows(action):
-    """A reader holding the file open can make a rename or an open fail briefly on Windows; try again."""
+    """A reader holding the file open can make a rename or an open fail briefly on Windows; try again. (It tries on
+    every system, so a real permission error elsewhere is raised after about half a second.)"""
     for attempt in range(WINDOWS_RETRIES):
         try:
             return action()

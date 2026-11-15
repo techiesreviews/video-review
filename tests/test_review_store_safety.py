@@ -18,14 +18,16 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 import review_store as store  # noqa: E402
 
-# A second program that saves a re-rendered video's keep ranges, with a slow hash of the video file.
+# A second program that saves a re-rendered video's keep ranges and is slow while it holds the locks: it moves the
+# comments to the new cut slowly (and, in the code before TOOLS-297, also hashed the video while holding the lock).
 SLOW_RECUT = (
     'import sys, time\n'
     'sys.path.insert(0, sys.argv[1]); import review_store\n'
-    'real = review_store.fingerprint\n'
-    'def slow(path):\n'
-    '    print("hashing", flush=True); time.sleep(float(sys.argv[3])); return real(path)\n'
-    'review_store.fingerprint = slow\n'
+    'name = "_rebase" if hasattr(review_store, "_rebase") else "rebase_comments"\n'
+    'real = getattr(review_store, name)\n'
+    'def slow(*args):\n'
+    '    print("holding", flush=True); time.sleep(float(sys.argv[3])); return real(*args)\n'
+    'setattr(review_store, name, slow)\n'
     'review_store.update_render(review_store.data_dir(sys.argv[2]), "cut-v1", None, [[0, 30]])\n')
 # A second program that adds comments one after the other.
 ADD_COMMENTS = (
@@ -63,11 +65,15 @@ class LockIsNeverBroken(DataFolder):
                                  stdout=subprocess.PIPE, text=True)
         self.addCleanup(recut.stdout.close)
         self.addCleanup(recut.kill)
-        self.assertEqual(recut.stdout.readline().strip(), 'hashing')
-        old = time.time() - 60  # every lock file in the folder now looks older than 30 seconds
-        for lock in self.data.glob('*.lock'):
+        self.assertEqual(recut.stdout.readline().strip(), 'holding')
+        locks = list(self.data.glob('*.lock'))
+        self.assertTrue(locks, 'the slow save holds no lock file')
+        old = time.time() - 3600  # every lock file in the folder now looks an hour old
+        for lock in locks:
             os.utime(lock, (old, old))
+        begun = time.monotonic()
         store.archive_video(self.data, 'other-v1')
+        self.assertGreater(time.monotonic() - begun, 1, 'the archive step did not wait for the slow save')
         self.assertEqual(recut.wait(timeout=30), 0)
         self.assertEqual(self.ids(), ['cut-v1'], 'the archive step was undone by the slower save')
         self.assertEqual(store.find_video(self.data, 'cut-v1')['keepRanges'], [[0, 30]])
