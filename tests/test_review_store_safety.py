@@ -103,6 +103,36 @@ class OneFileDoesNotWaitForAnother(DataFolder):
         self.assertEqual(store.find_video(self.data, 'cut-v1')['keepRanges'], [[0, 30]])
 
 
+class CommentsDuringARecut(DataFolder):
+    def test_a_comment_added_while_a_recut_is_saved_follows_the_new_mapping(self):
+        # Second look (GPT): with the comments re-mapped but the new keep ranges not yet saved, a new comment got its
+        # place in the original recording from the old mapping. The comments stay locked until the video is saved.
+        real_write = store.write
+        rebased, added = threading.Event(), []
+
+        def slow_manifest_save(path, data):
+            if Path(path).name == 'manifest.json' and not rebased.is_set():
+                rebased.set()
+                time.sleep(0.5)  # a comment that can get in now would be mapped with the old keep ranges
+            return real_write(path, data)
+
+        def add_comment():
+            added.append(store.apply(self.data, {'action': 'add', 'videoId': 'cut-v1', 'startMs': 500,
+                                                 'text': 'Here'})[1])
+
+        with mock.patch.object(store, 'write', side_effect=slow_manifest_save):
+            recut = threading.Thread(target=store.update_render, args=(self.data, 'cut-v1', None, [[30, 90]]))
+            recut.start()
+            self.assertTrue(rebased.wait(5))
+            comment = threading.Thread(target=add_comment)
+            comment.start()
+            recut.join(10)
+            comment.join(10)
+        # 500 ms is frame 15 of the new cut, which starts at frame 30 of the original: frame 45 (old mapping: 15).
+        self.assertEqual(added[0]['sourceSpans'], [{'sourceFrame': 45, 'sourceMs': 1500.0}])
+        self.assertEqual(store.find_video(self.data, 'cut-v1')['keepRanges'], [[30, 90]])
+
+
 class FingerprintOfTheRightFile(DataFolder):
     def test_a_hash_of_a_file_the_entry_no_longer_points_to_is_not_saved(self):
         # The hash now runs before the lock; if the entry moved to another file meanwhile, the old hash is not kept.
