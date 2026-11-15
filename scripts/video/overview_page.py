@@ -14,6 +14,10 @@ answer the stars are greyed out with one line saying why. The server also serves
 `/scenes/<video>`, where <video> is the key from video_key(); the server finds the folder in a small registry in
 its data folder, which this command (and the take intake) fills.
 
+A page opened by double click talks to the server from the origin "null", which any website can send too (from a
+sandboxed frame). So the registry gives every video a random page code, the saved page carries it hidden in its
+markup, and the server takes a "null" request only with the right code (page_code, code_matches).
+
 The script text comes from the video's cue file, `prompter.md` in the video folder unless `--cue` names another
 (the registry remembers it). It is only read, never changed. A scene the script no longer has is shown without text
 and with the "Script changed since recording" chip, worked out from the cue file each time the page is made.
@@ -25,19 +29,21 @@ changes go through scene_store.update() in the server.
 import argparse
 import copy
 import hashlib
+import hmac
 import html
 import os
 from pathlib import Path
 import re
+import secrets
 import subprocess
 import sys
-import time
 from urllib.parse import quote
 import uuid
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parents[1]))
+import file_store  # noqa: E402
 import review_store  # noqa: E402
 import scene_store  # noqa: E402
 
@@ -47,6 +53,7 @@ PORT_NAME = 'server-port.json'
 DEFAULT_CUE_NAME = 'prompter.md'
 DEFAULT_PORT = 8879
 STARS_OFF_TEXT = 'Stars are off. Start video-review on this computer to change them.'
+STALE_PAGE_TEXT = 'This saved page is out of date and cannot change stars. It is written again after the next take.'
 RECORD_TILE_TEXT = 'Coming with the Prompter'
 OLDER_TAKE_TEXT = 'Older take in front: the newest has a sound problem'
 THUMB_EXTENSION = '.jpg'
@@ -75,17 +82,67 @@ def register(data_dir, folder, cue=None):
     none is named now. A registry file that is not valid JSON raises ValueError."""
     path = Path(data_dir) / REGISTRY_NAME
     key = video_key(folder)
-    with review_store.FileLock(Path(data_dir) / f'{REGISTRY_NAME}.lock'):
+    with review_store.locked(path):
         registry = review_store.read(path, {})
         if not isinstance(registry, dict):
             raise ValueError(f'{path} is not a registry of videos.')
         old = registry.get(key) if isinstance(registry.get(key), dict) else {}
         entry = {'folder': str(Path(folder).resolve()),
-                 'cue': str(Path(cue).resolve()) if cue else old.get('cue')}
+                 'cue': str(Path(cue).resolve()) if cue else old.get('cue'),
+                 'code': _valid_code(old.get('code')) or _new_code()}
         if registry.get(key) != entry:
             registry[key] = entry
             review_store.write(path, registry)
     return key
+
+
+def _new_code():
+    return secrets.token_urlsafe(24)
+
+
+def _valid_code(code):
+    return code if isinstance(code, str) and len(code) >= 32 else None
+
+
+def page_code(data_dir, key):
+    """The hidden code the saved page of this video sends with its requests, or None (unknown key, or a registry
+    entry from before page codes)."""
+    registry = review_store.read(Path(data_dir) / REGISTRY_NAME, {})
+    entry = registry.get(key) if isinstance(registry, dict) else None
+    return _valid_code(entry.get('code')) if isinstance(entry, dict) else None
+
+
+def code_matches(data_dir, key, code):
+    """True only for the right page code of a registered video (compared in constant time)."""
+    expected = page_code(data_dir, key)
+    return bool(expected) and isinstance(code, str) and hmac.compare_digest(expected.encode(), code.encode())
+
+
+def give_old_pages_a_code(data_dir):
+    """Registry entries from before page codes get one, and their saved page (where there is one) is written again
+    with it, so a page saved earlier keeps its stars. The server runs this once when it starts. Returns the keys of
+    the pages written again; a folder that is gone or unreadable is left for the next take to fix."""
+    path = Path(data_dir) / REGISTRY_NAME
+    with review_store.locked(path):
+        registry = review_store.read(path, {})
+        if not isinstance(registry, dict):
+            return []
+        missing = [key for key, entry in registry.items() if isinstance(entry, dict) and not _valid_code(entry.get('code'))]
+        for key in missing:
+            registry[key]['code'] = _new_code()
+        if missing:
+            review_store.write(path, registry)
+    rewritten = []
+    for key in missing:
+        found = lookup(data_dir, key)
+        if not found or not (found[0] / FILE_NAME).is_file():
+            continue
+        try:
+            build(found[0], cue=found[1], server=server_address(data_dir), code=page_code(data_dir, key))
+        except (OSError, scene_store.SceneFileError):
+            continue
+        rewritten.append(key)
+    return rewritten
 
 
 def lookup(data_dir, key):
@@ -164,7 +221,7 @@ def _make_thumbnail(video, image, duration):
     try:
         done = subprocess.run(command, capture_output=True, timeout=THUMB_TIMEOUT_SECONDS)
         if done.returncode == 0 and temporary.is_file() and temporary.stat().st_size > 0:
-            os.replace(temporary, image)
+            file_store.retry_on_windows(lambda: os.replace(temporary, image))
             return True
     except (OSError, subprocess.SubprocessError):
         pass  # no ffmpeg, an unreadable take or a hang: the page shows a placeholder instead
@@ -293,12 +350,13 @@ def _cut_strip(store):
     return ''.join(segments), recorded, takes, total, complete
 
 
-def render(store, name, cue_text=None, thumbs=(), server='', video='', link_prefix=''):
+def render(store, name, cue_text=None, thumbs=(), server='', video='', link_prefix='', code=''):
     """The page as text, for a scene file already loaded.
 
     thumbs: relative thumbnail paths that exist. server: where the stars send their clicks ('' for the page the
     server itself serves). video: the key the server knows this video by. link_prefix: put in front of every
-    link to a take or thumbnail (the server's page needs one; the saved file uses relative links)."""
+    link to a take or thumbnail (the server's page needs one; the saved file uses relative links). code: the
+    video's page code, which the saved page needs (the page the server serves does not)."""
     esc = html.escape
     texts = scene_texts(cue_text or '')
     changed = changed_in_script(store, cue_text or '')
@@ -308,7 +366,8 @@ def render(store, name, cue_text=None, thumbs=(), server='', video='', link_pref
     summary = (f'<b>{recorded} of {len(store["scenes"])} scenes</b> recorded · {takes} take{"" if takes == 1 else "s"}'
                f' · rough cut <b>{_clock(total)}{"" if complete else "+"}</b>')
     return (PAGE_HEAD.replace('{title}', esc(name)) + PAGE_BODY.format(
-        server=esc(server, quote=True), video=esc(video, quote=True), name=esc(name), summary=summary, strip=strip,
+        server=esc(server, quote=True), video=esc(video, quote=True), code=esc(code, quote=True), name=esc(name),
+        summary=summary, strip=strip,
         off=esc(STARS_OFF_TEXT), scenes=scenes) + PAGE_SCRIPT)
 
 
@@ -320,9 +379,9 @@ def read_cue_text(folder, cue):
         return ''  # no cue file (or none readable): the scenes show without their text
 
 
-def _page(raw_dir, store, cue, link_prefix, server, thumbs):
+def _page(raw_dir, store, cue, link_prefix, server, thumbs, code=''):
     return render(store, Path(raw_dir).resolve().name, cue_text=read_cue_text(raw_dir, cue), thumbs=thumbs,
-                  video=video_key(raw_dir), link_prefix=link_prefix,
+                  video=video_key(raw_dir), link_prefix=link_prefix, code=code or '',
                   server=server_address() if server is None else server)
 
 
@@ -341,8 +400,9 @@ def build_html(raw_dir, cue=None, link_prefix='', server=None):
     return _page(raw_dir, store, cue, link_prefix, server, ensure_thumbnails(raw_dir, store))
 
 
-def build(raw_dir, cue=None, server=None):
-    """Write overview.html into the video folder (a whole new file each time) and return its path.
+def build(raw_dir, cue=None, server=None, code=''):
+    """Write overview.html into the video folder (a whole new file each time) and return its path. code: the
+    video's page code (page_code), without which the saved page cannot change stars.
 
     The slow part (thumbnails) is done first. The scene file is then read, the page made and written while the scene
     file's lock is held, so a page is never made from a scene file that another program is just changing, and two
@@ -351,21 +411,8 @@ def build(raw_dir, cue=None, server=None):
     # it adds takes, so that gap closes by itself.
     thumbs = ensure_thumbnails(raw_dir, _load(raw_dir))
     path = Path(raw_dir) / FILE_NAME
-    temporary = path.with_name(f'{FILE_NAME}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp')
-    try:
-        with scene_store.locked(raw_dir):
-            temporary.write_text(_page(raw_dir, _load(raw_dir), cue, '', server, thumbs), encoding='utf-8',
-                                 newline='\n')
-            for attempt in range(10):  # on Windows a program that has the page open can make the rename fail briefly
-                try:
-                    os.replace(temporary, path)
-                    break
-                except PermissionError:
-                    if attempt == 9:
-                        raise
-                    time.sleep(0.05)
-    finally:
-        temporary.unlink(missing_ok=True)
+    with scene_store.locked(raw_dir):
+        file_store.write_text(path, _page(raw_dir, _load(raw_dir), cue, '', server, thumbs, code))
     return path
 
 
@@ -374,7 +421,8 @@ def publish(raw_dir, cue=None, data_dir=None):
     data_dir = review_store.data_dir(data_dir)
     key = register(data_dir, raw_dir, cue)
     registered = lookup(data_dir, key)
-    return build(raw_dir, cue=cue or (registered[1] if registered else None), server=server_address(data_dir))
+    return build(raw_dir, cue=cue or (registered[1] if registered else None), server=server_address(data_dir),
+                 code=page_code(data_dir, key))
 
 
 def main(argv=None):
@@ -463,7 +511,7 @@ PAGE_HEAD = """<!doctype html>
 </head>
 """
 
-PAGE_BODY = """<body data-server="{server}" data-video="{video}">
+PAGE_BODY = """<body data-server="{server}" data-video="{video}" data-code="{code}">
 <div class="page">
   <h1>{name} · overview</h1>
   <p class="sub">{summary}</p>
@@ -478,12 +526,12 @@ PAGE_BODY = """<body data-server="{server}" data-video="{video}">
 
 PAGE_SCRIPT = """<script>
 (() => {
-  const body = document.body, server = body.dataset.server, video = body.dataset.video;
+  const body = document.body, server = body.dataset.server, video = body.dataset.video, code = body.dataset.code;
   const stars = [...document.querySelectorAll('.st')], off = document.getElementById('stars-off'), offText = off.textContent;
   const player = document.getElementById('player'), clip = player.querySelector('video');
   const title = player.querySelector('.t'), detail = player.querySelector('.d');
   const setStars = on => { stars.forEach(s => { s.disabled = !on; }); off.hidden = on; };
-  fetch(server + '/api/scenes?video=' + encodeURIComponent(video))
+  fetch(server + '/api/scenes?video=' + encodeURIComponent(video) + '&code=' + encodeURIComponent(code))
     .then(r => r.ok ? r.json() : Promise.reject(), () => Promise.reject())
     .then(() => setStars(true), () => setStars(false));
   document.addEventListener('click', e => {
@@ -493,7 +541,7 @@ PAGE_SCRIPT = """<script>
       star.disabled = true;
       fetch(server + '/api/scenes/star', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ video, scene: star.dataset.scene, take: star.dataset.starred === 'true' ? null : Number(star.dataset.take) })
+        body: JSON.stringify({ video, code, scene: star.dataset.scene, take: star.dataset.starred === 'true' ? null : Number(star.dataset.take) })
       }).then(async r => {
         if (r.ok) return location.reload();
         // The server answered but could not do it: say what it said and keep the stars usable.

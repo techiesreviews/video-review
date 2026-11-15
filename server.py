@@ -1,6 +1,6 @@
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
-import argparse, json, mimetypes, re, os, sys
+import argparse, json, mimetypes, re, os, sys, threading
 from urllib.parse import urlsplit,parse_qs,unquote,quote
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 sys.path.insert(0,str(Path(__file__).resolve().parent/'scripts'/'video'))
@@ -14,12 +14,20 @@ WEB=ROOT/'web'
 DATA=ROOT/'data'
 PORT=8879
 # The overview page saved in a video's folder is opened by double click, so the browser calls the server from the
-# origin "null". Only the two scene routes accept it.
+# origin "null". Only the two scene routes accept it, and only with that video's page code (overview_page.page_code).
 FILE_PAGE_ORIGIN='null'
 SCENE_FILE_TYPES=('.mkv','.mp4','.mov','.jpg')
+LOCAL_HOSTS=('127.0.0.1','localhost')
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args): pass
+    def parse_request(self):
+        """Every request must name this computer and port in its Host header. A website can point its own name at
+        127.0.0.1 (DNS rebinding); the browser then sends that name, and the request is refused before any route."""
+        if not super().parse_request():return False
+        if (self.headers.get('Host') or '').lower() not in [f'{host}:{PORT}' for host in LOCAL_HOSTS]:
+            self.send_error(403,'Unknown host');return False
+        return True
     def send_json(self, data, status=200, extra=None):
         payload=json.dumps(data,ensure_ascii=False).encode('utf-8')
         self.send_response(status);self.send_header('Content-Type','application/json; charset=utf-8');self.send_header('Content-Length',str(len(payload)));self.send_header('Cache-Control','no-store')
@@ -52,9 +60,14 @@ class Handler(BaseHTTPRequestHandler):
         scenes=(folder/'scenes').resolve();path=(folder.joinpath(*parts)).resolve()
         if path.suffix.lower() not in SCENE_FILE_TYPES or scenes not in path.parents or not path.is_file():return self.send_error(404)
         return path
+    def page_code_missing(self,key,code):
+        """True (after answering 403) for a request from the origin "null" without this video's page code."""
+        if self.headers.get('Origin')!=FILE_PAGE_ORIGIN or overview_page.code_matches(DATA,key,code):return False
+        self.send_json({'error':overview_page.STALE_PAGE_TEXT},403,extra=self.cors());return True
     def scene_list(self,query):
-        key=parse_qs(query).get('video',[''])[0];found=self.scene_video(key)
+        asked=parse_qs(query);key=asked.get('video',[''])[0];found=self.scene_video(key)
         if not found:return self.send_json({'error':'Unknown video'},404)
+        if self.page_code_missing(key,asked.get('code',[''])[0]):return
         try:saved=scene_store.load(found[0])
         except scene_store.SceneFileError as error:return self.send_json({'error':str(error)},409)
         self.send_json({'video':key,'saved_at':saved.get('saved_at'),'scenes':saved['scenes']},extra=self.cors())
@@ -113,8 +126,9 @@ class Handler(BaseHTTPRequestHandler):
     def star(self,cmd):
         """Lex's star for a take (or off, with take null): writes the scene file, then rebuilds the rough cut list and rewrites the saved page."""
         if not isinstance(cmd,dict) or 'take' not in cmd:raise ValueError('Invalid star request')
-        found=self.scene_video(str(cmd.get('video','')))
+        key=str(cmd.get('video',''));found=self.scene_video(key)
         if not found:return self.send_json({'error':'Unknown video'},404,extra=self.cors())
+        if self.page_code_missing(key,cmd.get('code')):return
         folder,cue=found;scene,take=cmd.get('scene'),cmd.get('take')
         if not isinstance(scene,str) or (take is not None and type(take) is not int):raise ValueError('Invalid star request')
         saved=scene_store.update(folder,lambda current:scene_store.set_star(current,scene,take))
@@ -122,7 +136,7 @@ class Handler(BaseHTTPRequestHandler):
         problems=[]
         try:rough_cut.rebuild_rough_cut(folder,cue=cue)
         except (OSError,ValueError,scene_store.SceneFileError) as error:problems.append(f'the rough cut could not be rebuilt: {error}')
-        try:overview_page.build(folder,cue=cue,server=f'http://127.0.0.1:{PORT}')
+        try:overview_page.build(folder,cue=cue,server=f'http://127.0.0.1:{PORT}',code=overview_page.page_code(DATA,key))
         except (OSError,scene_store.SceneFileError) as error:problems.append(f'the page could not be rewritten: {error}')
         if problems:return self.send_json({'error':'The star is saved, but '+' and '.join(problems)},500,extra=self.cors())
         self.send_json({'ok':True,'scenes':saved['scenes']},extra=self.cors())
@@ -153,6 +167,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(data)
         except scene_store.SceneFileError as e:self.send_json({'error':str(e)},409,extra=self.cors())
         except (ValueError,KeyError,TypeError,json.JSONDecodeError) as e:self.send_json({'error':str(e)},400,extra=self.cors())
+        except OSError as e:self.send_json({'error':f'The change could not be saved: {e}'},500,extra=self.cors())
 
 def create_server(port=8879, data_dir=None):
     global DATA, PORT
@@ -168,6 +183,8 @@ if __name__=='__main__':
     parser.add_argument('--data-dir',default=None)
     args=parser.parse_args()
     httpd=create_server(args.port,args.data_dir)
+    # Pages saved before page codes get theirs, in the background so the server answers at once.
+    threading.Thread(target=overview_page.give_old_pages_a_code,args=(DATA,),daemon=True).start()
     print(f'Video Review: http://127.0.0.1:{PORT}',flush=True)
     try:httpd.serve_forever()
     except KeyboardInterrupt:pass
