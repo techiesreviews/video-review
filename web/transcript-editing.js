@@ -10,6 +10,7 @@ import {RULES} from './review-core.js';
 const stamp=ms=>clock(ms,{places:3,hours:false});
 const NOTE_PAUSE_MS=450;
 export const RELOADED_TEXT='The transcript changed while this was saving. The edit was saved, and the transcript is loaded again.';
+export const REFUSED_TEXT='Not saved: the words changed elsewhere. They are loaded again; try again.';
 
 function afterTimer(run,ms){const timer=setTimeout(run,ms);return ()=>clearTimeout(timer);}
 
@@ -103,10 +104,15 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
   const stale=at=>at!==generation;
   /** Saves the cut list on the transcript it was worked out from. keep: the selection and note stay as they are.
    *  A new transcript that came in before the save: nothing is saved. One that came in during it, on the same words (so
-   *  the store took the save): the error says saved, and the panel loads the transcript again to show it. */
+   *  the store took the save): the error says saved, and the panel loads the transcript again to show it. Words that
+   *  changed in the store without this page hearing of it (an agent, another tab): the store refuses the save, and the
+   *  error is marked refused, so the panel loads that video's newer words and the edit can be made again on them. */
   async function commit(at,draftEdits,{keep=false}={}){
     if(stale(at))throw Error(RULES.messages.transcriptChanged);
-    const target=video,saved=await saveTranscript(target,{...transcript,draftEdits},{editsOnly:true});
+    const target=video;let saved;
+    // Both stores refuse with this rules message (the local server passes it through as the error text).
+    try{saved=await saveTranscript(target,{...transcript,draftEdits},{editsOnly:true});}
+    catch(error){if(error?.message===RULES.messages.transcriptChanged)Object.assign(error,{refused:true,videoId:target.id});throw error;}
     if(stale(at))throw Object.assign(Error(RELOADED_TEXT),{saved:true,videoId:target.id});
     transcript=saved;
     // Whether the note box was editing a comment when the save landed: then its text is that comment's, not a draft.
