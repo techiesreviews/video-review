@@ -53,7 +53,8 @@ What it does:
   comma ("The tool is fast, the tool is cheap.") is only cut when the script says that line once and the start
   belongs to it; otherwise it is listed.
 - **Takes of one line.** The last complete take stays: the same restart, the same script sentence however far
-  apart, or a near copy within a minute when there is no script. When the last take is clearly worse (more
+  apart, or a near copy within a minute when there is no script (two sentences in a row count as a restart only
+  within that minute too). When the last take is clearly worse (more
   stumbles, or more of the script line missing), the better earlier take stays and the paper edit says so. A
   line the script itself says more than once is never treated as takes of one line. When no take of a line is
   complete, a take more than a minute from the others stays and is listed.
@@ -86,7 +87,8 @@ What it does:
   more), a silence of 3 s or more (a screen demo or a pause?), a possible restart without a pause, a possible
   retake cue, and lines not in the script (ad-libs). An ad-lib is a line whose words are not in the script and
   that no take of the same line follows; a failed try is not an ad-lib. A removal that takes out a silence of
-  3 s or more says so. Without `--script`, ad-libs are not checked.
+  3 s or more says so, whether the silence is inside the removed passage or between it and the words kept beside
+  it (it may be a screen demo). Without `--script`, ad-libs are not checked.
 - **A marked demo with no speech stays too.** A removal beside it, the opening and the ending never take a
   `--demo` range out of the kept ranges, and the silence between the demo and the speech kept beside it stays.
   A demo between two removed takes becomes a piece of its own; its join is listed as "beside the marked screen
