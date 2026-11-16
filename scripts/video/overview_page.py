@@ -260,6 +260,22 @@ def _make_thumbnail(video, image, duration):
     return False
 
 
+def _has_thumbnail(image):
+    return image.is_file() and image.stat().st_size > 0
+
+
+def existing_thumbnails(raw_dir, store):
+    """The set of thumbnail paths (relative to the video folder) of the store's takes whose picture is there now.
+    Makes none, so it is quick enough to run while the scene file's lock is held."""
+    found = set()
+    for scene in store['scenes']:
+        for take in scene['takes']:
+            relative = thumb_path(scene['id'], take)
+            if _has_thumbnail(Path(raw_dir) / relative):
+                found.add(relative)
+    return found
+
+
 def ensure_thumbnails(raw_dir, store):
     """Make the thumbnail of every take whose file is there and whose picture is not yet. Returns the set of
     thumbnail paths (relative to the video folder) that exist now. Never raises for a missing or broken ffmpeg."""
@@ -268,7 +284,7 @@ def ensure_thumbnails(raw_dir, store):
         for take in scene['takes']:
             relative = thumb_path(scene['id'], take)
             image = Path(raw_dir) / relative
-            if image.is_file() and image.stat().st_size > 0:
+            if _has_thumbnail(image):
                 found.add(relative)
                 continue
             video = Path(raw_dir) / 'scenes' / scene['id'] / take['file']
@@ -435,15 +451,18 @@ def build(raw_dir, cue=None, server=None, code=''):
     """Write overview.html into the video folder (a whole new file each time) and return its path. code: the
     video's page code (page_code), without which the saved page cannot change stars.
 
-    The slow part (thumbnails) is done first. The scene file is then read, the page made and written while the scene
-    file's lock is held, so a page is never made from a scene file that another program is just changing, and two
-    rewrites cannot finish in the wrong order and leave an older page behind."""
-    # A take added after this read has no picture until the next rewrite; the intake rewrites the page right after
-    # it adds takes, so that gap closes by itself.
-    thumbs = ensure_thumbnails(raw_dir, _load(raw_dir))
+    The slow part (making thumbnails) is done first. The scene file is then read, the pictures that are there are
+    listed, and the page is made and written, all while the scene file's lock is held. So a page is never made from
+    a scene file that another program is just changing, and two rewrites cannot finish in the wrong order and leave
+    an older page, or a newer take without its picture, behind."""
+    # A take added after this read gets its picture from the rewrite that follows it (the intake rewrites the page
+    # right after it adds takes). The pictures are listed again under the lock, so when that rewrite finishes
+    # before this one, this page shows the new take's picture too.
+    ensure_thumbnails(raw_dir, _load(raw_dir))
     path = Path(raw_dir) / FILE_NAME
     with scene_store.locked(raw_dir):
-        file_store.write_text(path, _page(raw_dir, _load(raw_dir), cue, '', server, thumbs, code))
+        store = _load(raw_dir)
+        file_store.write_text(path, _page(raw_dir, store, cue, '', server, existing_thumbnails(raw_dir, store), code))
     return path
 
 
