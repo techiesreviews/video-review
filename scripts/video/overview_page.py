@@ -622,11 +622,10 @@ PAGE_SCRIPT = """<script>
     });
   };
   // The server answered but said no (this page is out of date): show what it said; no answer: the usual line. A
-  // page that shows other stars than the saved ones says it is out of date and keeps its stars off.
-  list().then(saved => {
-    const ok = current(saved);
-    setStars(ok); say([carried, ok ? '' : off.dataset.stale].filter(Boolean).join(' ')); hold(front, clicked && clicked.quiet);
-  }, said => { setStars(false); say([carried, reason(said)].filter(Boolean).join(' ')); hold(front, clicked && clicked.quiet); });
+  // page that shows other stars than the saved ones says it is out of date and keeps its stars off. The focus
+  // moves before the line is said: a screen reader may stop what it is saying when the focus moves.
+  const show = (on, text) => { setStars(on); hold(front, clicked && clicked.quiet); say([carried, text].filter(Boolean).join(' ')); };
+  list().then(saved => { const ok = current(saved); show(ok, ok ? '' : off.dataset.stale); }, said => show(false, reason(said)));
   document.addEventListener('click', e => {
     const star = e.target.closest('.st');
     if (star) {
@@ -634,8 +633,9 @@ PAGE_SCRIPT = """<script>
       // Every star is off while this one is saved: two saves at once could land in the wrong order. That drops
       // the focus of the clicked star, so every way out below that does not load the page again gives it back.
       stars.forEach(s => { s.disabled = true; });
-      // A click from the keyboard has detail 0; a mouse or a finger counts its clicks from 1.
-      const quiet = e.detail > 0, back = () => hold(star, quiet);
+      // A click from the keyboard has detail 0; a mouse or a finger counts its clicks from 1. The focus goes
+      // back before the line is said: a screen reader may stop what it is saying when the focus moves.
+      const quiet = e.detail > 0, back = text => { hold(star, quiet); say(text); };
       // Without storage the page still loads again; the focus then starts at the top.
       const reload = () => {
         try { sessionStorage.setItem(place, JSON.stringify({ scene: star.dataset.scene, quiet })); } catch {}
@@ -646,18 +646,17 @@ PAGE_SCRIPT = """<script>
         body: JSON.stringify({ video, code, scene: star.dataset.scene, take: star.dataset.starred === 'true' ? null : Number(star.dataset.take) })
       }).then(async r => {
         if (r.ok) return reload();
-        // The server answered but could not do it: say what it said. The star may be saved all the same (the rough
-        // cut or the page could not follow). Then the page loads itself again to show the saved state, and says
-        // what the server said after that. When it cannot (the saved stars cannot be read, or the browser keeps
-        // nothing over a reload) the stars stay off.
+        // The server answered but could not do it: say what it said, once the page knows whether it stays. The
+        // star may be saved all the same (the rough cut or the page could not follow). Then the page loads itself
+        // again to show the saved state, and says what the server said after that. When it cannot (the saved
+        // stars cannot be read, or the browser keeps nothing over a reload) the stars stay off.
         const said = reason(await r.json().then(j => j && j.error, () => ''));
-        say(said);
         return list().then(saved => {
-          if (current(saved)) { stars.forEach(s => { s.disabled = false; }); return back(); }
-          try { sessionStorage.setItem(note, said); } catch { return back(); }
+          if (current(saved)) { stars.forEach(s => { s.disabled = false; }); return back(said); }
+          try { sessionStorage.setItem(note, said); } catch { return back(said); }
           reload();
-        }, back);
-      }, () => { setStars(false); say(offText); back(); });
+        }, () => back(said));
+      }, () => { setStars(false); back(offText); });
       return;
     }
     const play = e.target.closest('[data-play]');

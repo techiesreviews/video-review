@@ -720,7 +720,7 @@ class CommandLine(unittest.TestCase):
         # A page that is out of date gets a 403 with a reason; the page must show that, not "start video-review".
         script = overview_page.PAGE_SCRIPT
         self.assertIn("r.json().then(j => Promise.reject(j.error)", script)
-        self.assertIn("setStars(false); say([carried, reason(said)]", script)
+        self.assertIn("said => show(false, reason(said))", script)
         self.assertIn("'&code=' + encodeURIComponent(code)", script)
         self.assertIn('JSON.stringify({ video, code,', script)
 
@@ -852,7 +852,7 @@ class CommandLine(unittest.TestCase):
 class SavedPageScript(unittest.TestCase):
     """The saved page's own script, run in Node with a fake page (skipped without Node)."""
     def run_page_script(self, answer, click=False, later=(200, '{}'), carried=None, starred=False, storage=True,
-                        hold=False, place=None, away=False, pointer=False):
+                        hold=False, place=None, away=False, pointer=False, keeps=False):
         """Run the saved page's script in Node with a fake page and a fake fetch; return what the stars line (the
         page's live region, empty when there is nothing to say) says, whether the stars are on, how often the page
         loaded itself again and what it kept for after that. answer: what fetch does ('network', or [status, body
@@ -861,27 +861,32 @@ class SavedPageScript(unittest.TestCase):
         starred: the one star on the fake page (scene 01-intro, take 2) shows as starred and in the rough cut.
         storage=False: the browser gives the page nothing to keep things in. hold=True: the star click gets no
         answer yet, and the other star on the page (take 1) is clicked while it waits. place: the scene an earlier
-        load kept for the focus. away=True: the user moves the focus to something else while the star is saved.
+        load kept for the focus. away=True: the user moves the focus to something else while the star is saved;
+        away='open': while the page opens (before the take list answers). keeps=True: the browser leaves the focus
+        on a button that is switched off, as Firefox does (the fake page otherwise drops it, as Chrome does).
         pointer=True: the star is clicked with a mouse or a finger, not from the keyboard. 'focus' in the result
         names what has the focus at the end ('star 2', 'play 2', 'elsewhere' or 'page' for nothing), 'ring' whether
-        the page let its focus ring show, 'place' what the page kept for the focus. The fake page drops the focus
-        of a button that is switched off, as a browser does, and a click on a star puts the focus on it."""
+        the page let its focus ring show, 'place' what the page kept for the focus, 'order' what happened in turn
+        after the page opened or the star was clicked ('focus' for a move of the focus, 'say' for a line put in
+        the live region). A click on a star puts the focus on it."""
         node = shutil.which('node')
         if not node:
             self.skipTest('node is not installed')
         harness = textwrap.dedent('''
-            const { answer, later, click, carried, starred, storage, usual, stale, hold, place, away, pointer } = JSON.parse(process.argv[1]);
-            const off = { textContent: '', dataset: { text: usual, stale } };
+            const { answer, later, click, carried, starred, storage, usual, stale, hold, place, away, pointer, keeps } = JSON.parse(process.argv[1]);
+            let order = [], line = '';
+            const off = { dataset: { text: usual, stale }, get textContent() { return line; },
+              set textContent(text) { line = text; if (text) order.push('say'); } };
             const page = { name: 'page', dataset: { server: 'http://127.0.0.1:8879', video: 'v-1', code: 'the-code' } };
             const elsewhere = { name: 'elsewhere' };
             let focused = page, ring = null;
-            const take = (what, how) => { focused = what; ring = !(how && how.focusVisible === false); };
+            const take = (what, how) => { focused = what; ring = !(how && how.focusVisible === false); order.push('focus'); };
             const button = (number, on) => {
               const play = { name: 'play ' + number, focus: how => take(play, how) };
               let isOff = true;
               const made = { name: 'star ' + number, focus: how => { if (!isOff) take(made, how); },
                 get disabled() { return isOff; },
-                set disabled(value) { isOff = value; if (isOff && focused === made) focused = page; },
+                set disabled(value) { isOff = value; if (isOff && focused === made && !keeps) focused = page; },
                 closest: asked => asked === '.take' ? { querySelector: what => what === '.thumb' ? play : null } : null,
                 dataset: { scene: '01-intro', take: String(number), starred: String(on), on: String(on) } };
               return made;
@@ -914,16 +919,17 @@ class SavedPageScript(unittest.TestCase):
             globalThis.fetch = (url, options) => {
               if (options) {
                 sends.push(JSON.parse(options.body));
-                if (away) focused = elsewhere;
+                if (away === true) focused = elsewhere;
                 return hold ? new Promise(() => {}) : reply(answer);
               }
               asked = url; lists += 1;
+              if (away === 'open' && lists === 1) focused = elsewhere;
               return reply(!click ? answer : lists === 1 ? [200, '{}'] : later);
             };
             ''') + overview_page.PAGE_SCRIPT.split('<script>')[1].split('</script>')[0] + textwrap.dedent('''
             // A click from the keyboard has detail 0; a mouse or a finger counts its clicks from 1.
             const tap = which => {
-              which.focus(); ring = null;
+              which.focus(); ring = null; order = [];
               globalThis.onClick({ detail: pointer ? 1 : 0, target: { closest: s => s === '.st' ? which : null } });
             };
             if (click) setTimeout(() => tap(star), 20);
@@ -931,11 +937,11 @@ class SavedPageScript(unittest.TestCase):
             setTimeout(() => { console.log(JSON.stringify({ said: off.textContent, on: !star.disabled, asked, reloads,
               sent: sends.at(-1) ?? null, sends, off: [star, other].filter(s => s.disabled).length,
               kept: kept.get('overview-said:v-1') ?? null, place: kept.get('overview-focus:v-1') ?? null,
-              focus: document.activeElement.name, ring })); process.exit(0); }, 90);
+              focus: document.activeElement.name, ring, order })); process.exit(0); }, 90);
             ''')
         setup = {'answer': answer, 'later': later, 'click': click, 'carried': carried, 'starred': starred,
                  'storage': storage, 'usual': overview_page.STARS_OFF_TEXT, 'stale': overview_page.STALE_PAGE_TEXT,
-                 'hold': hold, 'place': place, 'away': away, 'pointer': pointer}
+                 'hold': hold, 'place': place, 'away': away, 'pointer': pointer, 'keeps': keeps}
         done = subprocess.run([node, '-e', harness, json.dumps(setup)], capture_output=True, text=True, timeout=30,
                               encoding='utf-8')
         self.assertEqual(done.returncode, 0, done.stderr)
@@ -1029,6 +1035,24 @@ class SavedPageScript(unittest.TestCase):
         # Not when the user went somewhere else in the meantime.
         seen = self.run_page_script([409, '{"error": "The scene file is not valid."}'], click=True, away=True)
         self.assertEqual((seen['focus'], seen['on']), ('elsewhere', True))
+        # A browser that leaves the focus on the star while it is off: the star still has it afterwards.
+        seen = self.run_page_script([409, '{"error": "The scene file is not valid."}'], click=True, keeps=True)
+        self.assertEqual((seen['focus'], seen['on']), ('star 2', True))
+
+    def test_the_focus_moves_before_the_line_is_said(self):
+        # Review of the focus fix, 2026-11-16: a screen reader may stop what it is saying when the focus moves, so
+        # a line put in the live region just before the move can be cut off. The move comes first, on every path.
+        problem = [500, json.dumps({'error': self.PROBLEM})]
+        for name, seen in (
+                ('refused', self.run_page_script([409, '{"error": "The scene file is not valid."}'], click=True)),
+                ('no answer', self.run_page_script('network', click=True)),
+                ('saved stars not read', self.run_page_script(problem, click=True, later='network')),
+                ('nothing kept', self.run_page_script(problem, click=True, later=[200, self.SAVED], storage=False)),
+                ('loaded again', self.run_page_script([200, self.SAVED], place=self.place(), carried=self.PROBLEM,
+                                                      starred=True)),
+                ('stars off', self.run_page_script('network', place=self.place(), starred=True))):
+            self.assertEqual(seen['order'], ['focus', 'say'], name)
+            self.assertTrue(seen['said'], name)
 
     def test_a_star_click_that_leaves_the_stars_off_puts_the_focus_on_the_take_s_play_button(self):
         # A star that stays off cannot hold the focus: the take's play button keeps the user's place.
@@ -1041,6 +1065,8 @@ class SavedPageScript(unittest.TestCase):
         self.assertEqual((seen['focus'], seen['on'], seen['reloads']), ('play 2', False, 0))
         seen = self.run_page_script('network', click=True, away=True)
         self.assertEqual(seen['focus'], 'elsewhere')
+        seen = self.run_page_script('network', click=True, keeps=True)
+        self.assertEqual((seen['focus'], seen['on']), ('play 2', False))
 
     def test_a_star_pressed_with_a_mouse_or_a_finger_gets_the_focus_back_without_its_ring(self):
         # A button clicked with a mouse shows no focus ring, so giving the focus back must not make one appear:
@@ -1074,6 +1100,9 @@ class SavedPageScript(unittest.TestCase):
         self.assertEqual(seen['focus'], 'page')
         seen = self.run_page_script([200, self.SAVED], place=self.place('09-other'), starred=True)
         self.assertEqual((seen['focus'], seen['place']), ('page', None))
+        # Not when the user has already put the focus somewhere else while the page opened.
+        seen = self.run_page_script([200, self.SAVED], place=self.place(), starred=True, away='open')
+        self.assertEqual((seen['focus'], seen['place']), ('elsewhere', None))
         # Something else under that name does not stop the page, and is cleared away.
         for odd in ('not json', '7', 'null', '"01-intro"', '{}'):
             seen = self.run_page_script([200, self.SAVED], place=odd, starred=True)
