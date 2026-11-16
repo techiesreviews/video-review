@@ -864,8 +864,9 @@ class OneScriptLineTests(unittest.TestCase):
         # Review round 1 on TOOLS-307: a take that is not in the script does not make the whole sentence go.
         words = said('So I think the demo is great.', 1.0) + said('The demo is great.', 5.0)
         script = 'So I shipped the new demo to all of our customers last week.'
-        kept = kept_starts(plan_words(words, script), cut_timeline.load_words(words))
-        self.assertTrue({1.0, 1.3, 1.6} <= kept)
+        result = plan_words(words, script)
+        self.assertTrue({1.0, 1.3, 1.6} <= kept_starts(result, cut_timeline.load_words(words)))
+        self.assertEqual(removed_texts(result), ['the demo is great.'])
 
     def test_a_take_said_in_another_word_order_keeps_a_script_word_the_kept_take_leaves_out(self):
         # Release checks, 2026-11-16 (TOOLS-307): lined up in order, "To use the camera is easy." matches only
@@ -1181,6 +1182,7 @@ class OneScriptLineTests(unittest.TestCase):
         remove(cutter, 0, 1)
         cutter.keep_script_lines()
         self.assertEqual(cutter.keep, [True] * 6)
+        self.assertEqual([(item['code'], item['start']) for item in cutter.flags], [('script-line-kept', 1.0)])
 
 
 class EveryScriptLineStaysTests(unittest.TestCase):
