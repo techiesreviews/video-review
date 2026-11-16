@@ -25,7 +25,6 @@ import math
 import os
 from pathlib import Path
 import re
-import subprocess
 import sys
 import time
 import urllib.error
@@ -38,6 +37,7 @@ sys.path.insert(0, str(ROOT))
 import cut_preferences  # noqa: E402
 import cut_timeline  # noqa: E402
 import file_store  # noqa: E402
+import media_tools  # noqa: E402
 import resolve_build  # noqa: E402
 
 
@@ -152,14 +152,18 @@ def check_segments(cutlist, source_frames=None):
     return timeline, segments
 
 
+# ffprobe reads only a file's header here; one still busy after this has hung on a damaged or unreachable file.
+FFPROBE_TIMEOUT_SECONDS = 120
+
+
 def ffprobe_json(path, *arguments):
     try:
-        result = subprocess.run(['ffprobe', '-v', 'error', *arguments, '-of', 'json', str(path)],
-                                capture_output=True, text=True, check=True)
-    except FileNotFoundError:
-        raise Stop('ffprobe is not installed or not on PATH.') from None
-    except subprocess.CalledProcessError as error:
-        raise Stop(f'ffprobe could not read {path}: {error.stderr.strip()}') from None
+        result = media_tools.run('ffprobe', ['-v', 'error', *arguments, '-of', 'json', str(path)],
+                                 timeout=FFPROBE_TIMEOUT_SECONDS, text=True)
+    except media_tools.MediaToolError as error:
+        raise Stop(str(error)) from None
+    if result.returncode != 0:
+        raise Stop(f'ffprobe could not read {path}: {result.stderr.strip()}')
     return json.loads(result.stdout)
 
 

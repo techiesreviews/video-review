@@ -17,7 +17,9 @@ import unittest
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'scripts/video'))
+import media_tools  # noqa: E402
 import overview_page  # noqa: E402
 import rough_cut  # noqa: E402
 import scene_store  # noqa: E402
@@ -164,26 +166,33 @@ class Finished:
 
 
 class MediaTools(unittest.TestCase):
+    """The tools as media_tools runs them: found by name, with what they print made up."""
+
+    def setUp(self):
+        patcher = mock.patch.object(media_tools, 'find', side_effect=lambda tool: tool)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_probe_reads_length_and_whether_there_is_sound(self):
         out = json.dumps({'format': {'duration': '61.250000'}, 'streams': [{'codec_type': 'video'}, {'codec_type': 'audio'}]})
-        with mock.patch.object(take_intake.subprocess, 'run', return_value=Finished(stdout=out)) as run:
+        with mock.patch.object(media_tools.subprocess, 'run', return_value=Finished(stdout=out)) as run:
             self.assertEqual(take_intake.probe_media(Path('a.mkv')), (61.25, True))
         self.assertEqual(run.call_args.args[0][0], 'ffprobe')
 
     def test_probe_sees_a_take_without_sound(self):
         out = json.dumps({'format': {'duration': '5'}, 'streams': [{'codec_type': 'video'}]})
-        with mock.patch.object(take_intake.subprocess, 'run', return_value=Finished(stdout=out)):
+        with mock.patch.object(media_tools.subprocess, 'run', return_value=Finished(stdout=out)):
             self.assertEqual(take_intake.probe_media(Path('a.mkv')), (5.0, False))
 
     def test_probe_gives_none_for_a_file_it_cannot_read_yet(self):
-        with mock.patch.object(take_intake.subprocess, 'run', return_value=Finished(returncode=1)):
+        with mock.patch.object(media_tools.subprocess, 'run', return_value=Finished(returncode=1)):
             self.assertIsNone(take_intake.probe_media(Path('a.mkv')))
         for out in ('not json', json.dumps({'format': {}, 'streams': []}), json.dumps({'format': {'duration': 'N/A'}})):
-            with mock.patch.object(take_intake.subprocess, 'run', return_value=Finished(stdout=out)):
+            with mock.patch.object(media_tools.subprocess, 'run', return_value=Finished(stdout=out)):
                 self.assertIsNone(take_intake.probe_media(Path('a.mkv')))
 
     def test_silence_check_listens_to_the_first_sound_track_only(self):
-        with mock.patch.object(take_intake.subprocess, 'run', return_value=Finished(stderr=SILENCE_TEXT)) as run:
+        with mock.patch.object(media_tools.subprocess, 'run', return_value=Finished(stderr=SILENCE_TEXT)) as run:
             self.assertEqual(take_intake.detect_silence(Path('a.mkv'), 30.0), [(0.0, 1.5), (12.25, 15.75), (28.9, 30.0)])
         command = run.call_args.args[0]
         self.assertEqual(command[0], 'ffmpeg')
@@ -192,11 +201,11 @@ class MediaTools(unittest.TestCase):
         self.assertIn(f'silencedetect=noise={take_intake.SILENCE_FLOOR_DB}dB:d={take_intake.SILENCE_MIN_SECONDS}', command)
 
     def test_a_failed_silence_check_is_none(self):
-        with mock.patch.object(take_intake.subprocess, 'run', return_value=Finished(returncode=1)):
+        with mock.patch.object(media_tools.subprocess, 'run', return_value=Finished(returncode=1)):
             self.assertIsNone(take_intake.detect_silence(Path('a.mkv'), 30.0))
 
     def test_missing_tools_are_said_plainly(self):
-        with mock.patch.object(take_intake.subprocess, 'run', side_effect=FileNotFoundError):
+        with mock.patch.object(media_tools.subprocess, 'run', side_effect=FileNotFoundError):
             with self.assertRaisesRegex(take_intake.ToolMissing, 'ffprobe'):
                 take_intake.probe_media(Path('a.mkv'))
             with self.assertRaisesRegex(take_intake.ToolMissing, 'ffmpeg'):

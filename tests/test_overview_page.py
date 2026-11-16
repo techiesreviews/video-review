@@ -17,8 +17,16 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'scripts/video'))
+import media_tools  # noqa: E402
 import overview_page  # noqa: E402
 import scene_store  # noqa: E402
+
+
+def setUpModule():
+    # ffmpeg is "found" by its name everywhere here; each test decides what running it does.
+    patcher = mock.patch.object(media_tools, 'find', side_effect=lambda tool: tool)
+    patcher.start()
+    unittest.addModuleCleanup(patcher.stop)
 
 CUE = (ROOT / 'tests/fixtures/scene-cue-file.md').read_text(encoding='utf-8')
 CLEAN = {'ends_early': False, 'long_pause': False, 'length_off': False}
@@ -492,7 +500,7 @@ class Thumbnails(unittest.TestCase):
         return subprocess.CompletedProcess(command, 0, '', '')
 
     def make(self):
-        with mock.patch.object(overview_page.subprocess, 'run', side_effect=self.fake_ffmpeg):
+        with mock.patch.object(media_tools.subprocess, 'run', side_effect=self.fake_ffmpeg):
             return overview_page.ensure_thumbnails(self.raw, self.store)
 
     def test_one_frame_per_take_is_saved_next_to_the_take(self):
@@ -527,26 +535,26 @@ class Thumbnails(unittest.TestCase):
             if 'take-01.mkv' in ' '.join(command):
                 return subprocess.CompletedProcess(command, 1, '', 'broken')
             return self.fake_ffmpeg(command)
-        with mock.patch.object(overview_page.subprocess, 'run', side_effect=flaky):
+        with mock.patch.object(media_tools.subprocess, 'run', side_effect=flaky):
             found = overview_page.ensure_thumbnails(self.raw, self.store)
         self.assertEqual(found, {f'scenes/{COSTS}/take-0{n}.jpg' for n in (2, 3)})
         self.assertFalse(any('.tmp' in p.name for p in (self.raw / 'scenes' / COSTS).iterdir()))
 
     def test_without_ffmpeg_there_are_no_frames_and_nothing_breaks(self):
-        with mock.patch.object(overview_page.subprocess, 'run', side_effect=FileNotFoundError):
+        with mock.patch.object(media_tools.subprocess, 'run', side_effect=FileNotFoundError):
             self.assertEqual(overview_page.ensure_thumbnails(self.raw, self.store), set())
 
     def test_listing_the_frames_that_are_there_makes_none_and_skips_an_empty_one(self):
         folder = self.raw / 'scenes' / COSTS
         (folder / 'take-01.jpg').write_bytes(b'')
         (folder / 'take-02.jpg').write_bytes(b'jpeg')
-        with mock.patch.object(overview_page.subprocess, 'run') as ffmpeg:
+        with mock.patch.object(media_tools.subprocess, 'run') as ffmpeg:
             found = overview_page.existing_thumbnails(self.raw, self.store)
         self.assertEqual(found, {f'scenes/{COSTS}/take-02.jpg'})
         ffmpeg.assert_not_called()
 
     def test_an_ffmpeg_that_hangs_is_given_up_on(self):
-        with mock.patch.object(overview_page.subprocess, 'run',
+        with mock.patch.object(media_tools.subprocess, 'run',
                                side_effect=subprocess.TimeoutExpired('ffmpeg', 1)):
             self.assertEqual(overview_page.ensure_thumbnails(self.raw, self.store), set())
 
@@ -560,7 +568,7 @@ class WritingThePage(unittest.TestCase):
         self.data = Path(self.temp.name) / 'data'
         scene_store.save(self.raw, sample_store())
         (self.raw / 'prompter.md').write_text(CUE, encoding='utf-8')
-        patcher = mock.patch.object(overview_page.subprocess, 'run', side_effect=FileNotFoundError)
+        patcher = mock.patch.object(media_tools.subprocess, 'run', side_effect=FileNotFoundError)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -639,7 +647,7 @@ class WritingThePage(unittest.TestCase):
             Path(command[-1]).write_bytes(b'jpeg')
             return subprocess.CompletedProcess(command, 0, '', '')
 
-        with mock.patch.object(overview_page.subprocess, 'run', side_effect=ffmpeg):
+        with mock.patch.object(media_tools.subprocess, 'run', side_effect=ffmpeg):
             page = overview_page.build(self.raw).read_text(encoding='utf-8')
         self.assertIn(newest, newer_pages[0], "the newer rewrite shows the new take's picture")
         self.assertIn(newest, page, "the older rewrite, written last, still shows the new take's picture")
@@ -699,7 +707,7 @@ class ServerAddress(unittest.TestCase):
         raw.mkdir()
         scene_store.save(raw, sample_store())
         overview_page.remember_port(self.data, 8881)
-        with mock.patch.object(overview_page.subprocess, 'run', side_effect=FileNotFoundError):
+        with mock.patch.object(media_tools.subprocess, 'run', side_effect=FileNotFoundError):
             page = overview_page.publish(raw, data_dir=self.data).read_text(encoding='utf-8')
         self.assertIn('data-server="http://127.0.0.1:8881"', page)
 
@@ -774,7 +782,7 @@ class CommandLine(unittest.TestCase):
         self.raw.mkdir()
         scene_store.save(self.raw, sample_store())
         self.data = Path(self.temp.name) / 'data'
-        patcher = mock.patch.object(overview_page.subprocess, 'run', side_effect=FileNotFoundError)
+        patcher = mock.patch.object(media_tools.subprocess, 'run', side_effect=FileNotFoundError)
         patcher.start()
         self.addCleanup(patcher.stop)
 
