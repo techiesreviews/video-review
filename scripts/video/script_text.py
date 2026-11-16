@@ -1,9 +1,8 @@
 """Reads a script's markdown as the words to say. The take cutter and the overview page share it, so both read
-the same script the same way: links, images and [directions]."""
+the same script the same way: links, images and [directions], with the brackets inside a direction and a bracket
+that is never closed."""
 import re
 
-# A [direction] may run over several lines, but never past a heading: a missing "]" must not swallow later scenes.
-DIRECTION = re.compile(r'\[(?:[^\]\n]|\n(?![ \t]*#))*\]')
 # A markdown link or image, [text](address "title"). A mark with a backslash in front of it is text everywhere.
 LINK_START = re.compile(r'((?<!\\)!)?\[')
 # The square brackets of a script, and a heading: no pair of brackets runs past one, as no direction does.
@@ -13,6 +12,8 @@ ADDRESS_MARK = re.compile(r'\\[^\n]|(?<=[ \t])(?:"(?:[^"\n\\]|\\.)*"|\'(?:[^\'\n
 ANGLE_ADDRESS = re.compile(r'<[^<>\n]*>')
 # The mark that opens a list item.
 LIST_ITEM = re.compile(r'^\s*(?:[-*+]|\d+[.)])\s+')
+# Bold or italic marks around a link, and the space beside them: a **[link](address)** alone is still alone.
+EMPHASIS = '*_ \t'
 
 
 def bracket_pairs(text):
@@ -46,8 +47,8 @@ def address_end(text, start):
 
 def without_links(text, images):
     """The script with its images left out (images=True), or with each link read as its text (images=False). A
-    link that has a line to itself (also as a list item) is left out: that is a direction with an address. A
-    bracket that is never closed, in the text or in the address, makes no link."""
+    link that has a line to itself (also as a list item, and in bold or italic marks) is left out: that is a
+    direction with an address. A bracket that is never closed, in the text or in the address, makes no link."""
     pairs = bracket_pairs(text)
     parts, done = [], 0
     for match in LINK_START.finditer(text):
@@ -60,7 +61,7 @@ def without_links(text, images):
         line_end = text.find('\n', end)
         before = text[text.rfind('\n', 0, match.start()) + 1:match.start()]
         after = text[end:line_end if line_end >= 0 else len(text)]
-        alone = not LIST_ITEM.sub('', before).strip() and not after.strip()
+        alone = not LIST_ITEM.sub('', before).strip(EMPHASIS) and not after.strip(EMPHASIS)
         parts += [text[done:match.start()], ' ' if images else '' if alone else text[match.end():text_end - 1]]
         done = end
     return ''.join(parts) + text[done:]
@@ -68,6 +69,16 @@ def without_links(text, images):
 
 def without_directions(text):
     """The script without what is not said: images and [directions] are left out, and a link is read as its text,
-    or left out when it has a line to itself. A direction never runs past a heading."""
+    or left out when it has a line to itself. A direction is a closed pair of brackets, with the pairs inside it; it
+    may run over several lines, but never past a heading. A bracket that is never closed hides no later line: a line
+    that starts with one is left out on its own, one inside a line is text. A bracket with a backslash in front of
+    it is text."""
     # Images go first: one that is itself a link, [![image](file)](address), then goes with its link.
-    return DIRECTION.sub(' ', without_links(without_links(text, images=True), images=False))
+    text = without_links(without_links(text, images=True), images=False)
+    parts, done = [], 0
+    for start, end in sorted(bracket_pairs(text).items()):
+        if start > done:  # a pair inside a pair went with it
+            parts += [text[done:start - 1], ' ']
+            done = end
+    lines = (''.join(parts) + text[done:]).split('\n')
+    return '\n'.join('' if line.lstrip().startswith('[') else line for line in lines)

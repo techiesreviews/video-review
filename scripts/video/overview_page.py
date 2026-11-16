@@ -218,20 +218,11 @@ ANY_HEADING = re.compile(r'^#{1,6}[ \t]')
 
 
 def spoken_text(text):
-    """One scene's lines as the words to say. Links and images are read as the cutter reads them (script_text):
-    an image is left out, and a link is read as its text, or left out when it has a line to itself. A [direction]
-    is left out, also inside a line and over several lines, with the brackets inside it. Only a closed pair of
-    brackets is one, so a bracket that is never closed hides no later line: a line that starts with one is left
-    out on its own. Bold marks go."""
-    # Images go first: one that is itself a link, [![image](file)](address), then goes with its link.
-    text = script_text.without_links(script_text.without_links(text, images=True), images=False)
-    parts, done = [], 0
-    for start, end in sorted(script_text.bracket_pairs(text).items()):
-        if start > done:  # a pair inside a pair went with it
-            parts += [text[done:start - 1], ' ']
-            done = end
-    lines = [line for line in (''.join(parts) + text[done:]).splitlines()
-             if script_text.LIST_ITEM.sub('', line).strip() and not line.lstrip().startswith('[')]
+    """One scene's lines as the words to say, read as the cutter reads them (script_text.without_directions): an
+    image and a [direction] are left out, also inside a line and over several lines, and a link is read as its
+    text, or left out when it has a line to itself. Bold marks go."""
+    lines = [line for line in script_text.without_directions(text).splitlines()
+             if script_text.LIST_ITEM.sub('', line).strip()]
     return ' '.join(' '.join(lines).replace('**', '').split())
 
 
