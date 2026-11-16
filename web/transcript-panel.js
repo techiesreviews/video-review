@@ -2,7 +2,7 @@ import {normalizeTranscript,activeWordIndex,originalOmissions} from './transcrip
 import {skipRemoved,previewDuration,exportCut,removedRanges,playbackRemovals} from './cut-core.js';
 import {createWaveform} from './waveform-panel.js';
 import {barKey,suggestion,recentNotes,afterDelete,broughtBackLine,sentLine,barSpotOffWords,deletedIds,cutMarks} from './edit-bar-core.js';
-import {createTranscriptEditing} from './transcript-editing.js';
+import {createTranscriptEditing,REFUSED_TEXT} from './transcript-editing.js';
 import {clock} from './time-format.js';
 
 const $=s=>document.querySelector(s);
@@ -41,7 +41,9 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   function placeSoon(){if(placeFrame==null)placeFrame=requestAnimationFrame(()=>{placeFrame=null;placeBar();});}
   body.addEventListener('scroll',placeSoon,{passive:true});addEventListener('resize',placeSoon);window.visualViewport?.addEventListener('resize',placeSoon);window.visualViewport?.addEventListener('scroll',placeSoon);
   new ResizeObserver(placeSoon).observe(bar);
-  function showBar(target=null){barTarget=target;bar.hidden=false;primaryState();placeBar();}
+  function showBar(target=null){barTarget=target;bar.hidden=false;notice();primaryState();placeBar();}
+  // A short line on the panel for an edit with no selection to show it on (an Undo or Restore that was refused).
+  function notice(text=''){const line=$('#transcriptNotice');line.textContent=text;line.hidden=!text;}
   // The first button deletes; on words that are all deleted already it brings them back instead.
   const DELETE_TITLE='Remove the selected words from the cut. Backspace or Delete does the same when the box is empty. Ctrl+Z undoes.';
   function primaryState(){const button=$('.bar-delete'),back=editing.toRestore().length>0;button.textContent=back?'Restore':'Delete';button.title=back?'Bring these deleted words back into the cut.':DELETE_TITLE;}
@@ -189,9 +191,27 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   // An edit saved while a new transcript came in: the panel loads it again, so it shows what was saved. Saved on a
   // video no longer open: that video shows it when opened, and nothing is said over this one.
   function failed(error){
+    if(error.refused){if(error.videoId===videoRef?.id)reloadRefused();return;}
     // A save that worked before a later step failed (closing a note) has already dropped the selection; the view follows.
     if(!editing.selection)clearView();
     if(error.saved&&error.videoId!==videoRef?.id)return;showError(error.message);if(error.saved)panel.load(videoRef,backendRef);}
+  // A save the store refused because the words changed elsewhere (an agent, another tab): this video's newer words are
+  // loaded, the same words (by id, else at their time) are selected again with the typed note, the text keeps its scroll,
+  // and a short line says so, so the edit can be made again. Nothing is saved, so the newer words stay as they are.
+  async function reloadRefused(){
+    const token=++loadToken,v=videoRef,backend=backendRef,chosen=editing.selection,draft=editing.noteId?'':noteBox.value,scroll=body.scrollTop;
+    const active=document.activeElement,refocus=!active||active===document.body||bar.contains(active)||body.contains(active);
+    let transcript;
+    try{const data=await backend.transcript(v);if(token!==loadToken)return;transcript=data?normalizeTranscript(data,v.durationMs):null;}
+    catch(error){if(token===loadToken)showError(error.message);return;}
+    show(transcript,v);body.scrollTop=scroll;
+    if(chosen&&transcript?.words.length){
+      const {first,last,cut}=editing.target(chosen.startMs,chosen);
+      choose(first,last,{focus:refocus});
+      if(cut){editing.selectCut(cut);$('#selectionTime').textContent=stamp(cut.atMs);$('#selectionQuote').textContent='Join '+cut.id;}
+      keepDraft(draft);barStatus(REFUSED_TEXT);
+    }else notice(REFUSED_TEXT);
+  }
   function hasDraft(){const selected=editing.selection;return !editing.noteId&&!!noteBox.value.trim()&&!!selected&&selected.kind!=='source';}
   // An unsent note, including letters typed while an edit was saving, is handed back for the next selection.
   const draftAfter=done=>done.noteOpen?'':noteBox.value;
@@ -213,7 +233,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     catch(error){failed(error);}finally{refreshCuts();}
   }
   async function undoCut(){
-    if(!editing.edits().length||editing.busy)return;const fromBar=document.activeElement===noteBox;
+    if(!editing.edits().length||editing.busy)return;notice();const fromBar=document.activeElement===noteBox;
     // A half-typed note belongs to what it was typed on, so that selection and the note stay untouched.
     const stay=hasDraft();
     try{
@@ -226,7 +246,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     catch(error){failed(error);}finally{refreshCuts();}
   }
   async function restoreCut(ids,{fromBar=false}={}){
-    if(!editing.edits().some(e=>ids.includes(e.id))||editing.busy)return;pause();
+    if(!editing.edits().some(e=>ids.includes(e.id))||editing.busy)return;notice();pause();
     // With keep, the current selection and its note are left exactly as they are (bringing a cut back must not move a half-typed note).
     const stay=fromBar||hasDraft();
     try{
@@ -294,11 +314,12 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     if(next&&next!==currentNode){currentNode=next;if($('#followTranscript').checked&&dragAnchor==null)centre(currentNode);}
   }
   function removals(){return playbackRemovals(cutsOn(),editing.edits(),auditionRange);}
+  function show(transcript,v){editing.load(transcript,v);$('#transcriptSummary').textContent=transcript?`${transcript.words.length} words · ${transcript.label} · timings approximate`:'Use your existing HappyScribe word timings';render();}
   const panel={
     async load(v,backend){
-      const token=++loadToken;backendRef=backend;videoRef=v;videoId=v?.id;editing.load(null,v);pendingFocus=null;waveform.load(v);$('#cutPreviewBar').hidden=true;$('#transcriptSummary').textContent=v?'Loading transcript…':'Open a video to read its transcript.';render();
+      const token=++loadToken;backendRef=backend;videoRef=v;videoId=v?.id;notice();editing.load(null,v);pendingFocus=null;waveform.load(v);$('#cutPreviewBar').hidden=true;$('#transcriptSummary').textContent=v?'Loading transcript…':'Open a video to read its transcript.';render();
       if(!v)return;
-      try{const data=await backend.transcript(v);if(token!==loadToken)return;const transcript=data?normalizeTranscript(data,v.durationMs):null;editing.load(transcript,v);$('#transcriptSummary').textContent=transcript?`${transcript.words.length} words · ${transcript.label} · timings approximate`:'Use your existing HappyScribe word timings';render();if(pendingFocus){const focus=pendingFocus;pendingFocus=null;focusAt(focus.ms,focus.editRequest,focus.comment);}}
+      try{const data=await backend.transcript(v);if(token!==loadToken)return;show(data?normalizeTranscript(data,v.durationMs):null,v);if(pendingFocus){const focus=pendingFocus;pendingFocus=null;focusAt(focus.ms,focus.editRequest,focus.comment);}}
       catch(error){if(token===loadToken){$('#transcriptSummary').textContent='Could not load transcript';showError(error.message);}}
     },
     async import(v,backend,file){
