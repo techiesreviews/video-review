@@ -150,16 +150,17 @@ def give_old_pages_a_code(data_dir):
     return rewritten
 
 
-def point_saved_pages_at_the_server(data_dir):
+def point_saved_pages_at_the_server(data_dir, address=None):
     """Saved pages that ask another address than the server's are written again, so their stars work after the
     server moved to another port (the launcher takes the next free one when 8879 is in use). The server runs this
-    once when it starts. It reads what each saved page really asks, so a page whose folder was away during an earlier
-    start is fixed at the next one. Returns the keys of the pages written again; a video without a saved page gets
-    none, and a folder that is gone or unreadable is left for the next start or take to fix."""
+    once when it starts, with its own address; without one it is the address in the data folder (server_address).
+    It reads what each saved page really asks, so a page whose folder was away during an earlier start is fixed at
+    the next one. Returns the keys of the pages written again; a video without a saved page gets none, and a folder
+    that is gone or unreadable is left for the next start or take to fix."""
     registry = review_store.read(Path(data_dir) / REGISTRY_NAME, {})
     if not isinstance(registry, dict):
         return []
-    address = server_address(data_dir)
+    address = address or server_address(data_dir)
     # Everything a video names is escaped in the page, so only the page's own first tag can read like this.
     asks_the_server = f'<body data-server="{html.escape(address, quote=True)}"'
     rewritten = []
