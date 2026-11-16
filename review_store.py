@@ -1,4 +1,7 @@
-"""Shared storage for review comments, used by the web server and the MCP server."""
+"""Shared storage for review comments, used by the web server and the MCP server.
+
+The comment rules (fields, limits, who may write and edit, messages) are in web/review-rules.json, which the browser and
+the hosted Worker read too (web/review-core.js); tests/fixtures/review-rule-cases.json is run against both."""
 from pathlib import Path
 import hashlib, json, math, os, re, shutil, subprocess, uuid
 from fractions import Fraction
@@ -6,7 +9,32 @@ from datetime import datetime, timezone
 import file_store
 
 ROOT=Path(__file__).resolve().parent
-AUTHORS=('you','ai')
+RULES=json.loads((ROOT/'web'/'review-rules.json').read_text(encoding='utf-8'))
+MESSAGES=RULES['messages'];LIMITS=RULES['limits']
+AUTHORS=tuple(RULES['authors'])
+SECONDS,TIMECODE,VIDEO_ID=(re.compile(RULES['patterns'][name]) for name in ('seconds','timecode','videoId'))
+
+def round_half_up(value):
+    """Nearest whole number, halves up, as JavaScript's Math.round does (Python's round() sends halves to even)."""
+    whole=math.floor(value);return whole+1 if value-whole>=.5 else whole
+
+def round3(value):
+    """Three decimals, halves up, as the browser rounds source frames."""
+    return round_half_up(value*1000)/1000
+
+def first(*values):
+    """The first value that is not None, as JavaScript's ?? picks."""
+    return next((value for value in values if value is not None),None)
+
+def whole_number(value):
+    """An int, also one written with a decimal point (5.0), as JavaScript's Number.isInteger accepts; else None."""
+    if isinstance(value,bool):return None
+    if isinstance(value,int):return value
+    if isinstance(value,float) and value.is_integer():return int(value)
+    return None
+
+def finite_number(value):
+    return isinstance(value,(int,float)) and not isinstance(value,bool) and math.isfinite(value)
 
 def data_dir(path=None):
     directory=Path(path or os.environ.get('VIDEO_REVIEW_DATA_DIR') or ROOT/'data').expanduser().resolve()
@@ -29,32 +57,32 @@ def videos(directory):return read(directory/'manifest.json',[])
 def comments(directory):return read(directory/'comments.json',{'comments':[]})['comments']
 def find_video(directory,video_id):
     video=next((x for x in videos(directory) if x['id']==video_id),None)
-    if not video:raise ValueError('Unknown video version')
+    if not video:raise ValueError(MESSAGES['unknownVideo'])
     return video
 
 def parse_time(value):
     """Milliseconds from an int, or from h:mm:ss.mmm, m:ss.mmm or seconds."""
     if value is None or value=='':return None
-    if isinstance(value,bool):raise ValueError('Invalid time')
-    if isinstance(value,(int,float)):return int(round(value))
-    text=str(value).strip()
-    if re.fullmatch(r'\d+(\.\d+)?',text):return int(round(float(text)*1000))
-    m=re.fullmatch(r'(?:(\d+):)?(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?',text)
-    if not m or int(m[3])>59 or (m[1] and int(m[2])>59):raise ValueError('Use h:mm:ss.mmm, m:ss.mmm, seconds or milliseconds')
+    if isinstance(value,bool) or (isinstance(value,float) and not math.isfinite(value)):raise ValueError(MESSAGES['time'])
+    if isinstance(value,(int,float)):return round_half_up(value)
+    text=str(value).strip(RULES['trimCharacters'])
+    if SECONDS.fullmatch(text):return round_half_up(float(text)*1000)
+    m=TIMECODE.fullmatch(text)
+    if not m or int(m[3])>59 or (m[1] and int(m[2])>59):raise ValueError(MESSAGES['timeFormat'])
     return (int(m[1] or 0)*3600+int(m[2])*60+int(m[3]))*1000+int((m[4] or '0').ljust(3,'0'))
 
 def timecode(ms):
-    ms=max(0,int(round(ms)));return f'{ms//3600000:02}:{ms//60000%60:02}:{ms//1000%60:02}.{ms%1000:03}'
+    ms=max(0,round_half_up(ms));return f'{ms//3600000:02}:{ms//60000%60:02}:{ms//1000%60:02}.{ms%1000:03}'
 
 def source_spans(video,start_ms,end_ms):
     fps=video['fps'];start=start_ms*fps/1000;end=(end_ms if end_ms is not None else start_ms)*fps/1000;cursor=0;spans=[]
     for a,b in video.get('keepRanges') or []:
         finish=cursor+b-a
         if end_ms is None:
-            if cursor<=start<finish:spans.append({'sourceFrame':round(a+start-cursor,3),'sourceMs':round((a+start-cursor)*1000/fps,3)})
+            if cursor<=start<finish:spans.append({'sourceFrame':round3(a+start-cursor),'sourceMs':round3((a+start-cursor)*1000/fps)})
         elif start<finish and end>cursor:
             lo=a+max(0,start-cursor);hi=a+min(b-a,end-cursor)
-            spans.append({'sourceStartFrame':round(lo,3),'sourceEndFrame':round(hi,3),'sourceStartMs':round(lo*1000/fps,3),'sourceEndMs':round(hi*1000/fps,3)})
+            spans.append({'sourceStartFrame':round3(lo),'sourceEndFrame':round3(hi),'sourceStartMs':round3(lo*1000/fps),'sourceEndMs':round3(hi*1000/fps)})
         cursor=finish
     return spans
 
@@ -67,64 +95,79 @@ def thread(comment):
 
 def frame_at(ms,fps):
     """The frame at a time, rounding half up as the browser and the hosted worker do."""
-    return math.floor(ms*fps/1000+.5)
+    return round_half_up(ms*fps/1000)
 
 def agent_request(video,c):
     """What the reviewer asked an agent to do, in one field: the comment's current text is the instruction."""
     e=c['editRequest'];fps=video['fps'];end=c.get('endMs')
     return {'type':'change','instruction':c['text'],'quote':e.get('quote'),'wordIds':e.get('wordIds') or [],'firstWordId':e.get('firstWordId'),'lastWordId':e.get('lastWordId'),
         'startFrame':frame_at(c['startMs'],fps),'endFrame':frame_at(end,fps) if end is not None else None,
-        'sourceSpans':c.get('sourceSpans',e.get('sourceSpans',source_spans(video,c['startMs'],end))),'transcriptRevision':e.get('transcriptRevision'),**({'cutId':e['cutId']} if e.get('cutId') else {})}
+        'sourceSpans':first(c.get('sourceSpans'),e.get('sourceSpans'),source_spans(video,c['startMs'],end)),'transcriptRevision':e.get('transcriptRevision'),**({'cutId':e['cutId']} if e.get('cutId') else {})}
 
 def describe(video,c):
     """A comment with everything an editor needs: timecodes, frames and original-source mapping."""
-    fps=video['fps']
-    return {'id':c['id'],'status':c['status'],'author':c.get('author','you'),'text':c['text'],
+    fps=video['fps'];request=c.get('editRequest')
+    return {'id':c['id'],'videoId':c.get('videoId'),'status':c['status'],'author':c.get('author') or RULES['pageAuthor'],'text':c['text'],
         'start':timecode(c['startMs']),'end':timecode(c['endMs']) if c.get('endMs') is not None else None,
         'startMs':c['startMs'],'endMs':c.get('endMs'),'startFrame':frame_at(c['startMs'],fps),
         'endFrame':frame_at(c['endMs'],fps) if c.get('endMs') is not None else None,
-        'sourceSpans':c.get('sourceSpans',c.get('editRequest',{}).get('sourceSpans',source_spans(video,c['startMs'],c.get('endMs')))),
-        **({'editRequest':c['editRequest']} if c.get('editRequest') else {}),
-        **({'agentRequest':agent_request(video,c)} if c.get('editRequest',{}).get('type')=='change' else {}),
+        'sourceSpans':first(c.get('sourceSpans'),(request or {}).get('sourceSpans'),source_spans(video,c['startMs'],c.get('endMs'))),
+        **({'editRequest':request} if request is not None else {}),
+        **({'agentRequest':agent_request(video,c)} if (request or {}).get('type')=='change' else {}),
         'replies':[{'author':r['author'],'text':r['text'],'createdAt':r.get('createdAt')} for r in thread(c)],
         'createdAt':c.get('createdAt')}
 
 def check_text(text):
-    text=(text or '').strip()
-    if not text or len(text)>10000:raise ValueError('Please enter a comment (up to 10,000 characters)')
+    if text is None:text=''
+    if not isinstance(text,str):raise ValueError(MESSAGES['text'])
+    text=text.strip(RULES['trimCharacters'])
+    if not text or len(text)>LIMITS['textLength']:raise ValueError(MESSAGES['text'])
     return text
 
 def check_author(author):
-    if author not in AUTHORS:raise ValueError('Author must be "you" or "ai"')
+    if author not in AUTHORS:raise ValueError(MESSAGES['author'])
     return author
 
+def check_keep_ranges(ranges):
+    if not isinstance(ranges,list) or not all(isinstance(r,list) and len(r)==2 and all(finite_number(x) for x in r) and 0<=r[0]<r[1] for r in ranges):
+        raise ValueError(MESSAGES['keepRanges'])
+    return ranges
+
+def check_render(duration_ms=None,keep_ranges=None):
+    """The new duration and keepRanges the agent sends after re-rendering a video under the same file name."""
+    changes={}
+    if duration_ms is not None:
+        duration=parse_time(duration_ms)
+        if duration is None or duration<=0:raise ValueError(MESSAGES['duration'])
+        changes['durationMs']=duration
+    if keep_ranges is not None:changes['keepRanges']=check_keep_ranges(keep_ranges)
+    return changes
+
 def check_edit_request(request,video,start,end):
-    if not isinstance(request,dict) or request.get('type') not in ['remove','restore','clipped','extend_before','extend_after','mistake','pause','comment','change']:
-        raise ValueError('Invalid transcript edit request')
+    if not isinstance(request,dict) or request.get('type') not in RULES['editRequestTypes']:raise ValueError(MESSAGES['editRequest'])
     result={'type':request['type']}
-    for key in ['quote','firstWordId','lastWordId','cutId','transcriptRevision']:
-        if key in request:
-            if not isinstance(request[key],str) or len(request[key])>(3000 if key=='quote' else 120):raise ValueError('Invalid transcript selection')
+    for key in RULES['selectionFields']:
+        if request.get(key) is not None:
+            if not isinstance(request[key],str) or len(request[key])>(LIMITS['quoteLength'] if key=='quote' else LIMITS['idLength']):raise ValueError(MESSAGES['selection'])
             result[key]=request[key]
     result['sourceSpans']=source_spans(video,start,end)
     if request['type']=='change':
-        ids=request.get('wordIds',[])
-        if not isinstance(ids,list) or len(ids)>2000 or any(not isinstance(i,str) or len(i)>120 for i in ids):raise ValueError('Invalid word IDs: one request can cover up to 2,000 words.')
+        ids=first(request.get('wordIds'),[])
+        if not isinstance(ids,list) or len(ids)>LIMITS['wordIds'] or any(not isinstance(i,str) or len(i)>LIMITS['idLength'] for i in ids):raise ValueError(MESSAGES['wordIds'])
         result.update(wordIds=list(ids),startFrame=frame_at(start,video['fps']),endFrame=frame_at(end,video['fps']) if end is not None else None)
     if request['type']=='restore':
-        import math
         a,b,d=(request.get(k) for k in ['sourceStartMs','sourceEndMs','sourceDurationMs'])
-        if any(isinstance(t,bool) or not isinstance(t,(int,float)) or not math.isfinite(t) for t in [a,b,d]) or not 0<=a<b<=d<=86400000:raise ValueError('Invalid original-recording restore range')
-        result.update(sourceStartMs=round(a),sourceEndMs=round(b),sourceDurationMs=round(d))
-        if 'sourceId' in request:
-            if not isinstance(request['sourceId'],str) or len(request['sourceId'])>120:raise ValueError('Invalid original source ID')
+        if not all(finite_number(t) for t in [a,b,d]) or not 0<=a<b<=d<=LIMITS['sourceDurationMs']:raise ValueError(MESSAGES['restoreRange'])
+        result.update(sourceStartMs=round_half_up(a),sourceEndMs=round_half_up(b),sourceDurationMs=round_half_up(d))
+        if request.get('sourceId') is not None:
+            if not isinstance(request['sourceId'],str) or len(request['sourceId'])>LIMITS['idLength']:raise ValueError(MESSAGES['sourceId'])
             result['sourceId']=request['sourceId']
-        result['sourceSpans']=[{'sourceStartFrame':round(a*video['fps']/1000,3),'sourceEndFrame':round(b*video['fps']/1000,3),'sourceStartMs':round(a,3),'sourceEndMs':round(b,3)}]
+        result['sourceSpans']=[{'sourceStartFrame':round3(a*video['fps']/1000),'sourceEndFrame':round3(b*video['fps']/1000),'sourceStartMs':round3(a),'sourceEndMs':round3(b)}]
     return result
 
 def transcript_path(directory,video_id):
     find_video(directory,video_id)
-    if not re.fullmatch(r'[A-Za-z0-9._-]{1,100}',video_id):raise ValueError('Invalid video id')
+    if not VIDEO_ID.fullmatch(video_id):raise ValueError('Invalid video id')
     return directory/'transcripts'/(video_id+'.json')
 
 def get_transcript(directory,video_id):
@@ -148,7 +191,7 @@ def search_library(directory,query=''):
 def archive_video(directory,video_id):
     with locked(directory/'manifest.json'):
         manifest=videos(directory);item=next((v for v in manifest if v['id']==video_id),None)
-        if item is None:raise ValueError('Unknown video version')
+        if item is None:raise ValueError(MESSAGES['unknownVideo'])
         archive=read(directory/'library-archive.json',[])
         archive=[v for v in archive if v['id']!=video_id]+[item]
         write(directory/'library-archive.json',archive)
@@ -223,7 +266,7 @@ def save_transcript(directory,video_id,data):
             'label':str(data.get('label','Word-timed transcript'))[:120],'words':words,'cuts':cuts}
     if data.get('original') is not None:
         o=data['original']
-        if not isinstance(o,dict) or isinstance(o.get('durationMs'),bool) or not isinstance(o.get('durationMs'),(int,float)) or not math.isfinite(o['durationMs']) or not 0<o['durationMs']<=86400000 or not isinstance(o.get('words'),list) or not 0<len(o['words'])<=50000:raise ValueError('Invalid original transcript')
+        if not isinstance(o,dict) or isinstance(o.get('durationMs'),bool) or not isinstance(o.get('durationMs'),(int,float)) or not math.isfinite(o['durationMs']) or not 0<o['durationMs']<=LIMITS['sourceDurationMs'] or not isinstance(o.get('words'),list) or not 0<len(o['words'])<=50000:raise ValueError('Invalid original transcript')
         raw=[];raw_ids=set();previous=-1
         for w in o['words']:
             if not isinstance(w,dict):raise ValueError('Invalid original word')
@@ -244,7 +287,7 @@ def save_transcript(directory,video_id,data):
         if not isinstance(word_ids,list) or any(not isinstance(w,str) or len(w)>120 for w in word_ids):raise ValueError('Invalid removed word IDs')
         edit_ids.add(eid)
         result['draftEdits'].append({'id':eid,'startMs':round(start),'endMs':round(end),'wordIds':word_ids,
-            'quote':str(edit.get('quote',''))[:3000],'kind':'pause' if edit.get('kind')=='pause' else 'words',
+            'quote':str(edit.get('quote',''))[:LIMITS['quoteLength']],'kind':'pause' if edit.get('kind')=='pause' else 'words',
             'commentId':edit.get('commentId') if isinstance(edit.get('commentId'),str) else None})
     if data.get('keepRanges') is not None:
         ranges=data['keepRanges'];fps=data.get('fps')
@@ -265,33 +308,36 @@ def apply(directory,cmd):
         data=read(path,{'comments':[]});items=data['comments'];action=cmd.get('action')
         def get(cid):
             c=next((x for x in items if x['id']==cid),None)
-            if not c:raise ValueError('Comment not found')
+            if not c:raise ValueError(MESSAGES['commentNotFound'])
             return c
         if action=='add':
-            video=find_video(directory,cmd['videoId'])
-            start=cmd['startMs'];end=cmd.get('endMs')
-            if isinstance(start,bool) or not isinstance(start,int) or start<0 or start>video['durationMs']:raise ValueError('Timestamp outside video')
-            if end is not None and (isinstance(end,bool) or not isinstance(end,int) or end<=start or end>video['durationMs']):raise ValueError('Range end must follow start')
-            comment={'id':str(uuid.uuid4()),'videoId':video['id'],'startMs':start,'endMs':end,'text':check_text(cmd.get('text')),'category':cmd.get('category','edit'),'status':'open','author':check_author(cmd.get('author','you')),'createdAt':cmd.get('createdAt') or now(),'replies':[]}
+            video=find_video(directory,cmd.get('videoId'))
+            start=whole_number(cmd.get('startMs'));end=cmd.get('endMs')
+            if start is None or start<0 or start>video['durationMs']:raise ValueError(MESSAGES['timestampOutside'])
+            if end is not None:
+                end=whole_number(end)
+                if end is None or end<=start or end>video['durationMs']:raise ValueError(MESSAGES['rangeEnd'])
+            comment={'id':str(uuid.uuid4()),'videoId':video['id'],'startMs':start,'endMs':end,'text':check_text(cmd.get('text')),'category':cmd.get('category') or RULES['defaultCategory'],'status':RULES['newStatus'],'author':check_author(cmd.get('author') or RULES['pageAuthor']),'createdAt':cmd.get('createdAt') or now(),'replies':[]}
             comment['sourceSpans']=source_spans(video,start,end)
             if cmd.get('editRequest') is not None:comment['editRequest']=check_edit_request(cmd['editRequest'],video,start,end)
             if comment.get('editRequest',{}).get('type')=='restore':comment['sourceSpans']=comment['editRequest']['sourceSpans']
             items.append(comment);result=comment
         elif action=='update':
-            c=get(cmd['id'])
-            if 'status' in cmd:
-                if cmd['status'] not in ['open','done']:raise ValueError('Invalid status')
-                c['status']=cmd['status']
-            if 'text' in cmd:c['text']=check_text(cmd['text'])
-            c['updatedAt']=now();result=c
+            c=get(cmd.get('id'));stamp=now()
+            if 'status' in cmd and cmd['status'] not in RULES['statuses']:raise ValueError(MESSAGES['status'])
+            if 'text' in cmd:
+                if (c.get('author') or RULES['pageAuthor']) not in RULES['textEditableBy']:raise ValueError(MESSAGES['notYourComment'])
+                c.update(text=check_text(cmd['text']),editedAt=stamp)
+            if 'status' in cmd:c['status']=cmd['status']
+            c['updatedAt']=stamp;result=c
         elif action=='reply':
-            c=get(cmd['id']);reply={'id':str(uuid.uuid4()),'author':check_author(cmd.get('author','you')),'text':check_text(cmd.get('text')),'createdAt':now()}
+            c=get(cmd.get('id'));reply={'id':str(uuid.uuid4()),'author':check_author(cmd.get('author') or RULES['pageAuthor']),'text':check_text(cmd.get('text')),'createdAt':now()}
             c.setdefault('replies',[]).append(reply)
-            if cmd.get('status') in ['open','done']:c['status']=cmd['status']
-            c['updatedAt']=now();result=c
+            if cmd.get('status') in RULES['statuses']:c['status']=cmd['status']
+            c['updatedAt']=reply['createdAt'];result=c
         elif action=='delete':
-            get(cmd['id']);data['comments']=[x for x in items if x['id']!=cmd['id']];result=None
-        else:raise ValueError('Unsupported action')
+            get(cmd.get('id'));data['comments']=[x for x in items if x['id']!=cmd['id']];result=None
+        else:raise ValueError(MESSAGES['action'])
         write(path,data)
     return data,result
 
@@ -347,21 +393,18 @@ def file_version(path):
 
 def update_render(directory,video_id,duration_ms=None,keep_ranges=None):
     """Records the new duration and keepRanges after the agent re-rendered a video under the same file name."""
-    if duration_ms is None and keep_ranges is None:return find_video(directory,video_id)
-    duration=parse_time(duration_ms)
-    if duration_ms is not None and (not duration or duration<=0):raise ValueError('durationMs must be positive')
-    if keep_ranges is not None and not all(isinstance(r,list) and len(r)==2 and 0<=r[0]<r[1] for r in keep_ranges):raise ValueError('keepRanges must be [[startFrame, endFrame], …]')
+    changes=check_render(duration_ms,keep_ranges)
+    if not changes:return find_video(directory,video_id)
     path=directory/'manifest.json'
     # Hashing a long video can take a while; it happens before the lock, so nobody waits for it.
     media=find_video(directory,video_id)['path'];digest=fingerprint(media) if Path(media).is_file() else None
     # The comments stay locked until the new mapping is saved, so a comment added meanwhile is mapped with it.
     with locked(path),locked(directory/'comments.json'):
         manifest=read(path,[]);item=next((x for x in manifest if x['id']==video_id),None)
-        if not item:raise ValueError('Unknown video version')
-        if keep_ranges is not None and keep_ranges!=item.get('keepRanges'):
-            _rebase(directory,item,keep_ranges,duration or item['durationMs'])
-        if duration_ms is not None:item['durationMs']=duration
-        if keep_ranges is not None:item['keepRanges']=keep_ranges
+        if not item:raise ValueError(MESSAGES['unknownVideo'])
+        if 'keepRanges' in changes and changes['keepRanges']!=item.get('keepRanges'):
+            _rebase(directory,item,changes['keepRanges'],changes.get('durationMs') or item['durationMs'])
+        item.update(changes)
         if digest is not None and item['path']==media:item['fingerprint']=digest
         write(path,manifest)
     return item
@@ -377,13 +420,14 @@ def _rebase(directory,video,ranges,duration):
         for a,b in ranges:
             clamped=max(a,min(b,frame));distance=abs(frame-clamped)
             if distance<best[0]:best=(distance,cursor+clamped-a)
-            if a<=frame<b:return round((cursor+frame-a)*1000/video['fps'])
+            if a<=frame<b:return round_half_up((cursor+frame-a)*1000/video['fps'])
             cursor+=b-a
-        return min(duration,round(best[1]*1000/video['fps']))
+        return min(duration,round_half_up(best[1]*1000/video['fps']))
     data=read(directory/'comments.json',{'comments':[]})
     for c in data['comments']:
         if c['videoId']!=video['id']:continue
-        spans=c.get('sourceSpans') or c.get('editRequest',{}).get('sourceSpans') or source_spans(video,c['startMs'],c.get('endMs'))
+        spans=first(c.get('sourceSpans'),(c.get('editRequest') or {}).get('sourceSpans'))
+        if spans is None:spans=source_spans(video,c['startMs'],c.get('endMs'))
         if not spans:continue
         c['sourceSpans']=spans;c['beforeRecut']={'startMs':c['startMs'],'endMs':c.get('endMs')}
         start=mapped(spans[0].get('sourceStartFrame',spans[0].get('sourceFrame')))
@@ -399,14 +443,13 @@ def video_item(entry):
     """A checked manifest entry, with the file's fingerprint (slow for a long video, so done before any lock)."""
     for key in ['id','title','label','path','fps','durationMs']:
         if entry.get(key) in (None,''):raise ValueError(f'Missing {key}')
-    if not re.fullmatch(r'[A-Za-z0-9._-]{1,100}',entry['id']):raise ValueError('Use letters, digits, dot, dash or underscore for the id')
+    if not VIDEO_ID.fullmatch(entry['id']):raise ValueError(MESSAGES['videoIdFormat'])
     media=Path(entry['path']).expanduser()
     if not media.is_file():raise ValueError('Video file not found')
     fps=entry['fps'];duration=parse_time(entry['durationMs'])
-    if not isinstance(fps,(int,float)) or isinstance(fps,bool) or fps<=0:raise ValueError('fps must be a positive number')
-    if not duration or duration<=0:raise ValueError('durationMs must be positive')
-    total=round(duration*fps/1000);keep=entry.get('keepRanges') or [[0,total]]
-    if not all(isinstance(r,list) and len(r)==2 and 0<=r[0]<r[1] for r in keep):raise ValueError('keepRanges must be [[startFrame, endFrame], …]')
+    if not finite_number(fps) or fps<=0:raise ValueError(MESSAGES['fps'])
+    if not duration or duration<=0:raise ValueError(MESSAGES['duration'])
+    keep=check_keep_ranges(entry.get('keepRanges') or [[0,round_half_up(duration*fps/1000)]])
     return {'id':entry['id'],'title':entry['title'],'label':entry['label'],'path':str(media.resolve()),'fps':fps,'durationMs':duration,'fingerprint':entry.get('fingerprint') or fingerprint(media),'keepRanges':keep}
 
 def add_to_manifest(directory,item,reuse_same_file=False):
@@ -417,6 +460,6 @@ def add_to_manifest(directory,item,reuse_same_file=False):
         manifest=read(path,[])
         existing=same_file(manifest,Path(item['path'])) if reuse_same_file else None
         if existing:return existing
-        if any(x['id']==item['id'] for x in manifest):raise ValueError('That id already exists; use a new id for a new cut')
+        if any(x['id']==item['id'] for x in manifest):raise ValueError(MESSAGES['videoIdTaken'])
         manifest.append(item);write(path,manifest)
     return item

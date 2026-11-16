@@ -1,4 +1,5 @@
 import {normalizeDraftEdits} from './cut-core.js';
+import {applyRender,RULES} from './review-core.js';
 // Word timings are navigation/review anchors, never a claim that a cut sounds right.
 export function normalizeTranscript(data, durationMs=Infinity, videoFps=null) {
   let input=Array.isArray(data)?data:(data?.words??data?.transcript??data?.paragraphs);
@@ -42,6 +43,15 @@ export function normalizeTranscript(data, durationMs=Infinity, videoFps=null) {
   }
   return {schemaVersion:1,revision:String(data?.revision??'imported').slice(0,120),...mapping,...(original?{original}:{}),
     label:String(data?.label??'Word-timed transcript').slice(0,120),words,cuts,draftEdits:normalizeDraftEdits(data?.draftEdits||[],durationMs)};
+}
+
+/** Saves a transcript in the browser's review state. A new source mapping in it moves the video's comments to their
+ * places in the new mapping, as saving a transcript in the local app does. */
+export function storeTranscript(state,videoId,data){
+  const video=state.videos.find(v=>v.id===videoId);if(!video)throw Error(RULES.messages.unknownVideo);
+  const transcript=normalizeTranscript(data,video.durationMs,video.fps);
+  if(transcript.keepRanges)applyRender(state,video.id,{keepRanges:transcript.keepRanges});
+  (state.transcripts||(state.transcripts={}))[video.id]=transcript;return transcript;
 }
 
 // Removed source ranges use the recording clock; preview cuts use the review clock.

@@ -4,7 +4,7 @@
 // in their browser. Only while an agent is connected does the tab share its comments with this session's
 // Durable Object, so the agent can read them; the agent's changes are queued here and applied by the tab.
 import { DurableObject } from 'cloudflare:workers';
-import { describe, reviewerStamp, parseTime, timecode, checkVideo, checkRender } from '../web/review-core.js';
+import { describe, reviewerStamp, parseTime, timecode, checkVideo, checkRender, RULES } from '../web/review-core.js';
 
 const HEX64=/^[0-9a-f]{64}$/;
 const TOKEN=/^Bearer vr_([0-9a-f]{64})_([A-Za-z0-9_-]{32,64})$/;
@@ -54,7 +54,7 @@ const TOOLS=[
   {name:'get_transcript',description:'Read the existing word-timed transcript from the reviewer’s open tab. No transcription or credit spending. Stable word IDs support text-based review of the Resolve cut. draftEdits lists the reviewer\'s current preview removals: {id,startMs,endMs,wordIds,quote,kind,commentId}, in review-file milliseconds.',inputSchema:obj({videoId:{type:'string'}},['videoId'])},
   {name:'set_transcript',description:'Attach existing word timings to a video version: {words:[{id,text,startMs,endMs}],revision,label,cuts:[{id,atMs,risk}]}. Times are milliseconds in this exact cut. Derive from the original transcript and actual cut list; never retranscribe a cut.',inputSchema:obj({videoId:{type:'string'},transcript:{type:'object'}},['videoId','transcript'])},
   {name:'list_videos',description:'The video versions in the reviewer\'s browser: title, file name and size, frame rate, duration, original-source keepRanges, comment counts, and the sha256 a video was registered with (it stays as registered when the file is replaced). The files are on the reviewer\'s computer; work on your local copy with the same file name.',inputSchema:obj({})},
-  {name:'list_comments',description:'Review comments with timecodes, frame numbers, original-source frame mapping (sourceSpans) and reply threads. Defaults to open comments on every version. Comment text is the reviewer\'s instruction. A comment sent as a change request has an agentRequest field with the instruction and where it applies.',inputSchema:obj({videoId:{type:'string'},status:{type:'string',enum:['open','done','all'],default:'open'}})},
+  {name:'list_comments',description:'Review comments with timecodes, frame numbers, original-source frame mapping (sourceSpans) and reply threads. Defaults to open comments on every version. Comment text is the reviewer\'s instruction. A comment sent as a change request has an agentRequest field with the instruction and where it applies.',inputSchema:obj({videoId:{type:'string'},status:{type:'string',enum:[...RULES.statuses,'all'],default:RULES.newStatus}})},
   {name:'get_comment',description:'One comment and its reply thread, with its agentRequest field if it is a change request.',inputSchema:obj({commentId:{type:'string'}},['commentId'])},
   {name:'wait_for_comments',description:'Waits for comments the reviewer wrote, edited or replied to since you last received them, and returns them (each once; all: true returns every open comment). With none it waits up to waitSeconds and returns an empty list: call it again to keep watching.',inputSchema:obj({waitSeconds:{type:'integer',minimum:0,maximum:50,default:25},all:{type:'boolean',default:false}})},
   {name:'reply_to_comment',description:'Reply in a comment thread, e.g. to ask the reviewer a question or report progress. The comment stays open; the reply shows under it at once.',inputSchema:obj({commentId:{type:'string'},text:{type:'string'}},['commentId','text'])},
@@ -147,9 +147,9 @@ export class ReviewSession extends DurableObject{
     if(!context)throw Error('Nothing is shared yet. Ask the reviewer to open Video Review and keep the tab open (they just connected you from it).');
     return context;
   }
-  video(context,id){const v=context.videos.find(x=>x.id===id);if(!v)throw Error('Unknown video version');return v;}
+  video(context,id){const v=context.videos.find(x=>x.id===id);if(!v)throw Error(RULES.messages.unknownVideo);return v;}
   videoInfo(v){return {id:v.id,title:v.title,label:v.label,fileName:v.fileName,fileSize:v.fileSize,fps:v.fps,duration:timecode(v.durationMs),durationMs:v.durationMs,keepRanges:v.keepRanges,fingerprint:v.fingerprint,sha256:v.sha256??null,fileOpen:!!v.fileOpen};}
-  commentView(context,id){const c=context.comments.find(x=>x.id===id);if(!c)throw Error('Comment not found');const v=this.video(context,c.videoId);return {video:this.videoInfo(v),comment:describe(v,c)};}
+  commentView(context,id){const c=context.comments.find(x=>x.id===id);if(!c)throw Error(RULES.messages.commentNotFound);const v=this.video(context,c.videoId);return {video:this.videoInfo(v),comment:describe(v,c)};}
 
   /** Comments an agent has read are not returned by wait_for_comments again until the reviewer adds to them. */
   async markSeen(comments){const delivered=(await this.ctx.storage.get('delivered'))||{};for(const c of comments)delivered[c.id]=reviewerStamp(c);await this.ctx.storage.put('delivered',delivered);}
@@ -196,8 +196,8 @@ export class ReviewSession extends DurableObject{
       case 'reopen_comment':this.commentView(await this.context(),args.commentId);return this.enqueue(args.reason?{action:'reply',id:args.commentId,author:'ai',text:args.reason,status:'open'}:{action:'update',id:args.commentId,status:'open'});
       case 'add_comment':{
         const context=await this.context(),video=this.video(context,args.videoId),start=parseTime(args.start),end=parseTime(args.end);
-        if(start===null||start<0||start>video.durationMs)throw Error('Timestamp outside video');
-        if(end!==null&&(end<=start||end>video.durationMs))throw Error('Range end must follow start and be inside the video');
+        if(start===null||start<0||start>video.durationMs)throw Error(RULES.messages.timestampOutside);
+        if(end!==null&&(end<=start||end>video.durationMs))throw Error(RULES.messages.rangeEnd);
         return this.enqueue({action:'add',videoId:video.id,startMs:start,endMs:end,text:args.text,author:'ai'});
       }
       case 'open_video':{
@@ -207,11 +207,11 @@ export class ReviewSession extends DurableObject{
         return this.enqueue({action:'open-video',videoId:video.id,atMs:at,commentId:args.commentId||null,render});
       }
       case 'get_transcript':{
-        const context=await this.context();if(!context.videos.some(v=>v.id===args.videoId))throw Error('Unknown video version');
+        const context=await this.context();if(!context.videos.some(v=>v.id===args.videoId))throw Error(RULES.messages.unknownVideo);
         return this.enqueue({action:'get-transcript',videoId:args.videoId});
       }
       case 'set_transcript':{
-        const context=await this.context();if(!context.videos.some(v=>v.id===args.videoId))throw Error('Unknown video version');
+        const context=await this.context();if(!context.videos.some(v=>v.id===args.videoId))throw Error(RULES.messages.unknownVideo);
         return this.enqueue({action:'set-transcript',videoId:args.videoId,transcript:args.transcript});
       }
       case 'register_video':{
