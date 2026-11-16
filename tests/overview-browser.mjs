@@ -37,17 +37,19 @@ try{
   // 320 CSS px is a small phone, and also a 640 px window at 200% zoom.
   const context=await browser.newContext({viewport:{width:320,height:640},deviceScaleFactor:2,hasTouch:true,isMobile:true});
   // The page is served from a made-up address, so its own request for the stars can be answered: stars on.
-  // listError, starError: the server answers the take list or a star click with this error instead.
+  // listError, starError: the server answers the take list or a star click with this error instead (status: with
+  // this status, 500 when none is given). gone: a star click gets no answer at all.
   // later: what the take list answers when it is asked again after the page opened.
   // again: the page the address gives when it is loaded a second time (the page written after a star).
-  const open=async(stars,{listError,starError,later,again}={})=>{
+  const open=async(stars,{listError,starError,status=500,gone,later,again}={})=>{
     const page=await context.newPage();
     let lists=0,loads=0;
     await page.route('http://overview.test/**',route=>{
       const path=new URL(route.request().url()).pathname;
       if(path==='/')return route.fulfill({contentType:'text/html; charset=utf-8',body:(loads++&&again||made).stdout});
+      if(gone&&path==='/api/scenes/star')return route.abort();
       const error=path==='/api/scenes/star'?starError:listError;
-      if(error)return route.fulfill({status:500,contentType:'application/json',body:JSON.stringify({error})});
+      if(error)return route.fulfill({status,contentType:'application/json',body:JSON.stringify({error})});
       if(path==='/api/scenes')lists+=1;
       return stars?route.fulfill({contentType:'application/json',body:JSON.stringify(lists>1&&later||{})}):route.abort();
     });
@@ -167,6 +169,46 @@ try{
   await stale.getByRole('status').filter({hasText:'out of date'}).waitFor();
   const old=await look(stale);
   check(old.said.startsWith(SAVED)&&old.off===41,`a page that could not be written again says "${old.said}" with ${41-old.off} stars on`);
+
+  // Keyboard and screen-reader focus stays where the user was (release review R1-1, 2026-11-16): a star click
+  // switches every star off while it is saved and mostly loads the page again, and both drop the focus.
+  // What has the focus, in words: the star or the play button of which take.
+  const focus=where=>where.evaluate(()=>{
+    const at=document.activeElement,take=at?.closest('.take');
+    return take?`${at.classList.contains('st')?'star':'play button'} of ${take.dataset.scene} take ${take.dataset.take}${take.closest('details')?', archived':''}`:`nothing (${at?.tagName})`;
+  });
+  // Enter on a star of the first scene, from the keyboard.
+  const press=async(where,take)=>{
+    await where.locator('details').first().evaluate(more=>{more.open=true;});
+    await where.locator('.scene').first().locator(`.st[data-take="${take}"]`).focus();
+    await where.keyboard.press('Enter');
+  };
+  const front=where=>where.locator('.scene').first().locator('.sh + .row > .take .st');
+  // The star is saved and the page loads again: the starred take is now in front, and its star has the focus.
+  const starred=await open(true,{again:build(1)});
+  await press(starred,1);
+  await starred.locator('.scene').first().locator('.sh + .row > .take[data-take="1"] .st:not(:disabled)').waitFor();
+  let at=await focus(starred);
+  check(at==='star of 01-scene take 1',`after a star click from the keyboard and the reload, the focus is on: ${at}`);
+  // The same after a star that was saved with a problem (the page above, which was touched, not typed).
+  at=await focus(saved);
+  check(at==='star of 01-scene take 1',`after a star that was saved with a problem and the reload, the focus is on: ${at}`);
+  // The server refuses the click (409) and nothing loads again: the focus is back on the clicked star.
+  const no=await open(true,{starError:ERROR,status:409});
+  await press(no,1);
+  await no.getByRole('status').filter({hasText:ERROR}).waitFor();
+  await front(no).and(no.locator(':not(:disabled)')).waitFor();
+  at=await focus(no);
+  check(at==='star of 01-scene take 1, archived',`after a refused star click from the keyboard, the focus is on: ${at}`);
+  // Stars that stay off cannot hold the focus, so the take's play button keeps the user's place: when the click
+  // gets no answer, and on a page that is out of date after its reload (the page above).
+  const silent=await open(true,{gone:true});
+  await press(silent,1);
+  await silent.getByRole('status').filter({hasText:'video-review'}).waitFor();
+  at=await focus(silent);
+  check(at==='play button of 01-scene take 1, archived',`after a star click that got no answer, the focus is on: ${at}`);
+  at=await focus(stale);
+  check(at==='play button of 01-scene take 2',`on a page that is out of date after its reload, the focus is on: ${at}`);
   assert.deepEqual(faults,[]);
-  console.log(`overview page at 320 px: ${strip.count} scenes reachable in the strip, long title and long server error wrap, a failed star click is said in the live region, ${stars.length} stars with a 44 px touch target`);
+  console.log(`overview page at 320 px: ${strip.count} scenes reachable in the strip, long title and long server error wrap, a failed star click is said in the live region, the focus stays with the clicked star, ${stars.length} stars with a 44 px touch target`);
 }finally{await browser.close();}
