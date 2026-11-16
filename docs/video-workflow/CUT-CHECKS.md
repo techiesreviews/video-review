@@ -141,7 +141,8 @@ The preferences come from `EDITING-LESSONS.md` and Lex's answers of 2026-11-10 a
 the first word, 200-300 ms between linked phrases, 350-500 ms for a new thought, at least 100 ms around speech
 edges, and 15 ms fades. A last word ending in `.`, `!` or `?` counts as a new thought. Those lessons call the numbers
 suggestions to audition, so a flag on a gap is a question, not an order. The limits for a clipped edge and an
-orphan word are this script's own working values, listed at the end of each report.
+orphan word are this script's own working values, saved in the same file under `joinCheck` and listed at the end of
+each report.
 
 The script never counts as listening. Word times are approximate and a sound missing from the transcript cannot
 show up, so no flag does not mean clean. You still need to listen to the whole cut at normal speed.

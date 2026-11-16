@@ -122,13 +122,22 @@ class EveryScriptReadsTheFile(unittest.TestCase):
         self.assertEqual(copy.load('cut_takes_room', 'cut-takes.py').SETTINGS['newThoughtRoomMaxMs'], 222)
         self.assertEqual(copy.load('join_check_room', 'join-check.py').THRESHOLDS['newThoughtRoomMaxMs'], 222)
 
-    def test_a_cut_follows_the_changed_room(self):
-        """The cutter's joins move with the file: wider room around speech gives wider room at the join."""
-        cut_takes = self.copy.load('cut_takes_cut', 'cut-takes.py')
+    def test_a_cut_follows_the_changed_numbers(self):
+        """The cutter's cut moves with the file: the room before the first word and the pause it aims for."""
+        def change(data):
+            change_numbers(data)
+            data['lex']['linkedGapMs']['value'] = [270, 320]
+            data['cutter']['linkedTargetMs'] = 300
+        copy = ChangedCopy(change)
+        self.addCleanup(copy.close)
+        cut_takes = copy.load('cut_takes_cut', 'cut-takes.py')
         words = cut_takes.cut_timeline.load_words([['Intro', 0.5, 1.0], ['next', 2.0, 2.3], ['thing.', 2.34, 2.7]])
-        join = cut_takes.plan(words, 30)['paperEdit']['joins'][0]
+        result = cut_takes.plan(words, 30)
+        join = result['paperEdit']['joins'][0]
         self.assertEqual(join['fadeMs'], 17)
-        self.assertTrue(222 <= join['gapMs'] <= 333, join)
+        self.assertTrue(270 <= join['gapMs'] <= 320, join)
+        lead_in = round((0.5 - result['cutlist']['segments'][0]['sourceInFrame'] / 30) * 1000)
+        self.assertTrue(111 <= lead_in <= 161, lead_in)
 
 
 class TheValuesOfToday(unittest.TestCase):
@@ -143,8 +152,9 @@ class TheValuesOfToday(unittest.TestCase):
             self.assertRegex(entry['why'], r'\d{4}-\d{2}-\d{2}', name)
 
     def test_cut_to_review_falls_back_to_the_file_fade(self):
-        sys.path.insert(0, str(ROOT / 'scripts/video'))
-        sys.path.insert(0, str(ROOT))
+        for folder in (str(ROOT / 'scripts/video'), str(ROOT)):
+            sys.path.insert(0, folder)
+            self.addCleanup(sys.path.remove, folder)
         cut_to_review = load('cut_to_review_fade', ROOT / 'scripts/video/cut-to-review.py')
         self.assertEqual(cut_to_review.cut_fade_ms({'segments': []}), saved()['lex']['audioFadeMs']['value'])
         self.assertEqual(cut_to_review.cut_fade_ms({'audioFadeMs': 20}), 20)
