@@ -81,6 +81,8 @@ SENTENCE_END = re.compile(r'[.!?]["\')\]]*$')
 TRAILING_MARK = re.compile(r'[,;:.!?–—-]["\')\]]*$')
 # In a script: the end of a sentence with the quotes, brackets and bold marks that close after it, and a list item.
 SCRIPT_STOP = re.compile(r'(?<=[.!?])["\'”’»)\]*_`]*\s+')
+# A [direction] may run over several lines, but never past a heading: a missing "]" must not swallow later scenes.
+DIRECTION = re.compile(r'\[(?:[^\]\n]|\n(?![ \t]*#))*\]')
 LIST_ITEM = re.compile(r'^\s*(?:[-*+]|\d+[.)])\s+')
 BROKEN_OFF = re.compile(r'[–—-]["\')\]]*$')
 FILLERS = {'um', 'uh', 'uhm', 'er', 'erm', 'ah', 'hmm', 'mm'}
@@ -125,9 +127,9 @@ def in_order(first, second):
 def script_sentences(text):
     """The script as one list of words per sentence. A sentence ends at . ! or ? (also in front of a closing quote,
     bracket or bold mark), and at a heading, a blank line or a list item, so a line without a full stop does not
-    run into the next one. Headings and [directions] are left out."""
+    run into the next one. Headings and [directions] are left out; a direction never runs past a heading."""
     blocks = [[]]
-    for line in re.sub(r'\[[^\]]*\]', ' ', text).splitlines():
+    for line in DIRECTION.sub(' ', text).splitlines():
         heading, item = line.lstrip().startswith('#'), LIST_ITEM.match(line)
         if not line.strip() or heading or item:
             blocks.append([])
