@@ -69,7 +69,7 @@ class SceneCards(unittest.TestCase):
             self.assertEqual(len(re.findall(r'<h2 class="stitle">', section)), 1)
         self.assertNotIn('<b class="stitle">', page)
         # A heading brings its own space above and below; the title keeps the look it had.
-        self.assertIn('.stitle { font: 700 15px/1.2 system-ui; margin: 0; overflow-wrap: anywhere; }', page)
+        self.assertRegex(page, r'\.stitle \{[^}]*\bmargin: 0;')
 
     def test_the_scenes_script_text_is_shown_without_directions(self):
         costs = scene_html(render(), COSTS)

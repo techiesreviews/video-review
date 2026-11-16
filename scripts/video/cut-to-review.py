@@ -545,7 +545,8 @@ def upload_destination(args, environ):
 
 def lists_this_file(call, video_id, identity):
     """Whether the review page lists video_id as this run's file: every fact in identity is the same there.
-    None when the page gives no list of its videos, so nothing can be said."""
+    None when nothing can be said: the page gives no list of its videos, or lists that video without one of
+    the facts (a hosted page older than this tool does not know the hash of a file)."""
     reply = call('list_videos', {})
     if isinstance(reply, str):
         try:
@@ -556,7 +557,11 @@ def lists_this_file(call, video_id, identity):
     if not isinstance(videos, list):
         return None
     listed = next((video for video in videos if isinstance(video, dict) and video.get('id') == video_id), None)
-    return listed is not None and all(listed.get(key) == value for key, value in identity.items())
+    if listed is None:
+        return False
+    if any(key not in listed for key in identity):
+        return None
+    return all(listed[key] == value for key, value in identity.items())
 
 
 def upload(args, environ=os.environ, post=post_json, log=print):
@@ -618,9 +623,9 @@ def upload(args, environ=os.environ, post=post_json, log=print):
             # leaves the record as it is, so the same command asks the page again.
             ours = lists_this_file(call, payload['videoId'], identity)
             if ours is None:
-                raise Stop(f'{payload["videoId"]} is already on the review page {page}, and the page could not list '
-                           'its videos to show whether it is this file. Nothing was changed there. Open the Video '
-                           'Review page, then run the same --upload again.') from None
+                raise Stop(f'{payload["videoId"]} is already on the review page {page}, and the page could not '
+                           'show whether it is this file. Nothing was changed there. Open the Video Review page '
+                           '(reload it if it is open), then run the same --upload again.') from None
             if not ours:
                 raise Stop(f'{payload["videoId"]} is already on the review page {page}, but not as this file '
                            f'({video.name}). Nothing was changed there; a video id is never reused. '

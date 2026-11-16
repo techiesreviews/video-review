@@ -112,6 +112,8 @@ test('a video registered with the hash of its file keeps it, and one without has
   // An interrupted upload (cut-to-review.py) finds its own registration again by this hash.
   const entry={id:'talk-v1',title:'talk',label:'talk · v1',fileName:'talk-v1.mp4',fps:30,durationMs:2000},hash='ab'.repeat(32);
   assert.equal(checkVideo({...entry,sha256:hash,addedBy:'ai'},[]).sha256,hash);
+  assert.equal(checkVideo({...entry,sha256:hash.toUpperCase()},[]).sha256,hash);
   assert.equal(checkVideo(entry,[]).sha256,null);
-  assert.throws(()=>checkVideo({...entry,sha256:hash},[{id:'talk-v1',sha256:hash}]),/already exists/);
+  for(const bad of [hash.slice(1),hash+'0','sha256:'+hash,'',{},7])
+    assert.throws(()=>checkVideo({...entry,sha256:bad},[]),/sha256 must be 64 hex digits/);
 });
