@@ -5,6 +5,8 @@ const base='https://video.techies.tools';
 for(const name of ['','app.js','backend.js','cut-core.js','cut-preferences.json','transcript-core.js','transcript-panel.js','waveform-core.js','waveform-panel.js','library-panel.js','review-core.js','style.css']){
   const response=await fetch(base+'/'+name+'?release=listening-20261028');
   const text=await response.text();assert.equal(response.status,200);
+  // A browser takes a JSON module only with a JSON type; without it the whole page stops.
+  if(name.endsWith('.json'))assert.match(response.headers.get('content-type')||'',/^application\/json/);
   if(!name){assert.ok(text.includes('transcriptNoteForm')&&text.includes('librarySearch')&&text.includes('undoTranscriptCut'));assert.ok(text.includes('waveformCanvas')&&text.includes('toggleTranscriptView')&&text.includes('pauseThreshold'));assert.ok(!text.includes('id="commentBtn"'));}
   console.log('PASS',name||'index.html',response.status,text.length);
 }
