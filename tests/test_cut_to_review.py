@@ -748,10 +748,26 @@ class UploadFailures(Base):
                         'result': {'content': [{'text': 'That id already exists'}], 'isError': True}}
             text = '{"available": false}' if name == 'list_videos' else '{}'
             return {'jsonrpc': '2.0', 'id': message['id'], 'result': {'content': [{'text': text}]}}
-        with self.assertRaisesRegex(cut_to_review.Stop, 'not as this file'):
-            self.upload(nothing_shared)
+        for _ in range(2):
+            with self.assertRaisesRegex(cut_to_review.Stop, 'could not list its videos .*Nothing was changed there. '
+                                                            'Open the Video Review page, then run the same'):
+                self.upload(nothing_shared)
         names = [message['params']['name'] for message in self.sent if message['method'] == 'tools/call']
-        self.assertEqual(names, ['register_video', 'register_video', 'list_videos'])
+        self.assertEqual(names, ['register_video', 'register_video', 'list_videos', 'register_video', 'list_videos'])
+        # Once the page lists it as this file, the same command finishes the upload.
+        self.assertEqual(self.upload(self.exists_as(self.sent[1]['params']['arguments']['fingerprint'])), 0)
+
+    def test_a_registration_the_tab_applied_late_is_carried_on(self):
+        # The usual way a hosted upload stops during the registration: the tab was in the background.
+        def pending(url, message, token):
+            self.sent.append(message)
+            text = '{"status": "pending"}' if message.get('params', {}).get('name') == 'register_video' else '{}'
+            return {'jsonrpc': '2.0', 'id': message['id'], 'result': {'content': [{'text': text}]}}
+        with self.assertRaisesRegex(cut_to_review.Stop, 'has not applied register_video yet'):
+            self.upload(pending)
+        self.assertEqual(self.upload(self.exists_as(self.sent[1]['params']['arguments']['fingerprint'])), 0)
+        names = [message['params']['name'] for message in self.sent if message['method'] == 'tools/call']
+        self.assertEqual(names, ['register_video', 'register_video', 'list_videos', 'set_transcript', 'open_video'])
 
     def test_an_id_taken_before_this_run_is_still_refused(self):
         def exists(url, message, token):
@@ -890,8 +906,8 @@ class SameIdOnTheLocalPage(Base):
 
 
 class SampledFingerprint(unittest.TestCase):
-    """The same value the hosted page makes for a file (sampledFingerprint in web/backend.js). The expected values
-    come from running that function in Node on the same bytes."""
+    """The same value the hosted page makes for a file (sampledFingerprint in web/backend.js):
+    tests/fingerprint.test.mjs checks that function against these same sizes, bytes and hashes."""
 
     CASES = ((5, '187f1dba81c7b20be04d43cb8bebcebe76faf62c8f48615fc8262b81b3b940d2'),
              (1 << 20, '1c6a7739d264dbdbfc78831c43139877bfcd361f3310577e3e343d63ee61d534'),
