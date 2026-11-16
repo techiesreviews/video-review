@@ -18,6 +18,7 @@ a finished first try that opens like its take ("Setting up the things."), short 
 import importlib.util
 import json
 from pathlib import Path
+import random
 import subprocess
 import sys
 import tempfile
@@ -500,10 +501,12 @@ class RestartTests(unittest.TestCase):
     def test_a_repeat_after_a_comma_that_the_script_has_as_two_lines_is_flagged_not_cut(self):
         words = [['The', 1.0, 1.2], ['tool', 1.24, 1.5], ['is', 1.54, 1.7], ['fast,', 1.74, 2.1],
                  ['the', 2.6, 2.8], ['tool', 2.84, 3.1], ['is', 3.14, 3.3], ['cheap.', 3.34, 3.8]]
-        for script in ('The tool is fast. The tool is cheap.', 'The tool is fast, the tool is cheap.'):
+        # Two lines in the script: nothing to ask. One line with a comma: the repeat may be a restart, so it is listed.
+        for script, asked in (('The tool is fast. The tool is cheap.', []),
+                              ('The tool is fast, the tool is cheap.', ['possible-restart'])):
             result = plan_words(words, script)
             self.assertEqual(removed_texts(result), [], script)
-            self.assertEqual([item['code'] for item in result['paperEdit']['flags']], ['possible-restart'], script)
+            self.assertEqual([item['code'] for item in result['paperEdit']['flags']], asked, script)
 
     def test_a_different_sentence_between_two_openings_stops_the_restart(self):
         words = [['Next', 1.0, 1.2], ['week', 1.24, 1.5], ['I', 1.54, 1.6], ['will', 1.64, 1.8], ['show', 1.84, 2.1],
@@ -708,10 +711,8 @@ class OneScriptLineTests(unittest.TestCase):
         words = said('Thanks for watching this week', 1.0) + said('Thanks for watching this week.', 3.5)
         result = plan_words(words, script)
         self.assertEqual(removed_texts(result), [])
-        # The transcript cannot say whether the first reading is the script's own repeat or a failed try: Lex is told.
-        flag, = result['paperEdit']['flags']
-        self.assertEqual((flag['code'], flag['start']), ('possible-restart', 1.0))
-        self.assertIn('script says this line more than once', flag['message'])
+        # The first reading says the whole line and the next one starts a line: the script puts a full stop there.
+        self.assertEqual(result['paperEdit']['flags'], [])
 
     def test_a_dropped_start_of_a_line_the_script_says_twice_is_listed_not_cut(self):
         script = 'Thanks for watching this week. Thanks for watching this week.'
@@ -719,7 +720,9 @@ class OneScriptLineTests(unittest.TestCase):
             + said('Thanks for watching this week.', 6.0)
         result = plan_words(words, script)
         self.assertEqual(removed_texts(result), [])
-        self.assertEqual([item['code'] for item in result['paperEdit']['flags']], ['possible-restart'])
+        flag, = result['paperEdit']['flags']
+        self.assertEqual((flag['code'], flag['start']), ('possible-restart', 1.0))
+        self.assertIn('script says this line more than once', flag['message'])
 
     def test_a_part_of_the_line_without_its_full_stop_is_not_cut_as_a_dropped_start(self):
         # The transcript often leaves a full stop off: the first part then looks like a start that was dropped.
@@ -730,11 +733,18 @@ class OneScriptLineTests(unittest.TestCase):
             words = said('The camera is easy to use', 1.0) + said('The camera is cheap.', 2.8, pause)
             result = plan_words(words, script)
             self.assertEqual(removed_texts(result), [], pause)
-            self.assertEqual([item['code'] for item in result['paperEdit']['flags']], ['possible-restart'], pause)
+            flag, = result['paperEdit']['flags']
+            self.assertIn(flag['code'], ('possible-restart', 'take-says-more'), pause)
+            self.assertIn('Left in', flag['message'])
 
-    def test_a_script_line_of_its_own_without_its_full_stop_is_listed_not_cut(self):
+    def test_a_script_line_of_its_own_without_its_full_stop_stays(self):
         words = said('The tool is fast', 1.0) + said('The tool is cheap.', 2.6)
         result = plan_words(words, 'The tool is fast. The tool is cheap.')
+        self.assertEqual(removed_texts(result), [])
+        self.assertEqual(result['paperEdit']['flags'], [])
+        # A start that says most of a line of its own, but not through to its end, is listed.
+        longer = said('The tool is really fast', 1.0) + said('The tool is really cheap.', 2.9)
+        result = plan_words(longer, 'The tool is really fast today. The tool is really cheap.')
         self.assertEqual(removed_texts(result), [])
         flag, = result['paperEdit']['flags']
         self.assertEqual(flag['code'], 'possible-restart')
@@ -752,15 +762,18 @@ class OneScriptLineTests(unittest.TestCase):
             + said('The battery lasts all day.', 5.2)
         self.assertEqual(removed_texts(plan_words(words, self.SCRIPT)), ['The battery lasts all'])
 
-    def test_a_whole_script_line_that_the_next_line_repeats_is_listed_not_cut(self):
+    def test_a_whole_script_line_that_the_next_line_repeats_stays(self):
         # Whole-file look, 2026-11-16: the next line opens with every word of this one, as a restart would.
         script = 'The tool is fast. The tool is fast and easy to use.'
         words = said('The tool is fast', 1.0) + said('The tool is fast and easy to use.', 2.6)
         result = plan_words(words, script)
         self.assertEqual(removed_texts(result), [])
-        flag, = result['paperEdit']['flags']
-        self.assertEqual(flag['code'], 'possible-restart')
-        self.assertIn('The script has both', flag['message'])
+        self.assertEqual(result['paperEdit']['flags'], [])
+        # Second whole-file look: a second reading of the long line must not take the short line with it.
+        words += said('The tool is fast and easy to use.', 8.0)
+        result = plan_words(words, script)
+        self.assertEqual(removed_texts(result), ['The tool is fast and easy to use.'])
+        self.assertEqual(result['paperEdit']['removed'][0]['start'], 2.6)
         # A start that stops part way through its own line is still a dropped start.
         words = said('The tool is fast and', 1.0) + said('The tool is fast and easy to use.', 2.8)
         self.assertEqual(removed_texts(plan_words(words, 'Hello there. The tool is fast and easy to use.')),
@@ -794,11 +807,114 @@ class OneScriptLineTests(unittest.TestCase):
         words = said('The camera is easy to use and the battery', 1.0) + said('And the battery lasts all day.', 5.0)
         result = plan_words(words + said('The end.', 8.0), self.SCRIPT)
         self.assertEqual(removed_texts(result), [])
+        # Second whole-file look, 2026-11-16: a shorter restart repeats the opening but never says "the battery".
+        words = said('The camera is easy to use and the battery', 1.0) + said('The camera is easy to use.', 5.0)
+        result = plan_words(words, self.SCRIPT)
+        self.assertEqual(removed_texts(result), [])
+        flag, = result['paperEdit']['flags']
+        self.assertEqual((flag['code'], flag['start']), ('take-says-more', 1.0))
+        self.assertIn('5.00', flag['message'])
+
+    def test_a_script_line_said_word_for_word_is_never_lost(self):
+        # The last check, whatever made the removal: here each sentence fits the other script line just as well
+        # when word order is ignored, and the script says the second line twice.
+        text = 'The camera beats the phone. The phone beats the camera. The phone beats the camera.'
+        words = said('The camera beats the phone.', 1.0) + said('The phone beats the camera.', 3.2) \
+            + said('The phone beats the camera.', 5.4)
+        result = plan_words(words, text)
+        self.assertEqual(removed_texts(result), [])
+        cutter = cut_takes.Cutter(cut_timeline.load_words(words), FPS, text)
+        cutter.drop(range(0, 5), 'earlier-take', 5)
+        cutter.drop(range(5, 10), 'earlier-take', 10)
+        cutter.keep_script_lines()
+        self.assertEqual(cutter.keep, [True] * 15)
+        self.assertEqual(cutter.removed, [])
+        self.assertEqual([(item['code'], item['start']) for item in cutter.flags],
+                         [('script-line-kept', 1.0), ('script-line-kept', 3.2)])
 
     def test_a_line_said_once_in_the_script_still_loses_its_dropped_start(self):
         script = 'Thanks for watching this week.'
         words = said('Thanks for watching this week', 1.0) + said('Thanks for watching this week.', 3.5)
         self.assertEqual(removed_texts(plan_words(words, script)), ['Thanks for watching this week'])
+
+
+class EveryScriptLineStaysTests(unittest.TestCase):
+    """Many made-up recordings instead of one shape at a time: lines that open alike or hold another line, failed
+    starts, second takes, a line said as two sentences, and full stops the transcript left out. Whatever the cutter
+    removes, every script line must still be there word for word, as often as the script says it."""
+    OPENERS = ['the tool is', 'the camera is', 'this is the', 'so the tool', 'the phone beats']
+    TAILS = ['fast', 'cheap', 'easy to use', 'fast and easy to use', 'the best part', 'ready today',
+             'good for the price', 'on the desk', 'small and light', 'what you need',
+             'easy and the battery lasts all day']
+
+    def recording(self, rng):
+        lines = []
+        for _ in range(rng.randint(2, 5)):
+            line = f'{rng.choice(self.OPENERS)} {rng.choice(self.TAILS)}'.split()
+            lines.append(list(rng.choice(lines)) if lines and rng.random() < 0.12 else line)
+        words, at = [], 1.0
+
+        def say(tokens, stop, pause):
+            nonlocal at
+            at += pause
+            for number, token in enumerate(tokens):
+                text = token + (stop if number == len(tokens) - 1 else '')
+                words.append([text.capitalize() if number == 0 else text, round(at, 3), round(at + 0.25, 3)])
+                at += 0.29
+
+        for line in lines:
+            pause = rng.choice([0.4, 0.8, 1.2, 2.0])
+            if rng.random() < 0.3:  # a failed start
+                say(line[:rng.randint(1, len(line) - 1)], rng.choice(['', '', '—', ',']), pause)
+                pause = rng.choice([0.4, 0.9, 1.6, 2.4])
+            for _ in range(2 if rng.random() < 0.2 else 1):
+                stop = '.' if rng.random() < 0.75 else ''
+                if rng.random() < 0.15 and len(line) >= 6:  # said as two sentences
+                    cut = rng.randint(3, len(line) - 3)
+                    say(line[:cut], '.' if rng.random() < 0.75 else '', pause)
+                    say(line[cut:], stop, rng.choice([0.35, 0.6, 1.0]))
+                else:
+                    say(line, stop, pause)
+                pause = rng.choice([0.4, 0.9, 1.6, 2.4])
+        return lines, words
+
+    def lost_lines(self, lines, words):
+        script = ' '.join(' '.join(line).capitalize() + '.' for line in lines)
+        loaded = cut_timeline.load_words(words)
+        kept = kept_starts(cut_takes.plan(loaded, FPS, script_text=script), loaded)
+        return self.missing(lines, [cut_takes.norm(text) for text, start, _ in words if start in kept])
+
+    @staticmethod
+    def missing(lines, names):
+        """The script lines that these kept words do not say word for word, as often as the script says them."""
+        # Longer lines are counted first, and their words are not counted again for a shorter line.
+        used, lost = set(), []
+        counts = cut_takes.Counter(map(tuple, lines))
+        for line in sorted(counts, key=len, reverse=True):
+            found, at = 0, 0
+            while at + len(line) <= len(names):
+                here = range(at, at + len(line))
+                if tuple(names[at:at + len(line)]) == line and not used.intersection(here):
+                    used.update(here)
+                    found, at = found + 1, at + len(line)
+                else:
+                    at += 1
+            if found < counts[line]:
+                lost.append(' '.join(line))
+        return lost
+
+    def test_no_script_line_is_lost_in_600_made_up_recordings(self):
+        for seed in range(600):
+            lines, words = self.recording(random.Random(seed))
+            self.assertEqual(self.lost_lines(lines, words), [],
+                             f'seed {seed}: {" ".join(text for text, _, _ in words)}')
+
+    def test_the_check_itself_finds_a_lost_line(self):
+        fast, long = 'the tool is fast'.split(), 'the tool is fast and easy'.split()
+        self.assertEqual(self.missing([fast, long], long), ['the tool is fast'])
+        self.assertEqual(self.missing([fast, long], long + fast), [])
+        self.assertEqual(self.missing([fast, fast], fast), ['the tool is fast'])
+        self.assertEqual(self.missing([fast, fast], fast + fast), [])
 
 
 class EdgeCaseTests(unittest.TestCase):
