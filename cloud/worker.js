@@ -191,14 +191,14 @@ export class ReviewSession extends DurableObject{
       }
       case 'get_comment':{const context=await this.context(),view=this.commentView(context,args.commentId);await this.markSeen(context.comments.filter(c=>c.id===args.commentId));return view;}
       case 'wait_for_comments':return this.waitForComments(args);
-      case 'reply_to_comment':this.commentView(await this.context(),args.commentId);return this.enqueue({action:'reply',id:args.commentId,author:'ai',text:args.text});
-      case 'resolve_comment':this.commentView(await this.context(),args.commentId);return this.enqueue({action:'reply',id:args.commentId,author:'ai',text:args.summary,status:'done'});
-      case 'reopen_comment':this.commentView(await this.context(),args.commentId);return this.enqueue(args.reason?{action:'reply',id:args.commentId,author:'ai',text:args.reason,status:'open'}:{action:'update',id:args.commentId,status:'open'});
+      case 'reply_to_comment':this.commentView(await this.context(),args.commentId);return this.enqueue({action:'reply',id:args.commentId,author:RULES.agentAuthor,text:args.text});
+      case 'resolve_comment':this.commentView(await this.context(),args.commentId);return this.enqueue({action:'reply',id:args.commentId,author:RULES.agentAuthor,text:args.summary,status:'done'});
+      case 'reopen_comment':this.commentView(await this.context(),args.commentId);return this.enqueue(args.reason?{action:'reply',id:args.commentId,author:RULES.agentAuthor,text:args.reason,status:'open'}:{action:'update',id:args.commentId,status:'open'});
       case 'add_comment':{
         const context=await this.context(),video=this.video(context,args.videoId),start=parseTime(args.start),end=parseTime(args.end);
         if(start===null||start<0||start>video.durationMs)throw Error(RULES.messages.timestampOutside);
         if(end!==null&&(end<=start||end>video.durationMs))throw Error(RULES.messages.rangeEnd);
-        return this.enqueue({action:'add',videoId:video.id,startMs:start,endMs:end,text:args.text,author:'ai'});
+        return this.enqueue({action:'add',videoId:video.id,startMs:start,endMs:end,text:args.text,author:RULES.agentAuthor});
       }
       case 'open_video':{
         const context=await this.context(),video=this.video(context,args.videoId),render=checkRender(args),durationMs=render.durationMs??video.durationMs;let at=parseTime(args.at);
@@ -216,7 +216,7 @@ export class ReviewSession extends DurableObject{
       }
       case 'register_video':{
         const context=await this.context();
-        return this.enqueue({action:'register-video',video:checkVideo({...args,addedBy:'ai'},context.videos)});
+        return this.enqueue({action:'register-video',video:checkVideo({...args,addedBy:RULES.agentAuthor},context.videos)});
       }
       default:{const e=Error(`Unknown tool: ${name}`);e.code=-32602;throw e;}
     }

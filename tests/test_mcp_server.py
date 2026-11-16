@@ -86,6 +86,9 @@ class McpServerTests:
         assert error and 'outside' in message
         message,error=self.tool('resolve_comment',commentId='missing',summary='x')
         assert error and 'not found' in message
+        # No start is told the same way the hosted Worker tells it: the shared rules' message.
+        message,error=self.tool('add_comment',videoId='example-v1',start='',text='When?')
+        assert error and message==store.MESSAGES['timestampOutside'],message
 
     def test_agent_can_open_a_video_for_the_reviewer(self):
         (self.data/'view.json').write_text(json.dumps({'videoId':'example-v1','playheadMs':41300}))

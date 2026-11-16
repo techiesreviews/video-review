@@ -8,6 +8,7 @@ instead of read from the file.
 from pathlib import Path
 import json
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -24,7 +25,7 @@ UUID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 # Every file that applies the comment rules, and the two that define them (only there are the limits searched for
 # by value: elsewhere a number such as 10000 is just as likely a timeout).
 RULE_FILES = ['review_store.py', 'server.py', 'mcp_server.py', 'export_saved_comments.py',
-              'web/review-core.js', 'web/backend.js', 'cloud/worker.js']
+              'web/review-core.js', 'web/transcript-core.js', 'web/backend.js', 'cloud/worker.js']
 RULE_HOMES = ['review_store.py', 'web/review-core.js']
 
 
@@ -143,6 +144,27 @@ def copies(root):
             if number >= 1000 and re.search(rf'(?<![\w.]){digits}(?![\w.])', texts[name]):
                 found.append(f'{name}: the limit {key}')
     return found
+
+
+class TheExportUsesTheRules(unittest.TestCase):
+    def test_open_comments_are_exported_with_the_original_frames_a_comment_shows(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            video = {'id': 'v', 'title': 'Cut', 'label': 'v1', 'path': str(folder / 'cut.mp4'), 'fps': 30,
+                     'durationMs': 2000, 'fingerprint': 'x', 'keepRanges': [[0, 30], [60, 90]]}
+            restore = {'type': 'restore', 'sourceSpans': [{'sourceStartFrame': 390, 'sourceEndFrame': 405,
+                                                           'sourceStartMs': 13000, 'sourceEndMs': 13500}]}
+            store.write(folder / 'manifest.json', [video])
+            store.write(folder / 'comments.json', {'comments': [
+                {'id': 'over-a-cut', 'videoId': 'v', 'startMs': 500, 'endMs': 1500, 'text': 'Tighter', 'status': 'open'},
+                {'id': 'restore', 'videoId': 'v', 'startMs': 500, 'endMs': None, 'text': 'Put it back', 'status': 'open',
+                 'editRequest': restore},
+                {'id': 'finished', 'videoId': 'v', 'startMs': 0, 'endMs': None, 'text': 'Done', 'status': 'done'}]})
+            run = subprocess.run([sys.executable, '-I', str(ROOT / 'export_saved_comments.py'), '--data-dir', temp],
+                                 capture_output=True, text=True, check=True)
+            exported = {c['id']: c['sourceSpans'] for c in json.loads(run.stdout)['openComments']}
+        self.assertEqual(exported, {'over-a-cut': store.source_spans(video, 500, 1500),
+                                    'restore': restore['sourceSpans']})
 
 
 class EachRuleIsTypedOnce(unittest.TestCase):
