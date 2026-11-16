@@ -54,6 +54,20 @@ class TranscriptReviewTests(unittest.TestCase):
         self.assertEqual(store.save_transcript(self.data,'v',t)['draftEdits'][0]['wordIds'],['a'])
         t['draftEdits'][0]['endMs']=3000
         with self.assertRaises(ValueError):store.save_transcript(self.data,'v',t)
+    def test_an_edits_only_save_is_refused_once_the_saved_words_changed(self):
+        # The page saves its preview cuts with editsOnly; a new render or an import that came in meanwhile wins.
+        words=[{'id':'a','text':'one','startMs':100,'endMs':600},{'id':'b','text':'two','startMs':700,'endMs':1200}]
+        cut={'id':'cut','startMs':200,'endMs':500,'wordIds':['a'],'quote':'one'}
+        with self.assertRaisesRegex(ValueError,'transcript changed'):store.save_transcript(self.data,'v',{'words':words,'draftEdits':[cut]},edits_only=True)
+        store.save_transcript(self.data,'v',{'words':words,'revision':'r1'})
+        saved=store.save_transcript(self.data,'v',{'words':words,'revision':'r1','draftEdits':[cut]},edits_only=True)
+        self.assertEqual(store.get_transcript(self.data,'v')['draftEdits'],saved['draftEdits'])
+        store.save_transcript(self.data,'v',{'words':[{**words[0],'startMs':150},words[1]],'revision':'r1'})
+        before=store.get_transcript(self.data,'v')
+        with self.assertRaisesRegex(ValueError,'transcript changed'):store.save_transcript(self.data,'v',{'words':words,'revision':'r1','draftEdits':[]},edits_only=True)
+        self.assertEqual(store.get_transcript(self.data,'v'),before,'the newer words stay saved')
+        self.assertEqual(store.MESSAGES['transcriptChanged'],json.loads((Path(__file__).resolve().parents[1]/'web'/'review-rules.json').read_text(encoding='utf-8'))['messages']['transcriptChanged'])
+
     def test_render_retimes_comments_and_preserves_original_anchors(self):
         _,c=store.apply(self.data,{'action':'add','videoId':'v','startMs':1500,'endMs':1800,'text':'Keep this'})
         store.rebase_comments(self.data,self.video,[[330,360]],1000)

@@ -67,6 +67,16 @@ try{
     await page.waitForFunction(()=>!document.querySelector('.transcript-word.removed-word'));
     assert.deepEqual(await onDisk(),[],`${name}: Restore empties the cut list.`);
 
+    // Undo with a half-typed note on other words brings the cut back and leaves that note and selection alone.
+    await word(8).click();await page.locator('.bar-delete').click();
+    await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===1);
+    await word(11).click();await page.locator('#transcriptNote').fill('half a thought');
+    await page.locator('#undoTranscriptCut').click();
+    await page.waitForFunction(()=>!document.querySelector('.transcript-word.removed-word'));
+    assert.equal(await page.locator('#transcriptNote').inputValue(),'half a thought',`${name}: the half-typed note stays in the box.`);
+    assert.deepEqual(await page.locator('.transcript-word.selected').allInnerTexts(),['word11'],`${name}: its words stay selected.`);
+    assert.equal(await page.locator('#barStatus').innerText(),'Brought back.');
+
     // A save the server refuses: the word is not struck through, the error shows, the word stays selected.
     await page.route('**/api/transcript/words',route=>route.request().method()==='POST'?route.fulfill({status:500,contentType:'application/json',body:JSON.stringify({error:'Disk full'})}):route.continue());
     await word(6).click();

@@ -31,7 +31,8 @@ function localBackend(){
     async restoreVideo(id){return api('/api/library',{action:'restore',videoId:id});},
     async addPath(path,title){const video=await api('/api/library',{action:'add',path,title});videos=await api('/api/videos');return video;},
     async transcript(v){return api('/api/transcript/'+encodeURIComponent(v.id));},
-    async saveTranscript(v,data){return api('/api/transcript/'+encodeURIComponent(v.id),normalizeTranscript(data,v.durationMs,v.fps));},
+    // editsOnly: only the preview cuts changed; the server refuses it when the saved words are no longer these.
+    async saveTranscript(v,data,{editsOnly=false}={}){return api('/api/transcript/'+encodeURIComponent(v.id),{...normalizeTranscript(data,v.durationMs,v.fps),...(editsOnly?{editsOnly:true}:{})});},
   };
 }
 
@@ -135,7 +136,7 @@ async function browserBackend(events){
     async apply(cmd){applyChange(state,{...cmd,author:RULES.pageAuthor});await save();return state.comments;},
     async refresh(){return state.comments;},
     async transcript(v){return state.transcripts?.[v.id]??null;},
-    async saveTranscript(v,data){const transcript=storeTranscript(state,v.id,data);await save();return transcript;},
+    async saveTranscript(v,data,{editsOnly=false}={}){const transcript=storeTranscript(state,v.id,data,{editsOnly});await save();return transcript;},
     setView(next){view=next;relay.share();},
     /** The video to play: a URL once the file is open, or what the reviewer needs to do first. */
     async media(v){

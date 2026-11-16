@@ -5,15 +5,17 @@ import {activeWordIndex,wordSelection,wordsInSpan} from './transcript-core.js';
 import {makeRemoval,removalBounds} from './cut-core.js';
 import {cutsToRestore,deletedIds,keptRuns,lastCutGroup,nextWordAfterDelete} from './edit-bar-core.js';
 import {clock} from './time-format.js';
+import {RULES} from './review-core.js';
 
 const stamp=ms=>clock(ms,{places:3,hours:false});
 const NOTE_PAUSE_MS=450;
-export const NEW_RENDER_TEXT='A new render arrived while this was saving, so it was not applied. Select the words again.';
+export const RELOADED_TEXT='The transcript changed while this was saving. The edit was saved, and the transcript is loaded again.';
 
 function afterTimer(run,ms){const timer=setTimeout(run,ms);return ()=>clearTimeout(timer);}
 
 /**
- * saveTranscript(video, transcript) saves and returns the saved transcript; request(selection) adds a comment and
+ * saveTranscript(video, transcript, {editsOnly:true}) saves the preview cuts and returns the saved transcript; the store
+ * refuses it when its words are no longer the ones the cuts were made on; request(selection) adds a comment and
  * returns it; updateRequest(id, text) changes a comment's text; cancelRequest(id) closes a comment whose cut is gone.
  * onError(error) hears about a note saved in the background that failed. schedule(run, ms) returns a cancel function.
  */
@@ -99,11 +101,13 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
     return {type:'change',quote:chosen.quote.slice(0,3000),firstWordId:chosen.firstWordId,lastWordId:chosen.lastWordId,wordIds:words,cutId:chosen.cutId,transcriptRevision:transcript.revision};
   }
   const stale=at=>at!==generation;
-  /** Saves the cut list on the transcript it was worked out from. keep: the selection and note stay as they are. */
+  /** Saves the cut list on the transcript it was worked out from. keep: the selection and note stay as they are.
+   *  A new transcript that came in before the save: nothing is saved. One that came in during it, on the same words (so
+   *  the store took the save): the error says saved, and the panel loads the transcript again to show it. */
   async function commit(at,draftEdits,{keep=false}={}){
-    if(stale(at))throw Error(NEW_RENDER_TEXT);
-    const saved=await saveTranscript(video,{...transcript,draftEdits});
-    if(stale(at))throw Error(NEW_RENDER_TEXT);
+    if(stale(at))throw Error(RULES.messages.transcriptChanged);
+    const saved=await saveTranscript(video,{...transcript,draftEdits},{editsOnly:true});
+    if(stale(at))throw Object.assign(Error(RELOADED_TEXT),{saved:true});
     transcript=saved;
     // Whether the note box was editing a comment when the save landed: then its text is that comment's, not a draft.
     const noteOpen=note.id!=null;
@@ -141,7 +145,7 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
       try{noteOpen=await commit(at,[...base,...pieces]);}
       catch(error){
         // No open note may claim a cut that was never saved.
-        if(saved?.id)await cancelRequest(saved.id).catch(onError);
+        if(saved?.id&&!error.saved)await cancelRequest(saved.id).catch(onError);
         throw error;
       }
       if(said&&saved?.id)cutNotes.set(saved.id,said);
