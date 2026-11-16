@@ -937,6 +937,7 @@ class OneScriptLineTests(unittest.TestCase):
                          [['say', 'hello'], ['yes']])
         self.assertEqual(lines('Sources\n- [The survey](https://example.com/survey "300 responses")\n- Thanks for watching.'),
                          [['sources'], ['thanks', 'for', 'watching']])
+        self.assertEqual(lines('Sources\n1. [The survey](https://example.com/survey)\n2) Thanks.'), [['sources'], ['thanks']])
         # A link inside a spoken line is read as its text, also when the address has brackets of its own.
         self.assertEqual(lines('Open [the practice site](https://example.com/practice-site) now. Then wait.'),
                          [['open', 'the', 'practice', 'site', 'now'], ['then', 'wait']])
@@ -954,6 +955,9 @@ class OneScriptLineTests(unittest.TestCase):
         self.assertEqual(lines('The survey is at https://example.com/survey. Two out of three had a problem.'),
                          [['the', 'survey', 'is', 'at'], ['two', 'out', 'of', 'three', 'had', 'a', 'problem']])
         self.assertEqual(lines('Say hello.\nhttps://example.com/survey?id=3&x=1\nYes.'), [['say', 'hello'], ['yes']])
+        # A closing bracket or bold mark after an address is not part of it.
+        self.assertEqual(lines('Sources (see https://example.com/a). Then **https://example.com/b** now.'),
+                         [['sources', 'see'], ['then', 'now']])
         self.assertEqual(lines('Write to <https://example.com/contact> today.'), [['write', 'to', 'today']])
         # A name with a dot that is said aloud is no address.
         self.assertEqual(lines('Go to example.com today.'), [['go', 'to', 'examplecom', 'today']])
