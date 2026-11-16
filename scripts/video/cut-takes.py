@@ -774,9 +774,11 @@ class Cutter:
                 # One word before the opening ("So next, the ...") belongs to the attempt.
                 start = kept[0] if at <= 1 else kept[at]
                 # A finished sentence that says a script word the take does not ("To use the camera is easy." before
-                # "The camera is easy to carry.") is asked about whole: drop() leaves it in and Lex is told.
-                whole = kept[0] if at > 1 and finished and self.script \
-                    and not self.says(take, kept, self.best_line(take)[1]) else None
+                # "The camera is easy to carry.") is asked about whole: drop() leaves it in and Lex is told. Only for
+                # a take in the script: says_more() asks about no other.
+                take_score, take_line = self.best_line(take) if self.script else (0.0, None)
+                whole = kept[0] if at > 1 and finished and take_score >= SETTINGS['scriptMatch'] \
+                    and not self.says(take, kept, take_line) else None
             if start is None:
                 continue
             attempt = [index for index in range(start, take[0]) if self.keep[index]]
@@ -967,7 +969,7 @@ class Cutter:
 
     def fallback(self, at, direction, limit, word_index, side):
         """No frame leaves the preferred room: take the one closest to it that stays off both words, and flag it.
-        That is the first frame with more room than the least preferred, or the roomiest one before the next sound
+        That is the first frame with at least the least preferred room, or the roomiest one before the next sound
         when that is closer (clean_frame). With no sound after the last word (an infinite limit), only the first
         counts. None when no frame stays off both words."""
         fps, low, high = self.fps, *SETTINGS['roomMs']
