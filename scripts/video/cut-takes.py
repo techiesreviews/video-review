@@ -86,6 +86,7 @@ SCRIPT_STOP = re.compile(r'(?<=[.!?])["\'”’»)\]*_`]*\s+')
 DIRECTION = re.compile(r'\[(?:[^\]\n]|\n(?![ \t]*#))*\]')
 # The start of a markdown link or image, [text](address "title"): its text follows the direction rule.
 LINK_START = re.compile(r'(!?)\[((?:[^\[\]\n]|\n(?![ \t]*#))*)\]\(')
+LINK_TITLE = re.compile(r'"[^"\n]*"')
 # A bare address, without the full stop, comma or closing mark that follows it.
 ADDRESS = re.compile(r'https?://[^\s<>]*[^\s<>.,;:!?"\'”’»)\]*_`]')
 LIST_ITEM = re.compile(r'^\s*(?:[-*+]|\d+[.)])\s+')
@@ -129,23 +130,36 @@ def in_order(first, second):
     return sum(block.size for block in SequenceMatcher(None, first, second, autojunk=False).get_matching_blocks())
 
 
-def without_links(text):
-    """The script with each link read as its text. An image is left out, and so is a link that has a line to
-    itself (also as a list item): that is a direction with an address. The address ends at its own closing
-    bracket on the same line, however many pairs of brackets it holds; one that is never closed is no link."""
+def link_end(text, start):
+    """Where the link address that opens just before `start` closes: at its own closing bracket on the same line,
+    however many pairs of brackets it holds; a bracket inside the link's "quoted title" does not count. None when
+    the address is never closed: that is no link."""
+    depth, end = 1, start
+    while end < len(text) and text[end] != '\n':
+        title = LINK_TITLE.match(text, end) if text[end - 1] in ' \t' else None
+        if title:
+            end = title.end()
+            continue
+        depth += {'(': 1, ')': -1}.get(text[end], 0)
+        end += 1
+        if not depth:
+            return end
+    return None
+
+
+def without_links(text, images):
+    """The script with its images left out (images=True), or with each link read as its text (images=False). A
+    link that has a line to itself (also as a list item) is left out: that is a direction with an address."""
     parts, done = [], 0
     for match in LINK_START.finditer(text):
-        end, depth = match.end(), 1
-        while depth and end < len(text) and text[end] != '\n':
-            depth += {'(': 1, ')': -1}.get(text[end], 0)
-            end += 1
-        if depth or match.start() < done:
+        end = link_end(text, match.end())
+        if end is None or match.start() < done or bool(match.group(1)) != images:
             continue
         line_end = text.find('\n', end)
         before = text[text.rfind('\n', 0, match.start()) + 1:match.start()]
         after = text[end:line_end if line_end >= 0 else len(text)]
         alone = not LIST_ITEM.sub('', before).strip() and not after.strip()
-        parts += [text[done:match.start()], ' ' if match.group(1) else '' if alone else match.group(2)]
+        parts += [text[done:match.start()], ' ' if images else '' if alone else match.group(2)]
         done = end
     return ''.join(parts) + text[done:]
 
@@ -156,7 +170,9 @@ def script_sentences(text):
     run into the next one. Headings and [directions] are left out; a direction never runs past a heading. A link
     is read as its text, or left out when it has a line to itself, as a direction is; an image and a bare address
     (https://…) are left out, so no address is ever taken for a spoken word."""
-    text = ADDRESS.sub(' ', DIRECTION.sub(' ', without_links(text)))
+    # Images go first: one that is itself a link, [![image](file)](address), then goes with its link.
+    text = without_links(without_links(text, images=True), images=False)
+    text = ADDRESS.sub(' ', DIRECTION.sub(' ', text))
     blocks = [[]]
     for line in text.splitlines():
         heading, item = line.lstrip().startswith('#'), LIST_ITEM.match(line)
