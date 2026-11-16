@@ -775,7 +775,8 @@ class Cutter:
                 start = kept[0] if at <= 1 else kept[at]
                 # A finished sentence that says a script word the take does not ("To use the camera is easy." before
                 # "The camera is easy to carry.") is asked about whole: drop() leaves it in and Lex is told. Only for
-                # a take in the script: says_more() asks about no other.
+                # a take in the script: for any other take, the words before the opening stay and drop() checks the
+                # rest against its own line.
                 take_score, take_line = self.best_line(take) if self.script else (0.0, None)
                 whole = kept[0] if at > 1 and finished and take_score >= SETTINGS['scriptMatch'] \
                     and not self.says(take, kept, take_line) else None
