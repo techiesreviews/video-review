@@ -135,12 +135,29 @@ try{
     await replace('W12','twelve-new');
     await page.locator('#clearTranscriptSelection').click();
     await page.locator('#undoTranscriptCut').click();
-    await page.waitForFunction(()=>!document.querySelector('#transcriptNotice').hidden);
+    await page.waitForFunction(()=>document.querySelector('#transcriptNotice').textContent);
+    assert.equal(await page.locator('#transcriptNotice').isVisible(),true);
     assert.equal(await page.locator('#transcriptNotice').innerText(),'Not saved: the words changed elsewhere. They are loaded again; try again.');
     assert.equal(await word(12).innerText(),'twelve-new',`${name}: the newer words are shown.`);
     assert.equal(await page.locator('#toast.show.error').count(),0,`${name}: no toast.`);
     stored=JSON.parse(await readFile(join(temp,'transcripts/words.json'),'utf8'));
     assert.equal(stored.words[12].text,'twelve-new');assert.deepEqual(stored.draftEdits||[],[],`${name}: the newer words are not overwritten.`);
+
+    // A Delete on a join refused the same way: the same join is selected again, not a word, and Delete then cuts it.
+    await replace('W14','fourteen-new');
+    await page.locator('.transcript-join',{hasText:'J1'}).click();
+    await page.locator('.bar-delete').click();
+    await page.waitForFunction(()=>document.querySelector('#barStatus').textContent.startsWith('Not saved'));
+    assert.equal(await word(14).innerText(),'fourteen-new');
+    assert.match(await page.locator('#selectionQuote').innerText(),/^Join J1/,`${name}: the join stays selected.`);
+    assert.equal(await page.locator('.transcript-word.selected').count(),0,`${name}: no word is selected instead.`);
+    assert.equal(await page.locator('#transcriptNotice').isHidden(),true,`${name}: the line is on the bar, not the panel.`);
+    await page.locator('.bar-delete').click();
+    await page.waitForFunction(()=>document.querySelector('#cutPreviewStatus').textContent.includes('removed'));
+    stored=JSON.parse(await readFile(join(temp,'transcripts/words.json'),'utf8'));
+    assert.equal(stored.draftEdits?.length,1,`${name}: one cut, at the join.`);
+    assert.ok(stored.draftEdits[0].startMs<=3000&&stored.draftEdits[0].endMs>=3000);
+    assert.equal(stored.words[14].text,'fourteen-new');
 
     // A note on a join goes to the agent with the join's id.
     await page.locator('.transcript-join',{hasText:'J1'}).click();
