@@ -160,8 +160,10 @@ def ffprobe_json(path, *arguments):
     try:
         result = media_tools.run('ffprobe', ['-v', 'error', *arguments, '-of', 'json', str(path)],
                                  timeout=FFPROBE_TIMEOUT_SECONDS, text=True)
-    except media_tools.MediaToolError as error:
+    except media_tools.ToolMissing as error:
         raise Stop(str(error)) from None
+    except media_tools.ToolTimedOut as error:
+        raise Stop(f'{error} It was reading {path}.') from None
     if result.returncode != 0:
         raise Stop(f'ffprobe could not read {path}: {result.stderr.strip()}')
     return json.loads(result.stdout)

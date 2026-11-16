@@ -7,6 +7,9 @@ __pycache__/
 .env
 .env.*
 
+# A local copy of ffmpeg and ffprobe for media_tools.py (large, and not ours to commit)
+/bin/
+
 # Media and generated review exports
 *.mp4
 *.mov
