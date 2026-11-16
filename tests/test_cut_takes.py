@@ -924,6 +924,17 @@ class OneScriptLineTests(unittest.TestCase):
         self.assertEqual(cut_takes.script_sentences('Say hello. [B-roll\n## Two\nThen go on. [music] The end.'),
                          [['say', 'hello'], ['broll'], ['then', 'go', 'on'], ['the', 'end']])
 
+    def test_a_short_line_is_not_counted_inside_a_take_of_a_longer_line(self):
+        # Second look on PR #42: after a quiet "again" the longer line follows, which opens with the short line's
+        # words. Those words belong to the longer line, also when its take leaves a word out ("very").
+        words = said('The tool is fast.', 1.0) + [['again', 3.0, 3.3]] + said('The tool is fast and easy to use.', 4.2)
+        for script in ('The tool is fast. The tool is fast and easy to use.',
+                       'The tool is fast. The tool is fast and very easy to use.'):
+            result = plan_words(words, script)
+            self.assertEqual(kept_starts(result, cut_timeline.load_words(words)) >= {1.0, 1.3, 1.6, 1.9}, True, script)
+            flag, = flags(result, 'script-line-kept')
+            self.assertEqual((flag['start'], flag['text']), (1.0, 'The tool is fast.'), script)
+
     def test_a_script_line_said_word_for_word_is_never_lost(self):
         # The last check, whatever made the removal: here each sentence fits the other script line just as well
         # when word order is ignored, and the script says the second line twice.
