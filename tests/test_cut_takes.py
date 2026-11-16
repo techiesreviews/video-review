@@ -946,11 +946,20 @@ class OneScriptLineTests(unittest.TestCase):
         # Second look, 2026-11-16 (SL-1): the address ends at its own closing bracket, however many pairs it holds.
         self.assertEqual(lines('Read [the page](pages/Site_(web_(page))) first.'), [['read', 'the', 'page', 'first']])
         self.assertEqual(lines('Say hello.\n- [The page](pages/Site_(web_(page)))\nYes.'), [['say', 'hello'], ['yes']])
+        # A link that starts inside an earlier link's address is part of that address.
         self.assertEqual(lines('Read [the page](pages/a[b](c)) first.'), [['read', 'the', 'page', 'first']])
         # Second look on PR #45: a bracket inside the link's "quoted title" does not close the address.
         self.assertEqual(lines('Read [the guide](https://example.com "Step 1) Setup") first.'),
                          [['read', 'the', 'guide', 'first']])
         self.assertEqual(lines('Say hello.\n[The guide](https://example.com "Step 1) Setup")\nYes.'), [['say', 'hello'], ['yes']])
+        self.assertEqual(lines("Read [the guide](https://example.com 'Step 1) Setup') first."), [['read', 'the', 'guide', 'first']])
+        # Second look, round 3: a mark with a backslash in front of it is text, in the address and in the title,
+        # and the link's own text may hold pairs of brackets.
+        self.assertEqual(lines('Read [the guide](docs/step\\)one.md) first.'), [['read', 'the', 'guide', 'first']])
+        self.assertEqual(lines('Read [the guide](https://example.com "Step \\"1) Setup\\" then") first.'),
+                         [['read', 'the', 'guide', 'first']])
+        self.assertEqual(lines('Read [the [new] guide](docs/guide.md) first.'), [['read', 'the', 'guide', 'first']])
+        self.assertEqual(lines('Read [the guide](<docs/my guide (1.md>) first.'), [['read', 'the', 'guide', 'first']])
         # An address that is never closed is no link, and never runs past its line.
         self.assertEqual(lines('Read [the page](pages/site first.\nThen go on.'),
                          [['read', 'pagessite', 'first'], ['then', 'go', 'on']])
@@ -962,11 +971,14 @@ class OneScriptLineTests(unittest.TestCase):
         lines = cut_takes.script_sentences
         self.assertEqual(lines('Say hello.\n![The chart](https://example.com/chart.png)\nYes.'), [['say', 'hello'], ['yes']])
         self.assertEqual(lines('Look at this ![chart](charts/one.png) first.'), [['look', 'at', 'this', 'first']])
+        self.assertEqual(lines('Look ![The [new] chart](charts/one.png) now.'), [['look', 'now']])
         # Review round 2 on PR #45: an image that is itself a link goes with its link's address.
         self.assertEqual(lines('Watch [![The demo](thumb.png)](videos/demo.mp4) now.'), [['watch', 'now']])
         self.assertEqual(lines('Say hello.\n[![Badge](badge.svg)](docs/status)\nYes.'), [['say', 'hello'], ['yes']])
         # The full stop after an address still ends the sentence.
         self.assertEqual(lines('The survey is at https://example.com/survey. Two out of three had a problem.'),
+                         [['the', 'survey', 'is', 'at'], ['two', 'out', 'of', 'three', 'had', 'a', 'problem']])
+        self.assertEqual(lines('The survey is at http://example.com/survey. Two out of three had a problem.'),
                          [['the', 'survey', 'is', 'at'], ['two', 'out', 'of', 'three', 'had', 'a', 'problem']])
         self.assertEqual(lines('Say hello.\nhttps://example.com/survey?id=3&x=1\nYes.'), [['say', 'hello'], ['yes']])
         # A closing bracket or bold mark after an address is not part of it.
