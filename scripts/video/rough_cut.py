@@ -4,8 +4,11 @@
     python scripts/video/rough_cut.py <video folder> [--cue <cue file>] [--data-dir <video-review data>]
 
 The list holds one entry per scene, in script order: the best take of the scene (Lex's star, else the newest take
-unless its sound is clearly worse, see scene_store.choose_best), with its file, length and flags. It is the same
-list as the strip on top of the overview page (overview_page.py), made from the same scene file.
+unless its sound is clearly worse, see scene_store.choose_best), with its file, length and flags.
+
+This module is the one place the rough cut is worked out (build_cut, cut_for): the overview page (overview_page.py)
+draws the list it is given here, for its strip, its total and the take in front of each scene, and works none of it
+out again. take_length is the one rule for a take's length.
 
   file:   version, total_seconds, lengths_known, scenes
   scene:  scene, number, title, recorded, take, file, duration, flagged, script_changed
@@ -25,6 +28,7 @@ no media is read. The existing cutter (cut-takes.py, cut-to-review.py) takes one
 transcript, so it cannot take this list; see the ticket "Rough cut from the best takes".
 """
 import argparse
+import copy
 import json
 import os
 from pathlib import Path
@@ -33,7 +37,6 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import file_store  # noqa: E402
-import overview_page  # noqa: E402
 import review_store  # noqa: E402
 import scene_store  # noqa: E402
 
@@ -41,48 +44,72 @@ FILE_NAME = 'rough-cut.json'
 VERSION = 1
 
 
-def _length(value):
-    """A take's length in seconds, or None when it has none."""
+def take_length(value):
+    """A take's length in seconds, or None when it has none (true and false are no length)."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return value
 
 
+def changed_in_script(store, cue_text):
+    """Ids of the saved scenes whose heading no longer matches the script, found by comparing the scene list with
+    the cue text now (scene_store.check_script on a copy, so nothing is saved). Empty when the cue text has no
+    numbered sections at all: that is not a script, so it says nothing about the scenes."""
+    if not scene_store.parse_cue_file(cue_text):
+        return set()
+    return set(scene_store.check_script(copy.deepcopy(store), cue_text)['changed'])
+
+
 def build_cut(store, changed=()):
     """The rough cut list for a scene file already loaded. changed: ids of scenes whose heading no longer matches
-    the cue file (overview_page.changed_in_script)."""
-    scenes, total, known = [], 0.0, True
+    the cue file (changed_in_script)."""
+    scenes = []
     for scene in store['scenes']:
         best, flagged = scene_store.choose_best(scene)
         take = next((t for t in scene['takes'] if t['number'] == best), None)
-        duration = _length(take.get('duration')) if take else None
-        if take is not None:
-            if duration is None:
-                known = False
-            else:
-                total += duration
         scenes.append({
             'scene': scene['id'], 'number': scene['number'], 'title': scene['title'],
             'recorded': take is not None,
             'take': take['number'] if take else None,
             'file': f'scenes/{scene["id"]}/{take["file"]}' if take else None,
-            'duration': duration,
+            'duration': take_length(take.get('duration')) if take else None,
             'flagged': flagged,
             'script_changed': bool(scene.get('script_changed')) or scene['id'] in changed,
         })
-    return {'version': VERSION, 'total_seconds': round(total, 3), 'lengths_known': known, 'scenes': scenes}
+    known = all(item['duration'] is not None for item in scenes if item['recorded'])
+    return {'version': VERSION, 'total_seconds': round(length_total(scenes), 3), 'lengths_known': known,
+            'scenes': scenes}
 
 
-def _cue_file(data_dir, folder, cue):
-    """The cue file to compare with: the one named, else the one the video was registered with, else None (the
-    folder's own prompter.md). A registry that cannot be read is no reason to stop: it only means no remembered cue."""
+def length_total(scenes):
+    """The known lengths of a rough cut list's scenes added up, in their order. Not rounded: the list saves it to the
+    millisecond, and a page that shows whole seconds rounds the exact sum, not the rounded one."""
+    total = 0.0
+    for item in scenes:
+        if item['duration'] is not None:
+            total += item['duration']
+    return total
+
+
+def cut_for(store, cue_text):
+    """The rough cut list for a scene file already loaded, with its headings compared with this cue text."""
+    return build_cut(store, changed_in_script(store, cue_text))
+
+
+def _cue_text(folder, cue, data_dir):
+    """The text of the cue file to compare with: the one named, else the one the video was registered with, else
+    the folder's own prompter.md; empty when there is none. A registry that cannot be read is no reason to stop: it
+    only means no remembered cue."""
+    # The registry and the cue file reading are kept by the overview page's module, which imports this one to draw
+    # the rough cut; so it is imported here, where it is needed, and the rules above never depend on the page.
+    import overview_page
     if cue is None and data_dir is not None:
         try:
             found = overview_page.lookup(data_dir, overview_page.video_key(folder))
         except (ValueError, OSError):
-            return None
+            found = None
         cue = found[1] if found else None
-    return cue
+    return overview_page.read_cue_text(folder, cue)
 
 
 def rebuild_rough_cut(raw_dir, cue=None, data_dir=None):
@@ -92,13 +119,13 @@ def rebuild_rough_cut(raw_dir, cue=None, data_dir=None):
     a scene file another program is just changing and two rebuilds cannot finish in the wrong order. cue: the cue file
     to compare headings with; without one, the cue file the video was registered with in data_dir, else
     prompter.md in the video folder. SceneFileError when the folder has no usable scene file."""
-    cue_text = overview_page.read_cue_text(raw_dir, _cue_file(data_dir, raw_dir, cue))
+    cue_text = _cue_text(raw_dir, cue, data_dir)
     with scene_store.locked(raw_dir):
         store = scene_store.load(raw_dir)
         if store is None:
             raise scene_store.SceneFileError(
                 f'No {scene_store.FILE_NAME} in {raw_dir}: the scene list is saved when the first take is recorded.')
-        cut = build_cut(store, overview_page.changed_in_script(store, cue_text))
+        cut = cut_for(store, cue_text)
         file_store.write_text(Path(raw_dir) / FILE_NAME, json.dumps(cut, indent=2, ensure_ascii=False) + '\n')
     return cut
 

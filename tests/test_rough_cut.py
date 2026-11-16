@@ -300,6 +300,76 @@ class AgreesWithTheOverviewStrip(RoughCutCase):
         self.assert_agree()
         self.assertEqual([item['recorded'] for item in self.saved()['scenes']], [False] * 5)
 
+    def test_with_a_length_of_true_both_say_the_length_is_not_known(self):
+        # A length that is true or false is no length, in the list and on the page alike (not 1 or 0 seconds).
+        self.change(lambda store: scene_store.find_scene(store, ROOM)['takes'][0].update(duration=True))
+        self.assert_agree()
+        self.assertFalse(self.saved()['lengths_known'])
+
+
+class WorkedOutOnce(RoughCutCase):
+    """The rough cut is worked out in rough_cut.py alone: the overview page draws the list this module gives it, and
+    no other module has its own copy of the rules (which take is in front, whether the script changed, the total)."""
+
+    def made_up_cut(self, store):
+        """A list that differs from what the rules would give the scene file: scene 2 shows take 1 (flagged, 7 s),
+        scene 4 shows nothing, scene 1 is marked as changed in the script."""
+        scenes = []
+        for scene in store['scenes']:
+            entry = {'scene': scene['id'], 'number': scene['number'], 'title': scene['title'], 'recorded': False,
+                     'take': None, 'file': None, 'duration': None, 'flagged': False,
+                     'script_changed': scene['id'] == INTRO}
+            if scene['id'] == COSTS:
+                entry.update(recorded=True, take=1, file=f'scenes/{COSTS}/take-01.mkv', duration=7.0, flagged=True)
+            scenes.append(entry)
+        return {'version': rough_cut.VERSION, 'total_seconds': 7.0, 'lengths_known': True, 'scenes': scenes}
+
+    def test_the_overview_page_draws_the_list_the_rough_cut_module_gives_it(self):
+        store = scene_store.load(self.raw)
+        with mock.patch.object(rough_cut, 'build_cut', side_effect=lambda store, changed=(): self.made_up_cut(store)):
+            page = overview_page.render(store, 'Sample', cue_text=CUE)
+        bar = re.search(r'<div class="cut"[^>]*>(.*?)</div>\s*<p class="cutlabel">', page, re.S).group(1)
+        self.assertEqual(re.findall(r'title="Scene (\d+)(?:, take (\d+)|: not recorded yet)"', bar),
+                         [('1', ''), ('2', '1'), ('3', ''), ('4', ''), ('5', '')])
+        self.assertIn('<b>1 of 5 scenes</b> recorded · 3 takes · rough cut <b>0:07</b>', page)
+        costs = re.search(rf'<section class="scene" data-scene="{COSTS}".*?</section>', page, re.S).group(0)
+        self.assertIn('data-take="1" data-on="true"', costs)
+        self.assertIn('data-take="2" data-on="false"', costs)
+        self.assertIn(overview_page.OLDER_TAKE_TEXT, costs)
+        intro = re.search(rf'<section class="scene" data-scene="{INTRO}".*?</section>', page, re.S).group(0)
+        self.assertIn('Script changed since recording', intro)
+
+    def test_the_page_rounds_the_exact_total_not_the_one_the_list_saves(self):
+        # The list saves its total to the millisecond (1444.5); the page shows the exact sum in whole seconds.
+        self.change(lambda store: scene_store.find_scene(store, COSTS)['takes'][1].update(duration=1379.500478))
+        page = overview_page.render(scene_store.load(self.raw), 'Sample', cue_text=CUE)
+        self.assertEqual(self.rebuild()['total_seconds'], 1444.5)
+        self.assertIn('rough cut <b>24:05</b>', page)
+
+    def test_the_rough_cut_is_worked_out_once_for_a_page(self):
+        store = scene_store.load(self.raw)
+        with mock.patch.object(rough_cut, 'build_cut', wraps=rough_cut.build_cut) as build_cut:
+            overview_page.render(store, 'Sample', cue_text=CUE)
+        self.assertEqual(build_cut.call_count, 1)
+
+    def test_no_other_module_has_its_own_copy_of_the_rules(self):
+        # The take in front is chosen by scene_store.choose_best (which also saves it in the scene file); only this
+        # module asks it for the rough cut. The script check of the rough cut is this module's alone.
+        rules = {'choose_best(': {'scene_store.py', 'rough_cut.py'},
+                 'def changed_in_script': {'rough_cut.py'},
+                 "check_script(copy": {'rough_cut.py'}}
+        sources = [path for path in ROOT.rglob('*.py')
+                   if not {'tests', 'node_modules', '.git'} & set(path.relative_to(ROOT).parts)]
+        for rule, allowed in rules.items():
+            found = {path.name for path in sources if rule in path.read_text(encoding='utf-8')}
+            self.assertEqual(found, allowed, rule)
+
+    def test_the_rough_cut_module_does_not_need_the_page_to_work_out_the_list(self):
+        # The page draws the rough cut, so the rough cut must not lean on the page for its rules.
+        source = (ROOT / 'scripts/video/rough_cut.py').read_text(encoding='utf-8')
+        self.assertNotIn('overview_page.changed_in_script', source)
+        self.assertTrue(callable(getattr(rough_cut, 'changed_in_script', None)))
+
 
 class WhenItCannotBeMade(RoughCutCase):
     def test_a_folder_without_a_scene_file_is_an_error_that_says_so_and_makes_no_file(self):
