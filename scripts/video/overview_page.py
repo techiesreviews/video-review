@@ -165,15 +165,13 @@ def point_saved_pages_at_the_server(data_dir, address=None):
     asks_the_server = f'<body data-server="{html.escape(address, quote=True)}"'
     rewritten = []
     for key in registry:
-        found = lookup(data_dir, key)
-        if not found:
-            continue
         try:
-            if asks_the_server in (found[0] / FILE_NAME).read_text(encoding='utf-8', errors='replace'):
+            found = lookup(data_dir, key)
+            if not found or asks_the_server in (found[0] / FILE_NAME).read_text(encoding='utf-8', errors='replace'):
                 continue
             build(found[0], cue=found[1], server=address, code=page_code(data_dir, key))
         except (OSError, scene_store.SceneFileError):
-            continue  # no saved page, or one that cannot be read or written now
+            continue  # no saved page, or a folder or page that cannot be read or written now
         rewritten.append(key)
     return rewritten
 
