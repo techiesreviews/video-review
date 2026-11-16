@@ -752,6 +752,47 @@ class OneScriptLineTests(unittest.TestCase):
             + said('The battery lasts all day.', 5.2)
         self.assertEqual(removed_texts(plan_words(words, self.SCRIPT)), ['The battery lasts all'])
 
+    def test_a_whole_script_line_that_the_next_line_repeats_is_listed_not_cut(self):
+        # Whole-file look, 2026-11-16: the next line opens with every word of this one, as a restart would.
+        script = 'The tool is fast. The tool is fast and easy to use.'
+        words = said('The tool is fast', 1.0) + said('The tool is fast and easy to use.', 2.6)
+        result = plan_words(words, script)
+        self.assertEqual(removed_texts(result), [])
+        flag, = result['paperEdit']['flags']
+        self.assertEqual(flag['code'], 'possible-restart')
+        self.assertIn('The script has both', flag['message'])
+        # A start that stops part way through its own line is still a dropped start.
+        words = said('The tool is fast and', 1.0) + said('The tool is fast and easy to use.', 2.8)
+        self.assertEqual(removed_texts(plan_words(words, 'Hello there. The tool is fast and easy to use.')),
+                         ['The tool is fast and'])
+
+    def test_two_lines_with_the_same_words_in_another_order_are_both_kept(self):
+        # Whole-file look, 2026-11-16: both sentences fit the second line equally well when word order is ignored.
+        text = 'The camera beats the phone. The phone beats the camera.'
+        words = said('The camera beats the phone.', 1.0) + said('The phone beats the camera.', 3.2)
+        result = plan_words(words, text)
+        self.assertEqual(removed_texts(result), [])
+        self.assertEqual(result['paperEdit']['flags'], [])
+
+    def test_a_take_that_overlaps_two_parts_does_not_make_them_takes_of_each_other(self):
+        # Whole-file look, 2026-11-16: the middle sentence shares words with both parts, so all three were one group
+        # and only the last sentence stayed.
+        words = said('The camera is easy to use.', 1.0) + said('The camera is easy and the battery lasts.', 4.0) \
+            + said('The battery lasts all day.', 8.0)
+        result = plan_words(words, self.SCRIPT)
+        self.assertEqual(removed_texts(result), [])
+        self.assertEqual(sorted(item['code'] for item in result['paperEdit']['flags']),
+                         ['no-complete-take', 'take-says-more'])
+        told, = flags(result, 'take-says-more')
+        self.assertEqual(told['start'], 1.0)
+        self.assertIn('8.00', told['message'])
+
+    def test_a_take_the_kept_one_does_not_cover_stays_and_is_listed(self):
+        # The last take picks the line up half way: it does not say what the first one says, so the first stays.
+        words = said('The camera is easy to use and the battery', 1.0) + said('And the battery lasts all day.', 5.0)
+        result = plan_words(words + said('The end.', 8.0), self.SCRIPT)
+        self.assertEqual(removed_texts(result), [])
+
     def test_a_line_said_once_in_the_script_still_loses_its_dropped_start(self):
         script = 'Thanks for watching this week.'
         words = said('Thanks for watching this week', 1.0) + said('Thanks for watching this week.', 3.5)
@@ -772,6 +813,39 @@ class EdgeCaseTests(unittest.TestCase):
         for run in timeline.runs:
             for edge in (run.source_start, run.source_end):
                 self.assertEqual([w.text for w in loaded if w.start + TOLERANCE < edge < w.end - TOLERANCE], [])
+
+    def test_a_removal_that_touches_the_word_before_it_between_two_frames_goes_back_in(self):
+        # Whole-file look, 2026-11-16: "Intro." ends and the failed "Start" begins at 1.017 s. Frame 30 (1.000 s)
+        # is inside "Intro." and frame 31 (1.033 s) inside "Start", so no frame cuts between them.
+        words = [['My', 0.3, 0.5], ['Intro.', 0.54, 1.017], ['Start', 1.017, 1.3], ['the', 1.34, 1.5],
+                 ['show', 1.54, 1.8], ['again', 2.5, 2.8], ['Start', 3.5, 3.8], ['the', 3.84, 4.0],
+                 ['show', 4.04, 4.3], ['now.', 4.34, 4.7]]
+        result = plan_words(words)
+        self.assertEqual(removed_texts(result), [])
+        flag, = flags(result, 'no-clean-frame')
+        self.assertEqual((flag['start'], flag['text']), (1.017, 'Start the show again'))
+        timeline = cut_timeline.load_cutlist(result['cutlist'])
+        loaded = cut_timeline.load_words(words)
+        for run in timeline.runs:
+            for edge in (run.source_start, run.source_end):
+                self.assertEqual([w.text for w in loaded if w.start + TOLERANCE < edge < w.end - TOLERANCE], [])
+        # The same touch on a frame (1.000 s) cuts cleanly.
+        on_frame = [[text, 1.0 if start == 1.017 else start, 1.0 if end == 1.017 else end] for text, start, end in words]
+        self.assertEqual(removed_texts(plan_words(on_frame)), ['Start the show again'])
+
+    def test_a_removed_opening_or_ending_that_touches_the_kept_word_between_two_frames_goes_back_in(self):
+        opening = [['Start', 0.3, 0.6], ['the', 0.64, 0.8], ['show', 0.84, 1.1], ['again', 1.8, 2.117],
+                   ['Start', 2.117, 2.4], ['the', 2.44, 2.6], ['show', 2.64, 2.9], ['now.', 2.94, 3.3]]
+        ending = [['Start', 0.3, 0.6], ['the', 0.64, 0.8], ['show', 0.84, 1.1], ['now.', 1.14, 1.517],
+                  ['Again', 1.517, 1.8], ['again.', 2.4, 2.7]]
+        for words in (opening, ending):
+            result = plan_words(words)
+            timeline = cut_timeline.load_cutlist(result['cutlist'])
+            loaded = cut_timeline.load_words(words)
+            for run in timeline.runs:
+                for edge in (run.source_start, run.source_end):
+                    self.assertEqual([w.text for w in loaded if w.start + TOLERANCE < edge < w.end - TOLERANCE], [],
+                                     words[0])
 
     def test_a_removal_too_short_for_whole_frames_goes_back_in(self):
         words = [['Okay.', 0.5, 1.0], ['Go,', 1.0, 1.01], ['again,', 1.01, 1.02], ['go', 1.02, 1.3],
