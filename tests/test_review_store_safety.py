@@ -213,11 +213,11 @@ class AddingTheSameVideoTwice(DataFolder):
                 pass
             return real(path)
 
-        probe = mock.Mock(stdout=json.dumps({'streams': [{'codec_type': 'video', 'avg_frame_rate': '30/1'}],
+        probe = mock.Mock(returncode=0, stdout=json.dumps({'streams': [{'codec_type': 'video', 'avg_frame_rate': '30/1'}],
                                              'format': {'duration': '2.0'}}))
         results = []
-        with mock.patch.object(store.shutil, 'which', return_value='ffprobe'), \
-                mock.patch.object(store.subprocess, 'run', return_value=probe), \
+        with mock.patch.object(store.media_tools, 'find', return_value='ffprobe'), \
+                mock.patch.object(store.media_tools.subprocess, 'run', return_value=probe), \
                 mock.patch.object(store, 'fingerprint', side_effect=hash_together):
             adds = [threading.Thread(target=lambda: results.append(store.add_local_video(self.data, str(new))))
                     for _ in range(2)]

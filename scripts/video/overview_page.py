@@ -38,7 +38,6 @@ import os
 from pathlib import Path
 import re
 import secrets
-import subprocess
 import sys
 from urllib.parse import quote
 import uuid
@@ -47,6 +46,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parents[1]))
 import file_store  # noqa: E402
+import media_tools  # noqa: E402
 import review_store  # noqa: E402
 import scene_store  # noqa: E402
 import script_text  # noqa: E402
@@ -256,14 +256,14 @@ def _make_thumbnail(video, image, duration):
     """One frame of a take saved as a small picture, written to a temporary file first. True when it worked."""
     seek = min(THUMB_SECONDS, duration / 2) if duration else 0
     temporary = image.with_name(f'{image.stem}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp{image.suffix}')
-    command = ['ffmpeg', '-y', '-v', 'error', '-ss', f'{seek:g}', '-i', str(video), '-frames:v', '1',
-               '-vf', f'scale={THUMB_WIDTH}:-2', '-q:v', '5', '-f', 'image2', '-update', '1', str(temporary)]
+    arguments = ['-y', '-v', 'error', '-ss', f'{seek:g}', '-i', str(video), '-frames:v', '1',
+                 '-vf', f'scale={THUMB_WIDTH}:-2', '-q:v', '5', '-f', 'image2', '-update', '1', str(temporary)]
     try:
-        done = subprocess.run(command, capture_output=True, timeout=THUMB_TIMEOUT_SECONDS)
+        done = media_tools.run('ffmpeg', arguments, timeout=THUMB_TIMEOUT_SECONDS)
         if done.returncode == 0 and temporary.is_file() and temporary.stat().st_size > 0:
             file_store.retry_on_windows(lambda: os.replace(temporary, image))
             return True
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, media_tools.MediaToolError):
         pass  # no ffmpeg, an unreadable take or a hang: the page shows a placeholder instead
     temporary.unlink(missing_ok=True)
     return False

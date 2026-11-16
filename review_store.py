@@ -3,10 +3,11 @@
 The comment rules (fields, limits, who may write and edit, messages) are in web/review-rules.json, which the browser and
 the hosted Worker read too (web/review-core.js); tests/fixtures/review-rule-cases.json is run against both."""
 from pathlib import Path
-import hashlib, json, math, os, re, shutil, subprocess, uuid
+import hashlib, json, math, os, re, uuid
 from fractions import Fraction
 from datetime import datetime, timezone
 import file_store
+import media_tools
 
 ROOT=Path(__file__).resolve().parent
 RULES=json.loads((ROOT/'web'/'review-rules.json').read_text(encoding='utf-8'))
@@ -214,21 +215,16 @@ def add_local_video(directory,path,title=''):
         raise ValueError('Enter the full path to an existing video file')
     existing=same_file(videos(directory),media)
     if existing:return existing
-    probe=shutil.which('ffprobe')
-    if not probe and os.name=='nt':
-        import winreg
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,'Environment') as key:
-            user_path=winreg.QueryValueEx(key,'Path')[0]
-        probe=shutil.which('ffprobe',path=os.environ.get('PATH','')+os.pathsep+os.path.expandvars(user_path))
-    if not probe:raise ValueError('ffprobe is needed to read this video’s length and frame rate')
     try:
-        result=subprocess.run([probe,'-v','error','-show_streams','-show_format','-of','json',str(media)],
-            capture_output=True,timeout=30,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0),check=True)
+        result=media_tools.run('ffprobe',['-v','error','-show_streams','-show_format','-of','json',str(media)],timeout=30)
+        if result.returncode!=0:raise ValueError()
         info=json.loads(result.stdout);video=next(s for s in info['streams'] if s['codec_type']=='video')
         fps=float(Fraction(video.get('avg_frame_rate') or video['r_frame_rate']))
         duration=round(float(info['format'].get('duration') or video['duration'])*1000)
         if not math.isfinite(fps) or fps<=0 or duration<=0:raise ValueError()
-    except (subprocess.SubprocessError,ValueError,KeyError,StopIteration,ZeroDivisionError):
+    except media_tools.ToolMissing as error:
+        raise ValueError(str(error)) from None
+    except (media_tools.ToolTimedOut,ValueError,KeyError,StopIteration,ZeroDivisionError):
         raise ValueError('Could not read this video. Try an H.264 MP4 exported from Resolve.')
     name=title.strip()[:120] or media.stem
     item=video_item({'id':'video-'+uuid.uuid4().hex[:12],'title':name,'label':name+' · '+media.name,'path':str(media),'fps':fps,'durationMs':duration})
