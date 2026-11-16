@@ -784,10 +784,10 @@ class OneScriptLineTests(unittest.TestCase):
         # Lex is told three things: no take is complete, the last one does not say what the others say, and the
         # middle sentence ends with the words the last one opens with.
         self.assertEqual(sorted(item['code'] for item in result['paperEdit']['flags']),
-                         ['no-complete-take', 'possible-restart', 'take-says-more'])
-        told, = flags(result, 'take-says-more')
-        self.assertEqual(told['start'], 1.0)
-        self.assertIn('8.00', told['message'])
+                         ['no-complete-take', 'possible-restart', 'take-says-more', 'take-says-more'])
+        told = flags(result, 'take-says-more')
+        self.assertEqual([item['start'] for item in told], [1.0, 4.0])
+        self.assertTrue(all('8.00' in item['message'] for item in told))
 
     def test_a_take_the_kept_one_does_not_cover_stays_and_is_listed(self):
         # The last take picks the line up half way: it does not say what the first one says, so the first stays.
