@@ -435,7 +435,7 @@ def video_item(entry):
     fps=entry['fps'];duration=parse_time(entry['durationMs'])
     if not finite_number(fps) or fps<=0:raise ValueError(MESSAGES['fps'])
     if not duration or duration<=0:raise ValueError(MESSAGES['duration'])
-    keep=check_keep_ranges(entry.get('keepRanges') or [[0,round_half_up(duration*fps/1000)]])
+    keep=check_keep_ranges(entry.get('keepRanges') or [[0,frame_at(duration,fps)]])
     return {'id':entry['id'],'title':entry['title'],'label':entry['label'],'path':str(media.resolve()),'fps':fps,'durationMs':duration,'fingerprint':entry.get('fingerprint') or fingerprint(media),'keepRanges':keep}
 
 def add_to_manifest(directory,item,reuse_same_file=False):

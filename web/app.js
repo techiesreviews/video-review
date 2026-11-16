@@ -62,7 +62,7 @@ function renderDuration(){$('#duration').textContent=short(active.durationMs);$(
 // An older local file must never overwrite the new render's declared cut/map.
 function syncDuration(){const ms=Math.round(video.duration*1000);if(!active||!isFinite(ms))return false;if(Math.abs(ms-active.durationMs)<=Math.max(60,1000/active.fps))return true;
   video.pause();video.removeAttribute('src');video.load();gate('Choose the updated video',`This file is ${short(ms)}, while this review is ${short(active.durationMs)}. Choose the updated render; your transcript and comments are kept.`,'Choose updated '+active.fileName+'…',()=>attachFile(active));return false;}
-function seek(ms,snap=false){if(!active)return;previewStop=null;video.pause();$('#bigPlay').hidden=true;ms=clamp(ms);if(snap)ms=Math.round(ms*active.fps/1000)*1000/active.fps;explicitTime=Math.round(ms);video.currentTime=ms/1000;renderTime();}
+function seek(ms,snap=false){if(!active)return;previewStop=null;video.pause();$('#bigPlay').hidden=true;ms=clamp(ms);if(snap)ms=frame(ms,active.fps)*1000/active.fps;explicitTime=Math.round(ms);video.currentTime=ms/1000;renderTime();}
 function step(direction){seek((frameOf(currentMs())+direction)*1000/active.fps);}
 function jumpBy(ms){seek(currentMs()+ms);}
 async function togglePlay(){if(!video.getAttribute('src'))return;previewStop=null;try{if(video.paused){const ms=video.currentTime*1000,next=transcriptPanel.skip(ms);if(next!==ms)video.currentTime=next/1000;await video.play();}else video.pause();}catch(e){showError(e.message);}}

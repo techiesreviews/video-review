@@ -41,6 +41,7 @@
     {"name": "two-digit minutes at zero", "call": "clock", "args": [0, {"places": 3, "padMinutes": true}], "returns": "00:00.000"},
     {"name": "two-digit minutes give way to hours", "call": "clock", "args": [3788233, {"places": 3, "padMinutes": true}], "returns": "1:03:08.233"},
     {"name": "a clock shows no milliseconds or three digits, nothing else", "call": "clock", "args": [1000, {"places": 2}], "error": true},
+    {"name": "a clock takes a number of places, not true or false", "call": "clock", "args": [1000, {"places": false}], "error": true},
     {"name": "a nearest-second clock has no milliseconds to show", "call": "clock", "args": [1000, {"places": 3, "nearest": true}], "error": true},
 
     {"name": "the frame at a time", "call": "frame", "args": [1000, 30], "returns": 30},

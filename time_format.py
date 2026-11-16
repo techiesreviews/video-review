@@ -25,7 +25,7 @@ def clock(ms, places=0, nearest=False, hours=True, pad_minutes=False):
     part of a second. hours: False keeps counting minutes past 59 ('75:23'). pad_minutes: two-digit minutes without
     hours.
     """
-    if places not in (0, 3):
+    if isinstance(places, bool) or places not in (0, 3):
         raise ValueError('A clock shows 0 or 3 digits of milliseconds.')
     if nearest and places:
         raise ValueError('A clock rounded to the nearest second has no milliseconds to show.')
