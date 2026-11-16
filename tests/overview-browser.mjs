@@ -59,13 +59,14 @@ try{
   check(size.page<=size.screen,`with the long title playing the page is ${size.page} px wide on a ${size.screen} px screen`);
 
   // A finger 22 px from the middle of a star in any direction still lands on the star: a 44 x 44 px target.
-  const stars=await page.evaluate(()=>[...document.querySelectorAll('.st')].filter(star=>star.offsetParent).map(star=>{
+  // The archived takes are opened first, so their stars are measured too.
+  const stars=await page.evaluate(()=>(document.querySelectorAll('details').forEach(more=>{more.open=true;}),[...document.querySelectorAll('.st')]).map(star=>{
     star.scrollIntoView({block:'center'});
     const at=star.getBoundingClientRect(),x=at.left+at.width/2,y=at.top+at.height/2;
     const hits=[[-21,-21],[21,-21],[-21,21],[21,21],[0,0]].every(([dx,dy])=>document.elementFromPoint(x+dx,y+dy)===star);
     return {hits,width:at.width,height:at.height};
   }));
-  assert.ok(stars.length>=40);
+  assert.equal(stars.length,41);
   check(stars.every(star=>star.width===26&&star.height===26),'the visible star is no longer 26 x 26 px');
   check(stars.every(star=>star.hits),`${stars.filter(star=>!star.hits).length} of ${stars.length} stars miss a touch inside their 44 x 44 px target`);
   // The larger target leaves the take itself playable.
