@@ -1,7 +1,7 @@
 """Print saved review notes with original-source mappings for an editing pass."""
 from pathlib import Path
 import argparse,json,os,sys
-sys.path.insert(0,str(Path(__file__).resolve().parent))
+sys.path.insert(0,str(Path(__file__).resolve().parent))  # review_store, also when run with python -I
 import review_store
 parser=argparse.ArgumentParser(description='Export open review notes with source mappings')
 parser.add_argument('--data-dir',default=os.environ.get('VIDEO_REVIEW_DATA_DIR',str(Path(__file__).resolve().parent/'data')))

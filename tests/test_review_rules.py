@@ -157,6 +157,9 @@ class TheExportUsesTheRules(unittest.TestCase):
             store.write(folder / 'manifest.json', [video])
             store.write(folder / 'comments.json', {'comments': [
                 {'id': 'over-a-cut', 'videoId': 'v', 'startMs': 500, 'endMs': 1500, 'text': 'Tighter', 'status': 'open'},
+                # Saved when it was added, under a mapping today's keep ranges cannot give: kept as saved.
+                {'id': 'saved', 'videoId': 'v', 'startMs': 500, 'endMs': None, 'text': 'Here', 'status': 'open',
+                 'sourceSpans': [{'sourceFrame': 900, 'sourceMs': 30000}]},
                 {'id': 'restore', 'videoId': 'v', 'startMs': 500, 'endMs': None, 'text': 'Put it back', 'status': 'open',
                  'editRequest': restore},
                 {'id': 'finished', 'videoId': 'v', 'startMs': 0, 'endMs': None, 'text': 'Done', 'status': 'done'}]})
@@ -164,6 +167,7 @@ class TheExportUsesTheRules(unittest.TestCase):
                                  capture_output=True, text=True, check=True)
             exported = {c['id']: c['sourceSpans'] for c in json.loads(run.stdout)['openComments']}
         self.assertEqual(exported, {'over-a-cut': store.source_spans(video, 500, 1500),
+                                    'saved': [{'sourceFrame': 900, 'sourceMs': 30000}],
                                     'restore': restore['sourceSpans']})
 
 
