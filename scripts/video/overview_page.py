@@ -617,7 +617,8 @@ PAGE_SCRIPT = """<script>
     const star = e.target.closest('.st');
     if (star) {
       if (star.disabled) return;
-      star.disabled = true;
+      // Every star is off while this one is saved: two saves at once could land in the wrong order.
+      stars.forEach(s => { s.disabled = true; });
       fetch(server + '/api/scenes/star', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ video, code, scene: star.dataset.scene, take: star.dataset.starred === 'true' ? null : Number(star.dataset.take) })
@@ -628,7 +629,7 @@ PAGE_SCRIPT = """<script>
         // what the server said after that. When it cannot (the saved stars cannot be read, or the browser keeps
         // nothing over a reload) the stars stay off.
         const said = reason(await r.json().then(j => j && j.error, () => ''));
-        say(said); stars.forEach(s => { s.disabled = true; });
+        say(said);
         return list().then(saved => {
           if (current(saved)) return stars.forEach(s => { s.disabled = false; });
           try { sessionStorage.setItem(note, said); } catch { return; }

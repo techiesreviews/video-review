@@ -669,6 +669,13 @@ def said(text, at, pause=0.0):
     return words
 
 
+def remove(cutter, first, last):
+    """Mark words as removed the way an earlier step would have, past the guard in drop(): for the last check."""
+    for index in range(first, last + 1):
+        cutter.keep[index] = False
+    cutter.removed.append({'first': first, 'last': last, 'reason': 'earlier-take', 'keeps': last + 1})
+
+
 class OneScriptLineTests(unittest.TestCase):
     """The script may join two sentences into one line, or say a line twice: neither makes them takes of each other
     (second look on release #35, 2026-11-16)."""
@@ -822,8 +829,8 @@ class OneScriptLineTests(unittest.TestCase):
         words = said('The camera is easy to use.', 1.0) + said('The camera is easy to carry.', 3.4)
         result = plan_words(words, script)
         self.assertEqual(removed_texts(result), [])
-        flag, = result['paperEdit']['flags']
-        self.assertEqual((flag['code'], flag['start']), ('take-says-more', 1.0))
+        flag, = flags(result, 'take-says-more')
+        self.assertEqual(flag['start'], 1.0)
         # A wrong word that the script does not have is no reason to keep a take.
         words = said('The camera is easy to move.', 1.0) + said('The camera is easy to carry.', 3.4)
         self.assertEqual(removed_texts(plan_words(words, 'The camera is easy to carry.')),
@@ -843,7 +850,7 @@ class OneScriptLineTests(unittest.TestCase):
         # A short script line is counted at sentence ends only, not inside another sentence.
         cutter = cut_takes.Cutter(cut_timeline.load_words(said('So thanks again for that. The end.', 1.0)), FPS,
                                   'Thanks again. The end.')
-        cutter.drop(range(0, 5), 'earlier-take', 5)
+        remove(cutter, 0, 4)
         cutter.keep_script_lines()
         self.assertEqual(cutter.keep, [False] * 5 + [True] * 2)
 
@@ -856,8 +863,8 @@ class OneScriptLineTests(unittest.TestCase):
         result = plan_words(words, text)
         self.assertEqual(removed_texts(result), [])
         cutter = cut_takes.Cutter(cut_timeline.load_words(words), FPS, text)
-        cutter.drop(range(0, 5), 'earlier-take', 5)
-        cutter.drop(range(5, 10), 'earlier-take', 10)
+        remove(cutter, 0, 4)
+        remove(cutter, 5, 9)
         cutter.keep_script_lines()
         self.assertEqual(cutter.keep, [True] * 15)
         self.assertEqual(cutter.removed, [])

@@ -174,7 +174,7 @@ class Cutter:
         indices = [index for index in indices if self.keep[index]]
         if not indices:
             return False
-        if reason != 'retake-cue' and self.says_more(indices, keeps):
+        if self.says_more(indices, keeps):
             # Whatever found this removal, it goes only when the take that stays says what it says.
             asked = ('possible-restart', 'take-says-more')
             start, end = self.words[indices[0]].start, self.words[indices[-1]].end
@@ -207,8 +207,8 @@ class Cutter:
         return True
 
     def says_more(self, indices, keeps):
-        """True when these words say more of a script line than the kept take that starts at `keeps` does: a take
-        that says another part of the line, or more of it than a kept take that picks the line up half way."""
+        """True when these words say a script word that the kept take that starts at `keeps` does not: a take that
+        says another part of the line, or more of it than a kept take that picks the line up half way."""
         if not self.script:
             return False
         take = []
@@ -220,8 +220,10 @@ class Cutter:
                 break
         if not take:
             return False
-        score, line = self.best_line(take)
-        return score >= SETTINGS['scriptMatch'] and not self.says(take, indices, line)
+        # Asked for the take's own script line, and for the line these words fit best when that is another one.
+        lines = {line for score, line in (self.best_line(take), self.best_line(indices))
+                 if score >= SETTINGS['scriptMatch']}
+        return any(not self.says(take, indices, line) for line in lines)
 
     # 0. Sentence ends the transcript left out.
 
@@ -398,11 +400,11 @@ class Cutter:
         return {block.b + offset for block in blocks for offset in range(block.size)}
 
     def says(self, take, other, line):
-        """True when a take says what another sentence says of a script line (as much of it as a complete take
-        says of its line): only then does the take make the other one a failed try. A take that says another part
-        of the line, or picks the line up half way, does not."""
-        part = self.part_of_line(other, line)
-        return len(part & self.part_of_line(take, line)) >= SETTINGS['completeCoverage'] * len(part)
+        """True when a take says every word of a script line that another sentence says: only then does the take
+        make the other one a failed try. A take that says another part of the line, picks the line up half way or
+        leaves out a script word the other one has ("easy to use" before "easy to carry", when the script says
+        "easy to use and carry") does not."""
+        return self.part_of_line(other, line) <= self.part_of_line(take, line)
 
     def same_part(self, first, second, line):
         """True when two sentences say the same part of a script line, as two takes of it do. The script may join
@@ -793,11 +795,14 @@ class Cutter:
         used = set()
         counts = Counter(map(tuple, self.script))
         for line in sorted(counts, key=len, reverse=True):
-            if len(line) < 3:
-                continue  # Too short to tell from the same words inside another sentence.
             found, free = [], 0
             for at in starts.get(line[0], ()):
-                if at >= free and tuple(names[at:at + len(line)]) == line:
+                if at < free or tuple(names[at:at + len(line)]) != line:
+                    continue
+                # A line of one or two words is only itself as a sentence of its own ("Thanks again."), not as
+                # the same words inside another sentence.
+                own = (at == 0 or self.ends(spoken[at - 1])) and self.ends(spoken[at + len(line) - 1])
+                if len(line) >= 3 or own:
                     found.append(spoken[at:at + len(line)])
                     free = at + len(line)
             found = [reading for reading in found if not used.intersection(reading)]

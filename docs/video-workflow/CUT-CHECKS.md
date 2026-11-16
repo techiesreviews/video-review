@@ -65,8 +65,10 @@ What it does:
     transcript's own full stops.
   - *A take goes only when the take that stays says what it says.* Two sentences that the script joins into one
     line ("The camera is easy to use and the battery lasts all day.") are two parts of that line, not two takes:
-    both stay, and a whole take of the line still replaces them. A take that says another part of the line, or
-    more of it than a kept take that picks the line up half way or stops early, stays and is listed. A start is
+    both stay, and a whole take of the line still replaces them. A take that says a script word the kept take
+    leaves out stays and is listed: another part of the line, more of it than a kept take that picks the line
+    up half way or stops early, or one word ("easy to use" before "easy to carry", when the script says "easy
+    to use and carry"). A quiet "again" is held to the same rule. A start is
     not cut when the script has its words as a part of a line of their own, or says the line more than once: it
     is listed as a possible restart. When two script lines have the same words ("The camera beats the phone." /
     "The phone beats the camera."), a sentence belongs to the one with its word order.
@@ -74,7 +76,7 @@ What it does:
     still be said in what stays, as often as the script says it: by those words, or by a kept take that says the
     line through to its last word. If not, the last word-for-word reading goes back in and is listed. Longer
     lines are counted first, so "The tool is fast." inside "The tool is fast and easy to use." is not counted
-    twice. `tests/test_cut_takes.py` runs this rule over 600 made-up recordings.
+    twice; a line of one or two words ("Thanks again.") counts only as a sentence of its own. `tests/test_cut_takes.py` runs this rule over 600 made-up recordings.
 - **Timing (Lex, 2026-11-10 and 2026-11-11).** 100-150 ms of room before and after speech at every cut, the start
   of the clip too; a whole silence of 200-300 ms between linked phrases (it aims for 250) and 350-500 ms before a
   new thought (it aims for 400); Lex chose these longer pauses (version B) after listening to the cutter's version
