@@ -246,6 +246,55 @@ class CutStrip(unittest.TestCase):
         self.assertIn('rough cut <b>2:25</b>', page)
 
 
+def css(page, selector, media=None):
+    """The declarations of one rule in the page's own styles, as {property: value}. media: the rule sits in this
+    @media block. tests/overview-browser.mjs measures the same rules in a real browser, by hand."""
+    styles = re.search(r'<style>(.*?)</style>', page, re.S).group(1)
+    if media:
+        block = re.search(rf'@media {re.escape(media)} \{{((?:[^{{}}]*\{{[^{{}}]*\}})*)\s*\}}', styles)
+        assert block, f'no @media {media} block'
+        styles = block.group(1)
+    rule = re.search(rf'(?:^|[}}\n])\s*{re.escape(selector)}\s*\{{([^}}]*)\}}', styles)
+    assert rule, f'no rule for {selector}'
+    return {name.strip(): value.strip()
+            for name, value in (part.split(':', 1) for part in rule.group(1).split(';') if part.strip())}
+
+
+def pixels(value):
+    return float(re.fullmatch(r'(-?[\d.]+)px', value).group(1))
+
+
+class NarrowScreens(unittest.TestCase):
+    """A phone shows every scene, keeps the page as wide as the screen and gives a finger room to hit a star."""
+
+    def test_a_strip_too_long_for_the_screen_scrolls_instead_of_hiding_its_last_scenes(self):
+        page = render()
+        strip = css(page, '.cut')
+        self.assertEqual(strip.get('overflow-x'), 'auto')
+        self.assertNotIn('overflow', strip, 'hidden overflow cuts the last scenes off')
+        # The height sits on the segments, so a scroll bar goes under them instead of over them.
+        self.assertNotIn('height', strip)
+        self.assertEqual(css(page, '.cut div')['height'], '34px')
+        # Scrolling from the keyboard needs the strip to take focus, and focus must show.
+        self.assertIn('<div class="cut" tabindex="0" role="group" aria-label="Rough cut order">', page)
+        self.assertRegex(page, r'\.cut:focus-visible[^{]*\{ outline:')
+
+    def test_a_strip_segment_keeps_room_for_its_scene_number(self):
+        # Two digits at 12 px need about 15 px; the approved sketch gave a segment 18 px.
+        self.assertGreaterEqual(pixels(css(render(), '.cut div')['min-width']), 18)
+
+    def test_a_long_unbroken_title_wraps_in_the_player_instead_of_widening_the_page(self):
+        self.assertEqual(css(render(), '.player .t').get('overflow-wrap'), 'anywhere')
+
+    def test_a_star_has_a_44_px_target_on_touch_and_keeps_its_look(self):
+        page = render()
+        star = css(page, '.st')
+        self.assertEqual((star['width'], star['height']), ('26px', '26px'), 'the visible star stays as approved')
+        target = css(page, '.st::after', media='(any-pointer: coarse)')
+        self.assertEqual((target.get('content'), target.get('position')), ("''", 'absolute'))
+        self.assertGreaterEqual(pixels(star['width']) - 2 * pixels(target['inset']), 44)
+
+
 class Links(unittest.TestCase):
     def test_takes_link_to_their_files_by_relative_path(self):
         page = render()
