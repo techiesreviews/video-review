@@ -74,9 +74,11 @@ What it does:
   demo". A demo that runs past the last word of the transcript is kept and listed, because the cutter cannot see
   how long the recording is. A cut that opens or ends on a demo has more than 100-150 ms before its first word
   or after its last one on purpose; the paper edit says so, and the join check lists a long lead-in to confirm.
+  A demo marked less than 100 ms from a removed word stays whole and is listed as a tight cut to listen to.
 
 The working values it uses beyond Lex's numbers are listed in each paper edit. The join check wants the same
-100-150 ms before the first word (Lex, 2026-11-10), so the cutter's opening passes it.
+100-150 ms before the first word (Lex, 2026-11-10), so the cutter's opening passes it, unless the cut opens on a
+marked demo (see above).
 
 ## After every fix to a cut
 
