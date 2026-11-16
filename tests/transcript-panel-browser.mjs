@@ -116,7 +116,8 @@ try{
     const scrolled=await page.locator('#transcriptText').evaluate(n=>n.scrollTop);
     await page.locator('.bar-delete').click();
     await page.waitForFunction(()=>document.querySelector('#barStatus').textContent.startsWith('Not saved'));
-    assert.equal(await page.locator('#barStatus').innerText(),'Not saved: the words changed elsewhere. They are loaded again; try again.');
+    assert.equal(await page.locator('#barStatus').innerText(),'Not saved: the words changed elsewhere. Try again.');
+    assert.equal(await page.locator('#barStatus').evaluate(n=>n.scrollWidth<=n.clientWidth),true,`${name}: the line fits the bar.`);
     assert.equal(await word(10).innerText(),'ten-new',`${name}: the newer words are shown.`);
     assert.deepEqual(await page.locator('.transcript-word.selected').allInnerTexts(),['ten-new'],`${name}: the same word stays selected.`);
     assert.equal(await page.locator('#transcriptNote').inputValue(),'tighter',`${name}: the typed note stays in the box.`);
@@ -137,7 +138,7 @@ try{
     await page.locator('#undoTranscriptCut').click();
     await page.waitForFunction(()=>document.querySelector('#transcriptNotice').textContent);
     assert.equal(await page.locator('#transcriptNotice').isVisible(),true);
-    assert.equal(await page.locator('#transcriptNotice').innerText(),'Not saved: the words changed elsewhere. They are loaded again; try again.');
+    assert.equal(await page.locator('#transcriptNotice').innerText(),'Not saved: the words changed elsewhere. Try again.');
     assert.equal(await word(12).innerText(),'twelve-new',`${name}: the newer words are shown.`);
     assert.equal(await page.locator('#toast.show.error').count(),0,`${name}: no toast.`);
     stored=JSON.parse(await readFile(join(temp,'transcripts/words.json'),'utf8'));
@@ -159,13 +160,31 @@ try{
     assert.ok(stored.draftEdits[0].startMs<=3000&&stored.draftEdits[0].endMs>=3000);
     assert.equal(stored.words[14].text,'fourteen-new');
 
+    // A refused Delete on a join that is gone from the newer words: nothing is selected instead, the line shows on the
+    // panel, and the typed note waits for the next selection.
+    await page.locator('.transcript-join',{hasText:'J1'}).click();
+    await page.locator('#transcriptNote').fill('rough join');
+    await writeFile(join(temp,'transcripts/words.json'),JSON.stringify({words,cuts:[],revision:'no-join'}));
+    await page.locator('.bar-delete').click();
+    await page.waitForFunction(()=>document.querySelector('#transcriptNotice').textContent);
+    assert.equal(await page.locator('#transcriptNotice').innerText(),'Not saved: the words changed elsewhere. Try again.');
+    assert.equal(await page.locator('.transcript-join',{hasText:'J1'}).count(),0);
+    assert.equal(await page.locator('#transcriptSelection').isHidden(),true,`${name}: nothing else is selected in its place.`);
+    await word(3).click();
+    assert.equal(await page.locator('#transcriptNote').inputValue(),'rough join',`${name}: the typed note is kept for the next selection.`);
+    assert.equal(await page.locator('#transcriptNotice').innerText(),'',`${name}: the line goes once something is selected.`);
+
     // A refused Delete whose transcript was removed elsewhere meanwhile says so on the panel, not "try again".
+    await word(1).click();await page.locator('.bar-delete').click();
+    await page.waitForFunction(()=>!document.querySelector('#cutPreviewBar').hidden);
     await replace('W15','fifteen-new');
     await page.route('**/api/transcript/words',route=>route.request().method()==='GET'?route.fulfill({status:200,contentType:'application/json',body:'null'}):route.continue());
     await word(9).click();await page.locator('.bar-delete').click();
     await page.waitForFunction(()=>document.querySelector('#transcriptNotice').textContent);
     assert.equal(await page.locator('#transcriptNotice').innerText(),'Not saved: the transcript was removed elsewhere.');
     assert.match(await page.locator('#transcriptText').innerText(),/No transcript attached/);
+    assert.equal(await page.locator('#cutPreviewBar').isHidden(),true,`${name}: no cut controls for words that are gone.`);
+    assert.equal(await page.locator('#transcriptSelection').isHidden(),true);
     assert.equal(await page.locator('#toast.show.error').count(),0,`${name}: no toast.`);
     await page.unroute('**/api/transcript/words');
     await page.reload();await page.waitForSelector('.transcript-word');

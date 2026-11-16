@@ -10,7 +10,7 @@ import {RULES} from './review-core.js';
 const stamp=ms=>clock(ms,{places:3,hours:false});
 const NOTE_PAUSE_MS=450;
 export const RELOADED_TEXT='The transcript changed while this was saving. The edit was saved, and the transcript is loaded again.';
-export const REFUSED_TEXT='Not saved: the words changed elsewhere. They are loaded again; try again.';
+export const REFUSED_TEXT='Not saved: the words changed elsewhere. Try again.';
 export const REMOVED_TEXT='Not saved: the transcript was removed elsewhere.';
 
 function afterTimer(run,ms){const timer=setTimeout(run,ms);return ()=>clearTimeout(timer);}
