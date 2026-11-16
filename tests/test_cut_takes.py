@@ -781,8 +781,10 @@ class OneScriptLineTests(unittest.TestCase):
             + said('The battery lasts all day.', 8.0)
         result = plan_words(words, self.SCRIPT)
         self.assertEqual(removed_texts(result), [])
+        # Lex is told three things: no take is complete, the last one does not say what the others say, and the
+        # middle sentence ends with the words the last one opens with.
         self.assertEqual(sorted(item['code'] for item in result['paperEdit']['flags']),
-                         ['no-complete-take', 'take-says-more'])
+                         ['no-complete-take', 'possible-restart', 'take-says-more'])
         told, = flags(result, 'take-says-more')
         self.assertEqual(told['start'], 1.0)
         self.assertIn('8.00', told['message'])
