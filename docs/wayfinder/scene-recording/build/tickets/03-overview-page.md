@@ -109,9 +109,10 @@ Rules as built (for ticket 04 and the Prompter slice):
   has a sound problem" shows when `choose_best` reports the scene as flagged (it picked an older take because the newest is clearly
   worse), so Lex sees it without opening the archive.
 - Script text: read from the cue file (`prompter.md` in the video folder, or the file named with `--cue`, which the
-  registry remembers), only read, never changed. Directions (lines that start with a bracket), links and bold marks
-  are left out. A scene whose heading is no longer in the script (title or number changed) is shown without text,
-  which matches the "Script changed since recording" chip.
+  registry remembers), only read, never changed. `[Directions]` are left out, inside a line and over several lines;
+  a link is read as its text, or left out when it has a line to itself; bold marks go. A scene whose heading is no
+  longer in the script (title or number changed) is shown without text, which matches the "Script changed since
+  recording" chip.
 - The best take in front is `scene_store.choose_best` (the star, else the newest unless clearly worse). The gold star
   marks it, whether it was starred or not; a click on a star sends that take, and a click on the star that is
   already Lex's takes it off. Notes under a take come from its sound checks ("ended early", "long pause", "length
