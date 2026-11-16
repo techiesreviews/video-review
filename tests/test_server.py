@@ -505,6 +505,25 @@ class ReviewServerTests:
             assert (self.raw/'scenes.json').read_text(encoding='utf-8')=='{nope'
         finally:self.reset_scenes()
 
+    def test_the_saved_page_can_read_why_the_scene_list_was_refused(self):
+        # A broken or missing scene file must reach the saved page (origin "null") as a readable answer, or the page
+        # wrongly says the server is not running.
+        def ask():
+            req=Request(self.origin+'/api/scenes?video='+self.key+'&code='+self.code(),headers={'Origin':'null'})
+            try:urlopen(req,timeout=3)
+            except HTTPError as error:
+                assert error.headers['Access-Control-Allow-Origin']=='null',error.code
+                said=json.load(error)['error']
+                assert isinstance(said,str) and said
+                return error.code
+            raise AssertionError('answered 200')
+        try:
+            (self.raw/'scenes.json').write_text('{nope',encoding='utf-8')
+            assert ask()==409
+            (self.raw/'scenes.json').unlink()
+            assert ask()==404
+        finally:self.reset_scenes()
+
     def test_the_server_serves_the_same_page_with_links_that_work(self):
         self.reset_scenes()
         with self.request('/scenes/'+self.key) as r:

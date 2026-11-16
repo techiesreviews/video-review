@@ -68,9 +68,9 @@ class Handler(BaseHTTPRequestHandler):
         asked=parse_qs(query);key=asked.get('video',[''])[0]
         if self.page_code_missing(key,asked.get('code',[''])[0]):return
         found=self.scene_video(key)
-        if not found:return self.send_json({'error':'Unknown video'},404)
+        if not found:return self.send_json({'error':'Unknown video'},404,extra=self.cors())
         try:saved=scene_store.load(found[0])
-        except scene_store.SceneFileError as error:return self.send_json({'error':str(error)},409)
+        except scene_store.SceneFileError as error:return self.send_json({'error':str(error)},409,extra=self.cors())
         self.send_json({'video':key,'saved_at':saved.get('saved_at'),'scenes':saved['scenes']},extra=self.cors())
     def do_GET(self):
         route=self.path.split('?',1)[0]
