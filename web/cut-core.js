@@ -1,4 +1,6 @@
 // Preview cuts use the loaded media clock; originals and comment times stay intact.
+// The join fade is Lex's, from the cut preferences file the cutter and the join check read too.
+import preferences from './cut-preferences.json' with {type:'json'};
 export function normalizeDraftEdits(edits=[],durationMs=Infinity){
   if(!Array.isArray(edits)||edits.length>5000)throw Error('Invalid preview cuts.');
   const ids=new Set();
@@ -16,7 +18,7 @@ export function skipRemoved(ms,edits=[]){const range=removedRanges(edits).find((
 /** What playback skips: the cut's removals while the cuts switch is on; a Hear cut audition is a removal being tried and always plays skipped. */
 export function playbackRemovals(cutsOn,edits=[],audition=null){return [...(cutsOn?edits:[]),...(audition?[audition]:[])];}
 export function previewDuration(durationMs,edits=[]){return durationMs-removedRanges(edits).reduce((n,[a,b])=>n+b-a,0);}
-export const JOIN_FADE_MS=15;
+export const JOIN_FADE_MS=preferences.lex.audioFadeMs.value;
 /** The review-file ranges left after the removals, in playback order. */
 export function keptRanges(durationMs,edits=[]){
   const kept=[];let at=0;

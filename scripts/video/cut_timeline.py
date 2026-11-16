@@ -9,6 +9,9 @@ import re
 
 # Transcript times carry about this much noise, so a cut this close to a word edge is not called a clip.
 WORD_EDGE_TOLERANCE = 0.010
+# A word that ends a sentence: a full stop, ! or ?, with any quote or bracket that closes after it. The cutter, the
+# join check and the captions all read this one rule.
+SENTENCE_END = re.compile(r'[.!?]["\')\]]*$')
 SHA256 = re.compile(r'[0-9a-fA-F]{64}')
 EDITED_CLOCK = ('These words have no source times and may be on the edited clock. '
                 'Use a transcript with original.words or sourceStartMs.')

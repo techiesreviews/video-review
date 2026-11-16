@@ -1,6 +1,7 @@
 import http.client
 import json
 from pathlib import Path
+import re
 import sys
 import tempfile
 import threading
@@ -165,6 +166,17 @@ class ReviewServerTests:
         try:self.request('/media/missing')
         except HTTPError as error:assert error.code==404
         else:raise AssertionError('Unconfigured media was served')
+
+    def test_every_file_the_page_imports_is_served_with_its_type(self):
+        # A module the server refuses stops the whole page, so each local import of a page module must be served:
+        # the cut preferences file too, as JSON, which a browser only takes as a module with a JSON type.
+        web=Path(server.__file__).resolve().parent/'web'
+        imported={name for path in web.glob('*.js') for name in re.findall(r'''from\s*['"]\./([^'"]+)['"]''',path.read_text(encoding='utf-8'))}
+        assert 'cut-preferences.json' in imported,imported
+        for name in sorted(imported):
+            with self.request('/'+name) as r:
+                kind=r.headers['Content-Type'].split(';')[0]
+                assert kind==('application/json' if name.endswith('.json') else 'text/javascript'),(name,kind)
 
     def star(self,body,origin=None):
         headers={'Content-Type':'application/json','Origin':origin or self.origin}

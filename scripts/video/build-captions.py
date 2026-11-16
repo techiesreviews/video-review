@@ -20,7 +20,7 @@ MAX_LINES = 2
 MAX_PHRASE_SECONDS = 7.0
 MIN_PHRASE_SECONDS = 0.8
 PHRASE_PAUSE_SECONDS = 0.55
-SENTENCE_END = re.compile(r'[.!?]["\')\]]*$')
+SENTENCE_END = cut_timeline.SENTENCE_END
 CLAUSE_END = re.compile(r'[,;:]["\')\]]*$')
 
 

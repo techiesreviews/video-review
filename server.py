@@ -94,7 +94,7 @@ class Handler(BaseHTTPRequestHandler):
             key=route[7:];item=next((x for x in store.videos(DATA) if x['id']==key),None)
             if not item:return self.send_error(404)
             path=Path(item['path'])
-        elif route in ['/','/index.html','/app.js','/backend.js','/review-core.js','/transcript-core.js','/transcript-panel.js','/edit-bar-core.js','/cut-core.js','/cut-playback.js','/join-fade.js','/waveform-core.js','/waveform-panel.js','/library-panel.js','/style.css']:
+        elif route in ['/','/index.html','/app.js','/backend.js','/review-core.js','/transcript-core.js','/transcript-panel.js','/edit-bar-core.js','/cut-core.js','/cut-playback.js','/join-fade.js','/waveform-core.js','/waveform-panel.js','/library-panel.js','/cut-preferences.json','/style.css']:
             path=WEB/('index.html' if route=='/' else route[1:])
         else:return self.send_error(404)
         if not path.is_file():return self.send_error(404)
@@ -108,7 +108,7 @@ class Handler(BaseHTTPRequestHandler):
             elif hi:start=max(0,size-int(hi))
             if start> end or start>=size:return self.send_error(416)
             status=206
-        self.send_response(status);self.send_header('Content-Type','text/javascript; charset=utf-8' if path.suffix=='.js' else mimetypes.guess_type(str(path))[0] or 'application/octet-stream');self.send_header('Content-Length',str(end-start+1));self.send_header('Accept-Ranges','bytes');self.send_header('Cache-Control','no-cache')
+        self.send_response(status);self.send_header('Content-Type',{'.js':'text/javascript; charset=utf-8','.json':'application/json; charset=utf-8'}.get(path.suffix) or mimetypes.guess_type(str(path))[0] or 'application/octet-stream');self.send_header('Content-Length',str(end-start+1));self.send_header('Accept-Ranges','bytes');self.send_header('Cache-Control','no-cache')
         if status==206:self.send_header('Content-Range',f'bytes {start}-{end}/{size}')
         self.end_headers()
         try:

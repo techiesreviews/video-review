@@ -136,7 +136,8 @@ a cut, fix what it shows, then listen. It reports:
 - **Checks, listed second:** a gap outside the preferences, a tight speech edge, a long or short lead-in, a
   kept "again" beside a join, or a join with no transcript words on one side.
 
-The preferences come from `EDITING-LESSONS.md` and Lex's answers of 2026-11-10 and 2026-11-11: 100-150 ms before
+The preferences come from `EDITING-LESSONS.md` and Lex's answers of 2026-11-10 and 2026-11-11, saved once in
+`web/cut-preferences.json` (the cutter, this check, cut-to-review and the review page's preview read it): 100-150 ms before
 the first word, 200-300 ms between linked phrases, 350-500 ms for a new thought, at least 100 ms around speech
 edges, and 15 ms fades. A last word ending in `.`, `!` or `?` counts as a new thought. Those lessons call the numbers
 suggestions to audition, so a flag on a gap is a question, not an order. The limits for a clipped edge and an
