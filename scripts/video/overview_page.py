@@ -51,6 +51,7 @@ import review_store  # noqa: E402
 import rough_cut  # noqa: E402
 import scene_store  # noqa: E402
 import script_text  # noqa: E402
+import time_format  # noqa: E402
 
 FILE_NAME = 'overview.html'
 REGISTRY_NAME = 'scene-videos.json'
@@ -306,10 +307,7 @@ def ensure_thumbnails(raw_dir, store):
 # The page --------------------------------------------------------------------------------------------------------
 
 def _clock(seconds):
-    seconds = int(round(seconds))
-    hours, rest = divmod(seconds, 3600)
-    minutes, seconds = divmod(rest, 60)
-    return f'{hours}:{minutes:02d}:{seconds:02d}' if hours else f'{minutes}:{seconds:02d}'
+    return time_format.clock(seconds * 1000, nearest=True)
 
 
 def _url(prefix, relative):

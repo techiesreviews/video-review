@@ -2,8 +2,9 @@
 // The rules themselves (fields, limits, who may write and edit, messages) are in review-rules.json, which
 // review_store.py reads for the local Python app; tests/fixtures/review-rule-cases.json is run against both.
 import RULES from './review-rules.json' with {type:'json'};
+import {timecode} from './time-format.js';
 
-export {RULES};
+export {RULES,timecode};
 export const AUTHORS=RULES.authors;
 const M=RULES.messages,LIMITS=RULES.limits,TRIM=new Set(RULES.trimCharacters);
 const SECONDS=new RegExp(RULES.patterns.seconds),TIMECODE=new RegExp(RULES.patterns.timecode),VIDEO_ID=new RegExp(RULES.patterns.videoId);
@@ -11,7 +12,6 @@ const SECONDS=new RegExp(RULES.patterns.seconds),TIMECODE=new RegExp(RULES.patte
 const length=text=>[...text].length;
 function trim(text){let a=0,b=text.length;while(a<b&&TRIM.has(text[a]))a++;while(b>a&&TRIM.has(text[b-1]))b--;return text.slice(a,b);}
 
-export function timecode(ms){ms=Math.max(0,Math.round(ms));const h=Math.floor(ms/3600000),m=Math.floor(ms/60000)%60,s=Math.floor(ms/1000)%60;return [h,m,s].map(x=>String(x).padStart(2,'0')).join(':')+'.'+String(ms%1000).padStart(3,'0');}
 
 /** Milliseconds from a number, or from h:mm:ss.mmm, m:ss.mmm or seconds. */
 export function parseTime(value){

@@ -1,6 +1,7 @@
 import {audioPeaks,waveformWindow,zoomWaveformWindow,adjustBoundary} from './waveform-core.js';
+import {clock} from './time-format.js';
 const $=s=>document.querySelector(s);
-const clock=ms=>`${Math.floor(ms/60000)}:${String(Math.floor(ms/1000)%60).padStart(2,'0')}.${String(Math.round(ms)%1000).padStart(3,'0')}`;
+const stamp=ms=>clock(ms,{places:3,hours:false});
 export function createWaveform({media,seek,pause,onRange,onAudition}){
   const panel=$('#waveformPanel'),canvas=$('#waveformCanvas'),wrap=$('#waveformWrap'),ctx=canvas.getContext('2d'),overview=$('#waveformOverview'),overviewWrap=$('#waveformOverviewWrap'),overviewCtx=overview.getContext('2d');
   let duration=0,fps=30,range=null,removed=[],peaks=null,peakMax=1,bucketMs=8,at=0,generation=0,loading=false,source=null,request=null,drag=null,view={startMs:0,endMs:1},spanMs=4000;
@@ -16,7 +17,7 @@ export function createWaveform({media,seek,pause,onRange,onAudition}){
   function positionHandles(w){
     for(const [edge,id] of [['start','#waveformStart'],['end','#waveformEnd']]){
       const node=$(id);node.hidden=!range||!peaks;
-      if(range){node.style.left=x(range[edge+'Ms'],w)+'px';node.setAttribute('aria-valuemin','0');node.setAttribute('aria-valuemax',String(duration/1000));node.setAttribute('aria-valuenow',String(range[edge+'Ms']/1000));node.setAttribute('aria-valuetext',clock(range[edge+'Ms']));}
+      if(range){node.style.left=x(range[edge+'Ms'],w)+'px';node.setAttribute('aria-valuemin','0');node.setAttribute('aria-valuemax',String(duration/1000));node.setAttribute('aria-valuenow',String(range[edge+'Ms']/1000));node.setAttribute('aria-valuetext',stamp(range[edge+'Ms']));}
     }
   }
   function draw(){
@@ -42,9 +43,9 @@ export function createWaveform({media,seek,pause,onRange,onAudition}){
       }
     }
     ctx.fillStyle='#b1a9c6';ctx.font='10px monospace';
-    for(let i=0;i<=4;i++){const p=i*w/4;ctx.textAlign=i===0?'left':i===4?'right':'center';ctx.fillText(clock(view.startMs+(view.endMs-view.startMs)*i/4),p,12);}
+    for(let i=0;i<=4;i++){const p=i*w/4;ctx.textAlign=i===0?'left':i===4?'right':'center';ctx.fillText(stamp(view.startMs+(view.endMs-view.startMs)*i/4),p,12);}
     if(at>=view.startMs&&at<=view.endMs){ctx.fillStyle='#fff';ctx.fillRect(x(at,w),17,1.5,50);}
-    for(const node of [canvas,overview]){node.setAttribute('aria-valuemin','0');node.setAttribute('aria-valuemax',String(duration/1000));node.setAttribute('aria-valuenow',String(at/1000));node.setAttribute('aria-valuetext',clock(at));}
+    for(const node of [canvas,overview]){node.setAttribute('aria-valuemin','0');node.setAttribute('aria-valuemax',String(duration/1000));node.setAttribute('aria-valuenow',String(at/1000));node.setAttribute('aria-valuetext',stamp(at));}
     overviewWrap.hidden=!range&&!zoomed();
     positionPins();
     if(!overviewWrap.hidden){

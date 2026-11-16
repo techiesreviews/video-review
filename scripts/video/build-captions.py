@@ -13,7 +13,9 @@ import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import cut_timeline  # noqa: E402
+from time_format import timecode  # noqa: E402
 
 LINE_CHARS = 42
 MAX_LINES = 2
@@ -78,11 +80,6 @@ def to_ms(seconds):
     return round(seconds * 1000)
 
 
-def stamp(total, separator):
-    return (f'{total // 3600000:02}:{total // 60000 % 60:02}:{total // 1000 % 60:02}'
-            f'{separator}{total % 1000:03}')
-
-
 def escape_vtt(text):
     return text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
@@ -105,12 +102,13 @@ def phrase_cues(pieces, timeline_end):
 
 
 def write_srt(cues):
-    return '\n'.join(f'{index}\n{stamp(start, ",")} --> {stamp(end, ",")}\n{text}\n'
+    return '\n'.join(f'{index}\n{timecode(start, ",")} --> {timecode(end, ",")}\n{text}\n'
                      for index, (start, end, text) in enumerate(cues, 1))
 
 
 def write_vtt(cues):
-    return 'WEBVTT\n\n' + '\n'.join(f'{stamp(start, ".")} --> {stamp(end, ".")}\n{text}\n' for start, end, text in cues)
+    return 'WEBVTT\n\n' + '\n'.join(f'{timecode(start, ".")} --> {timecode(end, ".")}\n{text}\n'
+                                   for start, end, text in cues)
 
 
 def phrase_text(group):
@@ -141,7 +139,7 @@ def timed_text(group, cue_start, cue_end):
         at = to_ms(piece.timeline_start)
         text = escape_vtt(piece.word.text)
         if latest < at < cue_end:
-            parts.append(f'<{stamp(at, ".")}>{text}')
+            parts.append(f'<{timecode(at, ".")}>{text}')
             latest = at
         else:
             parts.append(text)
@@ -191,7 +189,7 @@ def main():
         sys.exit(f'Captions stopped: {error}')
     partial = sum(piece.is_partial for piece in pieces)
     print(f'{len(pieces)} words in {len(phrases(pieces))} phrases on the edited timeline. '
-          f'First word at {stamp(to_ms(pieces[0].timeline_start), ",")}. {partial} words are only partly kept. '
+          f'First word at {timecode(to_ms(pieces[0].timeline_start), ",")}. {partial} words are only partly kept. '
           f'Wrote {len(files)} files to {args.out_dir}.')
 
 

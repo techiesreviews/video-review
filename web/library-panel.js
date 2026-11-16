@@ -1,6 +1,7 @@
+import {clock} from './time-format.js';
 const $=s=>document.querySelector(s);
 function node(tag,cls,text){const n=document.createElement(tag);if(cls)n.className=cls;if(text!=null)n.textContent=text;return n;}
-const stamp=ms=>`${Math.floor(ms/60000)}:${String(Math.floor(ms/1000)%60).padStart(2,'0')}`;
+const stamp=ms=>clock(ms,{hours:false});
 
 export function createLibraryPanel({getBackend,open,add,remove,restore,showError}){
   const menu=$('#libraryMenu'),button=$('#libraryBtn'),search=$('#librarySearch'),results=$('#libraryResults');
