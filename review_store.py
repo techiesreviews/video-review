@@ -225,13 +225,17 @@ def same_file(manifest,media):
 
 def save_transcript(directory,video_id,data,edits_only=False):
     """Saves a word-timed transcript for a video. edits_only: a save of its preview cuts only, as the page sends after a
-    Delete, Undo or Restore; it is refused when the saved transcript is no longer the one those cuts were made on (a new
-    render or an import came in meanwhile), so the page never writes old words over new ones."""
+    Delete, Undo or Restore. Only its cut list is written, onto the saved transcript, and it is refused when the saved
+    words are no longer the ones those cuts were made on (a new render or an import came in meanwhile), so the page never
+    writes its old copy over newer words, joins or labels."""
     video=find_video(directory,video_id)
     result=_clean_transcript(video,data)
     path=transcript_path(directory,video_id);path.parent.mkdir(parents=True,exist_ok=True)
     with locked(path):
-        if edits_only and not same_words(read(path,None),result):raise ValueError(MESSAGES['transcriptChanged'])
+        if edits_only:
+            saved=read(path,None)
+            if not same_words(saved,result):raise ValueError(MESSAGES['transcriptChanged'])
+            result={**saved,'draftEdits':result['draftEdits']}
         write(path,result)
     if result.get('keepRanges') is not None and result['keepRanges']!=video.get('keepRanges'):
         update_render(directory,video_id,None,result['keepRanges'])

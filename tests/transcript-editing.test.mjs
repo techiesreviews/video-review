@@ -267,6 +267,18 @@ test('a Delete saved while the same words came in again is kept, says so, and ke
   assert.equal(error.videoId,'v','the panel reloads only while this video is still open');
 });
 
+test('a Delete saved after another video was opened says which video it was saved on',async()=>{
+  const {editing,hold}=setup();
+  editing.selectWords(1);
+  hold.save=held();const wait=hold.save;
+  const cut=editing.remove();
+  await new Promise(r=>setTimeout(r));
+  editing.load(null,{...VIDEO,id:'w'});
+  wait.resolve();
+  const error=await cut.then(()=>null,error=>error);
+  assert.equal(error.saved,true);assert.equal(error.videoId,'v','so the panel does not reload the video now open');
+});
+
 for(const kind of ['Undo','Restore'])test(`an ${kind} saved while the same words came in again closes the note of the cut it brought back`,async()=>{
   const {editing,state,calls,hold}=setup();
   editing.selectWords(1);await editing.remove({typed:'why'});
@@ -290,6 +302,17 @@ test('a full transcript (original words, joins, source mapping) loaded by the pa
   assert.equal(storeTranscript(state,VIDEO.id,{...page,draftEdits:[edit]},{editsOnly:true}).draftEdits.length,1);
   assert.equal(sameWords(full,{...page,label:'Another label',revision:'other'}),true,'labels and revisions are not words');
   assert.equal(sameWords(full,{...page,keepRanges:[[10,310]]}),false,'a new source mapping is a new render');
+});
+
+test('an edit-only save writes only the cut list, so a newer revision, label or joins stay',()=>{
+  const state={videos:[{...VIDEO}],comments:[]};
+  storeTranscript(state,VIDEO.id,TRANSCRIPT);
+  storeTranscript(state,VIDEO.id,{...TRANSCRIPT,revision:'r2',label:'Corrected',cuts:[{id:'J9',atMs:6000,risk:true}]});
+  const edit={id:'e1',startMs:1000,endMs:1900,wordIds:['W1'],quote:'one',kind:'words'};
+  const saved=storeTranscript(state,VIDEO.id,{...TRANSCRIPT,draftEdits:[edit]},{editsOnly:true});
+  assert.equal(saved,state.transcripts.v);
+  assert.deepEqual([saved.revision,saved.label,saved.cuts.map(c=>c.id)],['r2','Corrected',['J9']]);
+  assert.deepEqual(saved.draftEdits.map(e=>e.id),['e1']);
 });
 
 test('an edit-only save is refused by the browser store when the saved words differ, or nothing is saved yet',()=>{

@@ -68,6 +68,17 @@ class TranscriptReviewTests(unittest.TestCase):
         self.assertEqual(store.get_transcript(self.data,'v'),before,'the newer words stay saved')
         self.assertEqual(store.MESSAGES['transcriptChanged'],json.loads((Path(__file__).resolve().parents[1]/'web'/'review-rules.json').read_text(encoding='utf-8'))['messages']['transcriptChanged'])
 
+    def test_an_edits_only_save_writes_only_the_cut_list(self):
+        words=[{'id':'a','text':'one','startMs':100,'endMs':600}]
+        store.save_transcript(self.data,'v',{'words':words,'revision':'r1','cuts':[{'id':'J1','atMs':700}]})
+        store.save_transcript(self.data,'v',{'words':words,'revision':'r2','label':'Corrected','cuts':[{'id':'J9','atMs':800,'risk':True}]})
+        cut={'id':'cut','startMs':200,'endMs':500,'wordIds':['a'],'quote':'one'}
+        saved=store.save_transcript(self.data,'v',{'words':words,'revision':'r1','cuts':[{'id':'J1','atMs':700}],'draftEdits':[cut]},edits_only=True)
+        stored=store.get_transcript(self.data,'v')
+        self.assertEqual(saved,stored)
+        self.assertEqual((stored['revision'],stored['label'],[c['id'] for c in stored['cuts']]),('r2','Corrected',['J9']))
+        self.assertEqual([e['id'] for e in stored['draftEdits']],['cut'])
+
     def test_render_retimes_comments_and_preserves_original_anchors(self):
         _,c=store.apply(self.data,{'action':'add','videoId':'v','startMs':1500,'endMs':1800,'text':'Keep this'})
         store.rebase_comments(self.data,self.video,[[330,360]],1000)
