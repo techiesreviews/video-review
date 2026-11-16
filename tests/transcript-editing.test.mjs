@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createTranscriptEditing} from '../web/transcript-editing.js';
 import {applyChange} from '../web/review-core.js';
-import {storeTranscript} from '../web/transcript-core.js';
+import {normalizeTranscript,sameWords,storeTranscript} from '../web/transcript-core.js';
 
 const VIDEO={id:'v',title:'Test',fileName:'test.mp4',durationMs:10000,fps:30};
 const TEXT=['zero','one','two','three','four','five','six','seven','eight','nine'];
@@ -264,6 +264,32 @@ test('a Delete saved while the same words came in again is kept, says so, and ke
   assert.match(error.message,/The edit was saved/);
   assert.deepEqual(state.transcripts.v.draftEdits.map(e=>e.wordIds),[['W1']]);
   assert.deepEqual(calls.cancels,[],'its note stays open with its cut');
+  assert.equal(error.videoId,'v','the panel reloads only while this video is still open');
+});
+
+for(const kind of ['Undo','Restore'])test(`an ${kind} saved while the same words came in again closes the note of the cut it brought back`,async()=>{
+  const {editing,state,calls,hold}=setup();
+  editing.selectWords(1);await editing.remove({typed:'why'});
+  hold.save=held();const wait=hold.save;
+  const back=kind==='Undo'?editing.undo():editing.restore([editing.edits()[0].id]);
+  await new Promise(r=>setTimeout(r));
+  editing.load(storeTranscript(state,VIDEO.id,{...TRANSCRIPT,draftEdits:state.transcripts.v.draftEdits}),state.videos[0]);
+  wait.resolve();
+  const error=await back.then(()=>null,error=>error);
+  assert.equal(error.saved,true);
+  assert.deepEqual(state.transcripts.v.draftEdits,[],'the store took it');
+  assert.deepEqual(calls.cancels,[state.comments[0].id],'no open note asks for a cut that is gone');
+});
+
+test('a full transcript (original words, joins, source mapping) loaded by the page takes an edit-only save',()=>{
+  const video={...VIDEO,keepRanges:[[0,300]]},state={videos:[video],comments:[]};
+  const full={...TRANSCRIPT,fps:30,keepRanges:[[0,300]],original:{durationMs:20000,label:'',sourceId:'raw',words:TRANSCRIPT.words}};
+  storeTranscript(state,VIDEO.id,full);
+  const page=normalizeTranscript(JSON.parse(JSON.stringify(state.transcripts.v)),video.durationMs,video.fps);
+  const edit={id:'e1',startMs:1000,endMs:1900,wordIds:['W1'],quote:'one',kind:'words'};
+  assert.equal(storeTranscript(state,VIDEO.id,{...page,draftEdits:[edit]},{editsOnly:true}).draftEdits.length,1);
+  assert.equal(sameWords(full,{...page,label:'Another label',revision:'other'}),true,'labels and revisions are not words');
+  assert.equal(sameWords(full,{...page,keepRanges:[[10,310]]}),false,'a new source mapping is a new render');
 });
 
 test('an edit-only save is refused by the browser store when the saved words differ, or nothing is saved yet',()=>{

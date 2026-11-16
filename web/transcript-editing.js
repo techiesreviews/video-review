@@ -107,11 +107,24 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
   async function commit(at,draftEdits,{keep=false}={}){
     if(stale(at))throw Error(RULES.messages.transcriptChanged);
     const saved=await saveTranscript(video,{...transcript,draftEdits},{editsOnly:true});
-    if(stale(at))throw Object.assign(Error(RELOADED_TEXT),{saved:true});
+    if(stale(at))throw Object.assign(Error(RELOADED_TEXT),{saved:true,videoId:video?.id});
     transcript=saved;
     // Whether the note box was editing a comment when the save landed: then its text is that comment's, not a draft.
     const noteOpen=note.id!=null;
     if(!keep)clear();
+    return noteOpen;
+  }
+  /** Saves the cut list without the cuts brought back, then closes each note none of its pieces is left in (also when
+   *  the save landed as a new transcript came in, since the cut is gone from the store either way). */
+  async function commitThenClose(at,remaining,back,options){
+    let noteOpen,landed=null;
+    try{noteOpen=await commit(at,remaining,options);}
+    catch(error){if(!error.saved)throw error;landed=error;}
+    for(const id of new Set(back.map(e=>e.commentId).filter(Boolean))){
+      if(remaining.some(e=>e.commentId===id))continue;
+      await cancelRequest(id);cutNotes.delete(id);
+    }
+    if(landed)throw landed;
     return noteOpen;
   }
   /** Runs one edit at a time: while a cut, Undo or Restore saves, another is refused (null). */
@@ -146,6 +159,7 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
       catch(error){
         // No open note may claim a cut that was never saved.
         if(saved?.id&&!error.saved)await cancelRequest(saved.id).catch(onError);
+        if(saved?.id&&error.saved&&said)cutNotes.set(saved.id,said);
         throw error;
       }
       if(said&&saved?.id)cutNotes.set(saved.id,said);
@@ -159,10 +173,8 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
   function undo({keep=false}={}){
     if(!lastCutGroup(edits()))return Promise.resolve(null);
     return exclusive(async at=>{
-      const count=lastCutGroup(edits()),undone=edits().slice(-count),edit=undone[0];
-      const noteOpen=await commit(at,edits().slice(0,-count),{keep});
-      if(edit.commentId)await cancelRequest(edit.commentId);
-      const said=cutNotes.get(edit.commentId)||'';cutNotes.delete(edit.commentId);
+      const count=lastCutGroup(edits()),undone=edits().slice(-count),edit=undone[0],said=cutNotes.get(edit.commentId)||'';
+      const noteOpen=await commitThenClose(at,edits().slice(0,-count),undone,{keep});
       const ids=undone.flatMap(e=>e.wordIds||[]);
       return {edit,undone,note:said,noteOpen,first:ids.length?indexOf(ids[0]):-1,last:ids.length?indexOf(ids.at(-1)):-1};
     });
@@ -173,14 +185,9 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
   function restore(ids,{keep=false}={}){
     if(!edits().some(e=>ids.includes(e.id)))return Promise.resolve(null);
     return exclusive(async at=>{
-      const back=edits().filter(e=>ids.includes(e.id));
-      await commit(at,edits().filter(e=>!ids.includes(e.id)),{keep});
-      let noteResolved=false;
-      for(const id of new Set(back.map(e=>e.commentId).filter(Boolean))){
-        if(edits().some(e=>e.commentId===id))continue;
-        await cancelRequest(id);noteResolved||=cutNotes.has(id);cutNotes.delete(id);
-      }
-      return {back,noteResolved};
+      const back=edits().filter(e=>ids.includes(e.id)),noted=new Set(cutNotes.keys());
+      await commitThenClose(at,edits().filter(e=>!ids.includes(e.id)),back,{keep});
+      return {back,noteResolved:back.some(e=>noted.has(e.commentId)&&!cutNotes.has(e.commentId))};
     });
   }
 

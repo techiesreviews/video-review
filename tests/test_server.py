@@ -98,6 +98,19 @@ class ReviewServerTests:
         else:raise AssertionError('An edits-only save wrote old words over new ones')
         with self.request('/api/transcript/example-v1') as response:assert json.load(response)['words'][0]['startMs']==120
 
+    def test_a_full_transcript_read_back_by_the_page_takes_an_edits_only_save(self):
+        # Original words with an empty label, joins and a source mapping, as the page reads them and sends them back.
+        headers={'Content-Type':'application/json','Origin':self.origin}
+        words=[{'id':'W1','text':'Finish','startMs':100,'endMs':500}]
+        full={'words':words,'revision':None,'cuts':[{'id':'J1','atMs':700}],'keepRanges':[[0,1800]],'fps':30,
+              'original':{'durationMs':65000,'label':'','words':words}}
+        with self.request('/api/transcript/example-v1',full,headers):pass
+        with self.request('/api/transcript/example-v1') as response:page=json.load(response)
+        page['label']='Word-timed transcript';page['revision']='imported';page['original']['label']='Original recording'
+        cut={'id':'c','startMs':100,'endMs':500,'wordIds':['W1'],'quote':'Finish'}
+        with self.request('/api/transcript/example-v1',{**page,'draftEdits':[cut],'editsOnly':True},headers) as response:
+            assert json.load(response)['draftEdits'][0]['id']=='c'
+
     def test_agent_status_is_true_only_while_the_agent_is_alive(self):
         seen=self.data/'agent-seen.json'
         seen.unlink(missing_ok=True)

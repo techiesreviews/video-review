@@ -44,6 +44,6 @@
     "videoIdFormat": "Use letters, digits, dot, dash or underscore for the id",
     "videoIdTaken": "That id already exists; use a new id for a new cut",
     "fps": "fps must be a positive number",
-    "transcriptChanged": "The transcript changed while this was saving (a new render or an import), so this edit was not saved. Select the words again."
+    "transcriptChanged": "The transcript changed while this was saving (a new render or an import), so this edit was not saved. Check the new transcript and try again."
   }
 }
