@@ -519,7 +519,7 @@ PAGE_BODY = """<body data-server="{server}" data-video="{video}" data-code="{cod
 <div class="page">
   <h1>{name} · overview</h1>
   <p class="sub">{summary}</p>
-  <p class="off" id="stars-off">{off}</p>
+  <p class="off" id="stars-off" hidden>{off}</p>
   <div class="cut" aria-label="Rough cut order">{strip}</div>
   <p class="cutlabel">Rough cut: the best take of every scene, in script order.</p>
   <div id="scenes">{scenes}</div>
