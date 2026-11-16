@@ -713,6 +713,45 @@ class OneScriptLineTests(unittest.TestCase):
         self.assertEqual((flag['code'], flag['start']), ('possible-restart', 1.0))
         self.assertIn('script says this line more than once', flag['message'])
 
+    def test_a_dropped_start_of_a_line_the_script_says_twice_is_listed_not_cut(self):
+        script = 'Thanks for watching this week. Thanks for watching this week.'
+        words = said('Thanks for watching this', 1.0) + said('Thanks for watching this week.', 3.0) \
+            + said('Thanks for watching this week.', 6.0)
+        result = plan_words(words, script)
+        self.assertEqual(removed_texts(result), [])
+        self.assertEqual([item['code'] for item in result['paperEdit']['flags']], ['possible-restart'])
+
+    def test_a_part_of_the_line_without_its_full_stop_is_not_cut_as_a_dropped_start(self):
+        # The transcript often leaves a full stop off: the first part then looks like a start that was dropped.
+        words = said('The camera is easy to use', 1.0) + said('The battery lasts all day.', 3.2)
+        self.assertEqual(removed_texts(plan_words(words, self.SCRIPT)), [])
+        script = 'The camera is easy to use and the camera is cheap.'
+        for pause in (0.4, 2.0):
+            words = said('The camera is easy to use', 1.0) + said('The camera is cheap.', 2.8, pause)
+            result = plan_words(words, script)
+            self.assertEqual(removed_texts(result), [], pause)
+            self.assertEqual([item['code'] for item in result['paperEdit']['flags']], ['possible-restart'], pause)
+
+    def test_a_script_line_of_its_own_without_its_full_stop_is_listed_not_cut(self):
+        words = said('The tool is fast', 1.0) + said('The tool is cheap.', 2.6)
+        result = plan_words(words, 'The tool is fast. The tool is cheap.')
+        self.assertEqual(removed_texts(result), [])
+        flag, = result['paperEdit']['flags']
+        self.assertEqual(flag['code'], 'possible-restart')
+        self.assertIn('The script has both', flag['message'])
+        # Without a script nothing says they are two lines: a start repeated after a pause is a dropped start.
+        self.assertEqual(removed_texts(plan_words(words)), ['The tool is fast'])
+
+    def test_a_dropped_start_with_a_changed_word_is_still_cut_when_two_lines_open_alike(self):
+        words = said('The tool is quick', 1.0) + said('The tool is fast.', 2.6) + said('The tool is cheap.', 4.4)
+        result = plan_words(words, 'The tool is fast. The tool is cheap.')
+        self.assertEqual(removed_texts(result), ['The tool is quick'])
+
+    def test_a_retake_of_one_part_of_the_line_loses_only_its_dropped_start(self):
+        words = said('The camera is easy to use.', 1.0) + said('The battery lasts all', 3.2) \
+            + said('The battery lasts all day.', 5.2)
+        self.assertEqual(removed_texts(plan_words(words, self.SCRIPT)), ['The battery lasts all'])
+
     def test_a_line_said_once_in_the_script_still_loses_its_dropped_start(self):
         script = 'Thanks for watching this week.'
         words = said('Thanks for watching this week', 1.0) + said('Thanks for watching this week.', 3.5)

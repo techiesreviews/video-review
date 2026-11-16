@@ -57,6 +57,11 @@ What it does:
   stumbles, or more of the script line missing), the better earlier take stays and the paper edit says so. A
   line the script itself says more than once is never treated as takes of one line. When no take of a line is
   complete, a take more than a minute from the others stays and is listed.
+- **What the script says stays.** Two sentences that the script joins into one line ("The camera is easy to use
+  and the battery lasts all day.") are two parts of that line, not two takes: both stay, and a whole take of the
+  line still replaces them. A start is not cut when the script has its words as a line or a part of a line of
+  their own, or says the line more than once, also when the transcript left the full stop off: it is listed as a
+  possible restart instead.
 - **Timing (Lex, 2026-11-10 and 2026-11-11).** 100-150 ms of room before and after speech at every cut, the start
   of the clip too; a whole silence of 200-300 ms between linked phrases (it aims for 250) and 350-500 ms before a
   new thought (it aims for 400); Lex chose these longer pauses (version B) after listening to the cutter's version
