@@ -1180,11 +1180,11 @@ def plan(words, fps, script_text=None, demos=(), name='Take cut proposal', sourc
         first, last = words[item['first']], words[item['last']]
         reason = next(iter(item['reasons'])) if len(item['reasons']) == 1 else 'retake-run'
         gaps = [words[index + 1].start - words[index].end for index in range(item['first'], item['last'])]
-        # The cut also takes the silence between the passage and the words on either side of it, except what a
-        # marked demo keeps of it.
+        # The cut also takes silence between the passage and the words on either side of it: measured on the kept
+        # ranges, so the room kept beside speech and what a marked demo keeps are not counted as taken out.
         beside = [words[index + 1].start - words[index].end
-                  - sum(max(0.0, min(end, words[index + 1].start) - max(start, words[index].end))
-                        for start, end in cutter.demos)
+                  - sum(max(0.0, min(source_out / fps, words[index + 1].start) - max(source_in / fps, words[index].end))
+                        for source_in, source_out in runs)
                   for index in (item['first'] - 1, item['last']) if 0 <= index < len(words) - 1]
         removed.append({'start': round(first.start, 3), 'end': round(last.end, 3),
                         'seconds': round(last.end - first.start, 2), 'reason': reason, 'why': REASONS[reason],
