@@ -151,4 +151,4 @@ node tests/cut-preview-browser.mjs
 node tests/overview-browser.mjs
 ```
 
-The tests cover local video range requests, comment persistence, timestamp validation, origin checks, the MCP tools, and the transcript, cut and waveform logic, using temporary data directories. The first two browser checks need ffmpeg and Playwright, make their own small test video, and outside Windows need `VIDEO_REVIEW_PYTHON=python3`; the third opens the overview page on a phone-sized screen and needs only Playwright. What each suite checks is in the comments and assertion messages in its file.
+The tests cover local video range requests, comment persistence, timestamp validation, origin checks, the MCP tools, and the transcript, cut and waveform logic, using temporary data directories. The first two browser checks need ffmpeg and Playwright, make their own small test video, and outside Windows need `VIDEO_REVIEW_PYTHON=python3`; the third opens the overview page on a phone-sized screen and needs Playwright and Python, but no ffmpeg. What each suite checks is in the comments and assertion messages in its file.

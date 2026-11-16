@@ -762,10 +762,45 @@ class SilentDemoTests(unittest.TestCase):
         self.assert_demo_kept(result, 3.0, 6.0)
         self.assertEqual(result['cutlist']['segments'][-1]['sourceOutFrame'], 180)
         self.assertEqual(result['paperEdit']['ending'], {'tailMs': 4000, 'demo': True})
+        self.assertIn('ending 4000 ms with the marked screen demo', cut_takes.render_paper_edit(result['paperEdit']))
         # The transcript ends at the last word, so the cutter cannot see whether the recording holds the demo.
         flag, = result['paperEdit']['flags']
         self.assertEqual((flag['code'], flag['start'], flag['end']), ('demo-past-last-word', 3.0, 6.0))
         self.assertIn('check the recording is that long', flag['message'])
+
+    def test_a_demo_join_with_speech_on_one_side_says_the_room_left_beside_the_word(self):
+        words = [['Here', 1.0, 1.2], ['is', 1.24, 1.4], ['the', 1.44, 1.6], ['screen.', 1.64, 2.0]] \
+            + take(4.0) + take(9.0) + take(13.0)
+        result = plan_words(words, demos=[(6.5, 8.0)])
+        self.assert_demo_kept(result, 6.5, 8.0)
+        first, second = result['paperEdit']['joins']
+        self.assertEqual((first['why'], first['lastWord'], first['firstWord'], first['gapMs']),
+                         ('demo', 'screen.', None, None))
+        # The out frame is the one the cutter chose after "screen.": the room a new thought may have.
+        self.assertTrue(ROOM_MS[0] <= first['tailMs'] <= ROOM_MAX_MS['new-thought'], first['tailMs'])
+        self.assertEqual((second['why'], second['lastWord'], second['firstWord']), ('demo', None, 'This'))
+        text = cut_takes.render_paper_edit(result['paperEdit'])
+        self.assertIn(f'"screen." + {first["tailMs"]} ms | the demo (no speech)', text)
+        self.assertIn(f'the demo (no speech) | {second["headMs"]} ms + "This"', text)
+
+    def test_two_demos_between_the_same_removals_both_stay(self):
+        words = take(1.0) + take(6.0) + take(12.0)
+        result = plan_words(words, demos=[(2.5, 3.5), (3.8, 5.0)])
+        self.assert_demo_kept(result, 2.5, 3.5)
+        self.assert_demo_kept(result, 3.8, 5.0)
+        self.assertEqual([(item['sourceInFrame'], item['sourceOutFrame']) for item in result['cutlist']['segments'][:2]],
+                         [(75, 105), (114, 150)])
+        self.assertEqual(kept_starts(result, cut_timeline.load_words(words)), {12.0, 12.24, 12.44, 12.64})
+
+    def test_a_demo_marked_right_after_a_removed_word_is_kept_whole_and_flagged_as_a_tight_cut(self):
+        words = take(1.0) + take(10.0)
+        result = plan_words(words, demos=[(2.03, 4.0)])
+        self.assert_demo_kept(result, 2.03, 4.0)
+        flag, = result['paperEdit']['flags']
+        self.assertEqual((flag['code'], flag['text']), ('tight-edge', 'tool.'))
+        self.assertIn('Only 0 ms between the removed "tool."', flag['message'])
+        # A demo marked with room after the removed word needs no such note.
+        self.assertEqual(plan_words(words, demos=[(2.5, 4.0)])['paperEdit']['flags'], [])
 
     def test_a_demo_edge_never_puts_a_cut_inside_a_removed_word(self):
         # At 29.97 fps second 2.0 is not on a frame: the frame before it lies inside the removed "tool.".

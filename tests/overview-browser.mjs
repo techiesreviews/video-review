@@ -26,9 +26,17 @@ const browser=await chromium.launch(process.env.OVERVIEW_BROWSER?{channel:proces
 try{
   // 320 CSS px is a small phone, and also a 640 px window at 200% zoom.
   const context=await browser.newContext({viewport:{width:320,height:640},deviceScaleFactor:2,hasTouch:true,isMobile:true});
-  const page=await context.newPage();
-  await page.route('**/api/**',route=>route.abort());
-  await page.setContent(made.stdout);
+  // The page is served from a made-up address, so its own request for the stars can be answered: stars on.
+  const open=async stars=>{
+    const page=await context.newPage();
+    await page.route('http://overview.test/**',route=>new URL(route.request().url()).pathname==='/'
+      ?route.fulfill({contentType:'text/html; charset=utf-8',body:made.stdout})
+      :stars?route.fulfill({contentType:'application/json',body:'{}'}):route.abort());
+    await page.goto('http://overview.test/');
+    await page.locator(stars?'.st:not(:disabled)':'#stars-off:not([hidden])').first().waitFor();
+    return page;
+  };
+  const page=await open(true);
   // Measured against the 320 px asked for: a phone browser zooms out to fit a page that is too wide, so its own
   // innerWidth grows with the fault.
   const fits=async()=>({page:await page.evaluate(()=>document.documentElement.scrollWidth),screen:320});
@@ -72,6 +80,11 @@ try{
   // The larger target leaves the take itself playable.
   const thumb=await page.evaluate(()=>{const at=document.querySelector('.thumb').getBoundingClientRect();return document.elementFromPoint(at.left+30,at.top+35)?.closest('[data-play]')!==null;});
   check(thumb,'a touch on the picture no longer plays the take');
+  // While the stars are off (no server), a touch beside a star plays the take: a star that cannot be used takes
+  // no more room than it shows.
+  const offline=await open(false);
+  const beside=await offline.evaluate(()=>{const at=document.querySelector('.st').getBoundingClientRect();return document.elementFromPoint(at.left-6,at.bottom+6)?.closest('[data-play]')!==null;});
+  check(beside,'with the stars off, a touch beside a star does not play the take');
   assert.deepEqual(faults,[]);
   console.log(`overview page at 320 px: ${strip.count} scenes reachable in the strip, long title wraps, ${stars.length} stars with a 44 px touch target`);
 }finally{await browser.close();}
