@@ -73,9 +73,12 @@ Rules as built (for ticket 06 and the Prompter slice):
 - The file: `version`, `total_seconds`, `lengths_known` (false when a recorded scene's best take has no length) and
   `scenes`, one per scene in script order: `scene`, `number`, `title`, `recorded`, `take`, `file` (relative to the video
   folder, such as `scenes/02-what-it-really-costs/take-03.mkv`), `duration`, `flagged`, `script_changed`. The best take is
-  `scene_store.choose_best`, the same call the overview page's strip uses.
+  `scene_store.choose_best`. Since TOOLS-316 `rough_cut.py` is the one place the rough cut is worked out
+  (`build_cut`, `cut_for`, `changed_in_script`, `take_length`, `length_total`): the overview page draws the list it gets
+  from there for its strip, its total and the take in front of each scene.
 - `script_changed` is the saved flag, or the scene's heading no longer matching the cue file now: the rule of the overview
-  page's chip (`overview_page.changed_in_script`, made public for this; so is `overview_page.read_cue_text`). The cue file
+  page's chip (`rough_cut.changed_in_script`; it was `overview_page.changed_in_script` until TOOLS-316). The cue file is
+  read with `overview_page.read_cue_text`. The cue file
   is the one named, else the one the video was registered with (`data_dir`), else `prompter.md` in the video folder.
 - Called from the star route in `server.py` (after the scene file is saved, before the page is rewritten) and from the
   command line of `take_intake.py` after every run, new takes or not. A failure in one is said and does not stop the
@@ -94,8 +97,8 @@ a real registration run. `stop-demo.sh` stops it.
 
 ### Follow-ups
 
-- Standards (P3): 4a825ce:scripts/video/rough_cut.py:45 — P3 fault: `_length` treats a duration of `true`/`false` as unknown. The overview strip (`overview_page.py:285`) takes it as 1 or 0 seconds. For a bool duration, the list and the strip would give different totals and "+" markers, which breaks the "same list" promise in the module docstring. Take registration only writes numbers, so this is very unlikely to happen. Fix: give both places one shared helper, for example a public `rough_cut.length` or a helper in `scene_store`, and use it in `_cut_strip` too.
+- Done in TOOLS-316 (one `rough_cut.take_length` for the list, the strip, the total and the take card). Standards (P3): 4a825ce:scripts/video/rough_cut.py:45 — P3 fault: `_length` treats a duration of `true`/`false` as unknown. The overview strip (`overview_page.py:285`) takes it as 1 or 0 seconds. For a bool duration, the list and the strip would give different totals and "+" markers, which breaks the "same list" promise in the module docstring. Take registration only writes numbers, so this is very unlikely to happen. Fix: give both places one shared helper, for example a public `rough_cut.length` or a helper in `scene_store`, and use it in `_cut_strip` too.
 - Validation gaps (gap): The star route passes the registered cue file to `rebuild_rough_cut` (`server.py:125`, `cue=cue`). No server test shows that this cue file decides `script_changed`. Test to add in `tests/test_server.py`: Register the video with a cue file whose `1 · INTRO` heading is renamed. Click a star on `01-intro`. Check that `saved_rough_cut()['scenes'][0]['script_changed']` is true, and false for scene 2. (`test_take_intake.py` already has this check for the intake path.)
-- Standards (P3, second look): 4a825ce:scripts/video/rough_cut.py:45 — P3 fault: A true/false duration counts as unknown here, but the overview counts it as 1/0 seconds. Confirmed: `true` gives `0:00+` in the list versus `0:01` on the page. Registration writes numbers, so this is rare. Fix: share one duration check between both views.
+- Done in TOOLS-316 (as above). Standards (P3, second look): 4a825ce:scripts/video/rough_cut.py:45 — P3 fault: A true/false duration counts as unknown here, but the overview counts it as 1/0 seconds. Confirmed: `true` gives `0:00+` in the list versus `0:01` on the page. Registration writes numbers, so this is rare. Fix: share one duration check between both views.
 - Validation gaps (gap, second look): Add a server test: register a video with a cue file whose first scene heading changed, then click a star. Check that `rough-cut.json` marks scene 1 as `script_changed: true` and leaves scene 2 false. This gap is already recorded in ticket 04.
 

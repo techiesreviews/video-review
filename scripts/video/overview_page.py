@@ -416,7 +416,7 @@ def render(store, name, cue_text=None, thumbs=(), server='', video='', link_pref
     esc = html.escape
     texts = scene_texts(cue_text or '')
     # The rough cut is worked out once, by its own module; the strip, the total and each scene's take in front are
-    # drawn from that one list (it has an entry for every scene, in the scene file's order).
+    # drawn from that one list (it has an entry for every scene, in script order like the scene file).
     cut = rough_cut.cut_for(store, cue_text or '')
     scenes = ''.join(_scene_section(scene, item, texts.get(scene['id']), thumbs, link_prefix)
                      for scene, item in zip(store['scenes'], cut['scenes']))

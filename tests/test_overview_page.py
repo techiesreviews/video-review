@@ -223,6 +223,16 @@ class SceneCards(unittest.TestCase):
         self.assertIn('Take 1<', intro)
         self.assertNotIn('Take 1 (', intro)
 
+    def test_a_take_whose_length_is_true_or_false_shows_only_its_number(self):
+        # true and false are no length (rough_cut.take_length), not 1 or 0 seconds.
+        for value in (True, False):
+            store = scene_store.new_store(scene_store.parse_cue_file(CUE))
+            scene_store.add_take(store, '01-intro', 1, duration=value)
+            scene_store.apply_best(store)
+            intro = scene_html(render(store), '01-intro')
+            self.assertIn('Take 1<', intro)
+            self.assertNotIn('Take 1 (', intro)
+
     def test_the_record_tile_is_disabled_until_the_prompter_exists(self):
         for scene_id in ('01-intro', COSTS):
             tile = re.search(r'<button class="rec"[^>]*>.*?</button>', scene_html(render(), scene_id), re.S).group(0)
