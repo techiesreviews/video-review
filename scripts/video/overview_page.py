@@ -49,6 +49,7 @@ sys.path.insert(0, str(HERE.parents[1]))
 import file_store  # noqa: E402
 import review_store  # noqa: E402
 import scene_store  # noqa: E402
+import script_text  # noqa: E402
 
 FILE_NAME = 'overview.html'
 REGISTRY_NAME = 'scene-videos.json'
@@ -214,20 +215,15 @@ def server_address(data_dir=None):
 # The script text -------------------------------------------------------------------------------------------------
 
 ANY_HEADING = re.compile(r'^#{1,6}[ \t]')
-# A link stays on one line, and its text holds no bracket: inside a [direction] only the link itself is one.
-LINK = re.compile(r'\[([^\[\]\n]*)\]\([^)\n]*\)')
-# A link with a line to itself (also as a list item) is a direction with an address.
-LINK_LINE = re.compile(rf'^[ \t]*(?:(?:[-*+]|\d+[.)])[ \t]+)?{LINK.pattern}[ \t]*$', re.M)
-# A [direction] may run over several lines of its scene, but never past the next opening bracket.
-DIRECTION = re.compile(r'\[[^\[\]]*\]')
 
 
 def spoken_text(text):
-    """One scene's lines as the words to say: a link is read as its text, or left out when it has a line to
-    itself; [directions] are left out, also inside a line and over several lines, and so is a line that starts
-    with a bracket that is never closed; bold marks go."""
-    text = DIRECTION.sub(' ', LINK.sub(r'\1', LINK_LINE.sub('', text)))
-    lines = [line for line in text.splitlines() if not line.lstrip().startswith('[')]
+    """One scene's lines as the words to say, read as the cutter reads the script (script_text): images and
+    [directions] are left out, also inside a line and over several lines; a link is read as its text, or left out
+    when it has a line to itself. A line that starts with a bracket that is never closed is left out too, and so
+    are bold marks."""
+    lines = [line for line in script_text.without_directions(text).splitlines()
+             if script_text.LIST_ITEM.sub('', line).strip() and not line.lstrip().startswith('[')]
     return ' '.join(' '.join(lines).replace('**', '').split())
 
 
