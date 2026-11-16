@@ -280,11 +280,11 @@ class Cutter:
                           'listen and cut by hand if it is one.')
             elif len(first) < SETTINGS['shortStartWords']:
                 self.ask_restart(first, second[size - 1])
-            elif self.script_keeps(first, second):
+            elif why := self.script_keeps(first, second):
                 # Often the transcript only missed a full stop: the script wants both, so Lex decides.
                 self.flag('possible-restart', first[0], second[size - 1],
                           f'Possible restart: "{self.text(first)}" then "{self.text(second[:size])}". '
-                          f'{self.script_keeps(first, second)}, so left in; listen and cut by hand if it is one.')
+                          f'{why}, so left in; listen and cut by hand if it is one.')
             else:
                 self.drop(first, 'abandoned-start', second[0])
         # A stray word or two between a sentence and its redo ("So," or "and then") still makes a pair.
@@ -528,16 +528,13 @@ class Cutter:
             keeps = rest[0]
         # Takes are grouped pair by pair, so one that overlaps two parts of a script line brings both into its
         # group. A take goes only when the take that stays says what it says.
-        more = [take for number, take in enumerate(takes)
-                if number != chosen and line is not None and not self.says(takes[chosen], take, line)]
-        if more:
-            times = ', '.join(f'{self.words[take[0]].start:.2f}' for take in more)
-            self.flag('take-says-more', more[0][0], more[0][-1],
-                      f'{"The take at" if len(more) == 1 else "The takes at"} {times}: the take kept at '
-                      f'{self.words[keeps].start:.2f} does not say all of {"it" if len(more) == 1 else "them"}. '
-                      'Left in; cut by hand what is a failed try.')
         for number, take in enumerate(takes):
-            if number == chosen or take in more:
+            if number == chosen:
+                continue
+            if line is not None and not self.says(takes[chosen], take, line):
+                self.flag('take-says-more', take[0], take[-1],
+                          f'The take kept at {self.words[keeps].start:.2f} does not say all of this one. Left in; '
+                          'cut it by hand if it is a failed try.')
                 continue
             reason = 'earlier-take' if number < chosen else 'worse-later-take'
             if number > chosen and not self.complete(take, line):
@@ -689,9 +686,10 @@ class Cutter:
                 asks.append((attempt, take[0]))
             else:
                 self.drop(attempt, 'abandoned-start', take[0])
-        # A restart flagged earlier whose words are now removed is no longer a question for Lex.
+        # A restart flagged earlier, or a take left in, whose words are now removed is no longer a question for Lex.
         removed = [self.words[index].start for index, kept in enumerate(self.keep) if not kept]
-        self.flags = [item for item in self.flags if item['code'] not in ('possible-restart', 'possible-retake-cue')
+        asked = ('possible-restart', 'possible-retake-cue', 'take-says-more')
+        self.flags = [item for item in self.flags if item['code'] not in asked
                       or not any(item['start'] - TOLERANCE <= at <= item['end'] for at in removed)]
         for attempt, take in asks:
             if not all(self.keep[index] for index in attempt):
