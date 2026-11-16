@@ -96,8 +96,9 @@ What it does:
   retake cue, and lines not in the script (ad-libs). An ad-lib is a line whose words are not in the script and
   that no take of the same line follows; a failed try is not an ad-lib. A removal that takes out a silence of
   3 s or more says so, whether the silence is inside the removed passage or between it and the words kept beside
-  it (it may be a screen demo; what a `--demo` range keeps of that silence is not counted). Without `--script`,
-  ad-libs are not checked.
+  it (it may be a screen demo). The seconds are what the cut list really leaves out there: the room kept beside
+  speech, a `--demo` range and the silence kept with it are not counted. Without `--script`, ad-libs are not
+  checked.
 - **A marked demo with no speech stays too.** A removal beside it, the opening and the ending never take a
   `--demo` range out of the kept ranges, and the silence between the demo and the speech kept beside it stays.
   A demo between two removed takes becomes a piece of its own; its join is listed as "beside the marked screen
