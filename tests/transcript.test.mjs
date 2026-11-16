@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {normalizeTranscript,activeWordIndex,wordSelection,searchLibrary,originalOmissions} from '../web/transcript-core.js';
 import {zoomWaveformWindow} from '../web/waveform-core.js';
-import {applyChange,describe,rebaseComments} from '../web/review-core.js';
+import {applyChange,checkVideo,describe,rebaseComments} from '../web/review-core.js';
 import {normalizeDraftEdits,makeRemoval,removalBounds,skipRemoved,previewDuration,exportCut} from '../web/cut-core.js';
 import {audioPeaks,waveformWindow,adjustBoundary} from '../web/waveform-core.js';
 
@@ -106,4 +106,12 @@ test('source restore requests retain original-clock anchors beyond the reviewed 
   const c=applyChange(state,{action:'add',videoId:'v',startMs:2000,text:'Restore the ending',editRequest:{type:'restore',sourceStartMs:13000,sourceEndMs:13500,sourceDurationMs:14000,firstWordId:'after'}});
   assert.equal(c.sourceSpans[0].sourceStartFrame,390);assert.equal(c.sourceSpans[0].sourceEndFrame,405);assert.equal(describe(video,c).editRequest.type,'restore');
   assert.throws(()=>applyChange(state,{action:'add',videoId:'v',startMs:0,text:'Invalid',editRequest:{type:'restore',sourceStartMs:13000,sourceEndMs:15000,sourceDurationMs:14000}}),/restore range/);
+});
+
+test('a video registered with a fingerprint is listed with it, and one without has none',()=>{
+  // An interrupted upload (cut-to-review.py) finds its own registration again by this fingerprint.
+  const entry={id:'talk-v1',title:'talk',label:'talk · v1',fileName:'talk-v1.mp4',fps:30,durationMs:2000};
+  assert.equal(checkVideo({...entry,fingerprint:'sample-sha256:abc',addedBy:'ai'},[]).fingerprint,'sample-sha256:abc');
+  assert.equal(checkVideo(entry,[]).fingerprint,null);
+  assert.throws(()=>checkVideo({...entry,fingerprint:'sample-sha256:abc'},[{id:'talk-v1'}]),/already exists/);
 });
