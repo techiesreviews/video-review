@@ -62,6 +62,8 @@ class ChangedCopy:
         self.temp = tempfile.TemporaryDirectory()
         root = Path(self.temp.name)
         shutil.copytree(ROOT / 'scripts/video', root / 'scripts/video')
+        shutil.copy(ROOT / 'file_store.py', root / 'file_store.py')  # cut-to-review.py imports it from the root
+        self.root = str(root)
         (root / 'web').mkdir()
         data = saved()
         change(data)
@@ -76,7 +78,8 @@ class ChangedCopy:
         return load(name, self.scripts / file)
 
     def close(self):
-        sys.path.remove(self.added)
+        # Also the folders a copied script put on the path itself (cut-to-review.py adds the root).
+        sys.path[:] = [folder for folder in sys.path if not folder.startswith(self.root)]
         for name in ('cut_preferences', 'cut_timeline', 'script_text'):
             sys.modules.pop(name, None)
         sys.modules.update(self.cached)
@@ -113,6 +116,11 @@ class EveryScriptReadsTheFile(unittest.TestCase):
         self.assertEqual(join_check.THRESHOLDS['newThoughtGapMs'], [377, 555])
         self.assertEqual(join_check.THRESHOLDS['audioFadeMs'], 17)
         self.assertEqual(join_check.THRESHOLDS['orphanPauseMs'], 333)
+
+    def test_cut_to_review_falls_back_to_the_file_fade(self):
+        cut_to_review = self.copy.load('cut_to_review_copy', 'cut-to-review.py')
+        self.assertEqual(cut_to_review.cut_fade_ms({'segments': []}), 17)
+        self.assertEqual(cut_to_review.cut_fade_ms({'audioFadeMs': 20}), 20)
 
     def test_the_cutter_and_the_join_check_share_the_room_at_a_new_thought(self):
         def change(data):
@@ -154,17 +162,10 @@ class TheValuesOfToday(unittest.TestCase):
         for name, entry in lex.items():
             self.assertRegex(entry['why'], r'\d{4}-\d{2}-\d{2}', name)
 
-    def test_cut_to_review_falls_back_to_the_file_fade(self):
-        for folder in (str(ROOT / 'scripts/video'), str(ROOT)):
-            sys.path.insert(0, folder)
-            self.addCleanup(sys.path.remove, folder)
-        cut_to_review = load('cut_to_review_fade', ROOT / 'scripts/video/cut-to-review.py')
-        self.assertEqual(cut_to_review.cut_fade_ms({'segments': []}), saved()['lex']['audioFadeMs']['value'])
-        self.assertEqual(cut_to_review.cut_fade_ms({'audioFadeMs': 20}), 20)
-
 
 def python_offences(source, names, known_ranges):
-    """Cut numbers typed in Python source: a preference name given a number, or one of the file's ranges."""
+    """Cut numbers typed in Python source: a preference name given a number (in a dict, an assignment, a keyword or
+    a call such as .get(name, number)), or one of the file's ranges."""
     offences = []
 
     def number(node):
@@ -179,6 +180,9 @@ def python_offences(source, names, known_ranges):
             for key, item in zip(node.keys, node.values):
                 if isinstance(key, ast.Constant) and key.value in names and numbers(item):
                     offences.append(f'line {key.lineno}: {key.value!r} is given a number')
+        elif isinstance(node, ast.Call) and any(isinstance(arg, ast.Constant) and arg.value in names
+                                                for arg in node.args) and any(map(numbers, node.args)):
+            offences.append(f'line {node.lineno}: a preference is read with a typed number beside it')
         elif isinstance(node, ast.keyword) and node.arg in names and numbers(node.value):
             offences.append(f'line {node.value.lineno}: {node.arg} is given a number')
         elif isinstance(node, (ast.Assign, ast.AnnAssign)):
@@ -229,6 +233,7 @@ class NoCutNumberOutsideTheFile(unittest.TestCase):
         self.assertEqual(len(python_offences('limit = max(gap, 350, 500) if (350, 500) else 0', self.names,
                                              self.ranges)), 1)
         self.assertEqual(len(python_offences('plan(words, breathMaxMs=700)', self.names, self.ranges)), 1)
+        self.assertEqual(len(python_offences("cutlist.get('audioFadeMs', 15)", self.names, self.ranges)), 1)
         self.assertEqual(len(page_offences('export const JOIN_FADE_MS=15;', self.names)), 1)
         self.assertEqual(len(page_offences('jumpPlan(ms,edits,{audioFadeMs: 20})', self.names)), 1)
         self.assertEqual(python_offences("SETTINGS = {'roomMs': PREFERENCES['roomMs']}", self.names, self.ranges),
