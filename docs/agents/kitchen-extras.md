@@ -23,7 +23,7 @@ file wins.
   every push to `dev`; `kit pr` also runs them here for a code change, then lands after the review. A
   CSS-only change gets a review but no tests. A docs-only change (`paths.docs`) gets neither, as in every
   project.
-  `tests/listening-browser.mjs` needs Playwright and is run by hand.
+  `tests/listening-browser.mjs` and `tests/overview-browser.mjs` need Playwright and are run by hand.
 - **`kit unit` is not set up here:** it takes one test runner and this project has two, so wherever the
   rulebook says `kit unit`, run `bash scripts/agents/run-tests.sh`.
 - **Own commands:** none yet (`scripts/agents/project.d` is empty).

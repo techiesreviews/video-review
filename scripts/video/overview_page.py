@@ -500,8 +500,8 @@ PAGE_HEAD = """<!doctype html>
   .sub { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
   .sub b { color: var(--text); }
   .off { color: var(--warn); font-size: 13px; margin: 0 0 14px; }
-  .cut { display: flex; gap: 3px; height: 34px; margin: 0 0 4px; overflow: hidden; }
-  .cut div { display: grid; place-items: center; background: var(--chip); border-radius: 6px; font: 700 12px/1 system-ui; color: var(--text); min-width: 6px; overflow: hidden; }
+  .cut { display: flex; gap: 3px; margin: 0 0 4px; overflow-x: auto; scrollbar-width: thin; }
+  .cut div { display: grid; place-items: center; height: 34px; background: var(--chip); border-radius: 6px; font: 700 12px/1 system-ui; color: var(--text); min-width: 18px; overflow: hidden; }
   .cut div.none { background: transparent; box-shadow: inset 0 0 0 1px var(--border); color: var(--dim); }
   .cutlabel { color: var(--dim); font-size: 12px; margin: 0 0 16px; }
   .scene { background: var(--panel); border-radius: 12px; padding: 12px; margin: 0 0 10px; }
@@ -527,17 +527,20 @@ PAGE_HEAD = """<!doctype html>
   .st[data-on="true"] { color: var(--star); }
   .st:hover:not(:disabled) { background: var(--bg); }
   .st:disabled { cursor: not-allowed; opacity: .55; }
+  @media (any-pointer: coarse) {
+    .st::after { content: ''; position: absolute; inset: -9px; }
+  }
   .pick { position: absolute; top: 5px; left: 5px; font: 700 11px/1 system-ui; color: var(--muted); background: oklch(16% 0.06 282 / .7); border-radius: 6px; padding: 5px 6px; }
   .empty { color: var(--dim); font-size: 13px; padding: 12px; border-radius: 10px; box-shadow: inset 0 0 0 1px var(--border); display: grid; align-items: center; min-height: 96px; }
   .arch { margin: 10px 0 0; }
   .arch summary { cursor: pointer; color: var(--muted); font: 600 13px/1 system-ui; padding: 4px 0 8px; }
   .player { margin: 0 0 10px; }
   .player video { display: block; width: 100%; max-width: 560px; border-radius: 10px; background: #000; }
-  .player .t { font: 700 14px/1.3 system-ui; margin-top: 6px; }
+  .player .t { font: 700 14px/1.3 system-ui; margin-top: 6px; overflow-wrap: anywhere; }
   .player .d { color: var(--muted); font-size: 13px; }
   .legend { color: var(--dim); font-size: 12px; margin: 10px 2px 0; }
   .legend b { color: var(--star); }
-  button:focus-visible, summary:focus-visible, .stext:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  button:focus-visible, summary:focus-visible, .stext:focus-visible, .cut:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 </style>
 </head>
 """
@@ -547,7 +550,7 @@ PAGE_BODY = """<body data-server="{server}" data-video="{video}" data-code="{cod
   <h1>{name} · overview</h1>
   <p class="sub">{summary}</p>
   <p class="off" id="stars-off" hidden>{off}</p>
-  <div class="cut" aria-label="Rough cut order">{strip}</div>
+  <div class="cut" tabindex="0" role="group" aria-label="Rough cut order">{strip}</div>
   <p class="cutlabel">Rough cut: the best take of every scene, in script order.</p>
   <div id="scenes">{scenes}</div>
   <div class="player" id="player" hidden><video controls playsinline preload="metadata"></video><div class="t"></div><div class="d"></div></div>
