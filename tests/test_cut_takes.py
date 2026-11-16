@@ -1129,6 +1129,39 @@ class SilentDemoTests(unittest.TestCase):
 
 
 class FarApartTests(unittest.TestCase):
+    def test_without_a_script_a_near_copy_more_than_a_minute_later_is_not_a_take(self):
+        # Third whole-file look, 2026-11-16: two sentences in a row with two minutes of silence between them were
+        # paired as a restart, which skipped the one-minute limit for near copies.
+        words = said('This tool is very helpful.', 1.0) + said('This tool is really helpful.', 122.0)
+        result = plan_words(words)
+        self.assertEqual(removed_texts(result), [])
+        # Within the minute it is a second take, as before.
+        words = said('This tool is very helpful.', 1.0) + said('This tool is really helpful.', 31.0)
+        self.assertEqual(removed_texts(plan_words(words)), ['This tool is very helpful.'])
+        # With a script the line is the same line however far apart.
+        words = said('This tool is very helpful.', 1.0) + said('This tool is really helpful.', 122.0)
+        self.assertEqual(removed_texts(plan_words(words, 'This tool is really helpful.')), ['This tool is very helpful.'])
+
+    def test_a_long_silence_beside_a_removed_take_is_reported(self):
+        # Third whole-file look, 2026-11-16: the cut takes the silence between a removed take and the take that
+        # stays with it; eight seconds may be a screen demo, so the paper edit must say so.
+        words = said('This is the tool.', 1.0) + said('This is the tool.', 10.0)
+        result = plan_words(words)
+        removal, = result['paperEdit']['removed']
+        self.assertEqual((removal['text'], removal['longestSilence']), ('This is the tool.', 0.04))
+        self.assertAlmostEqual(removal['silenceBeside'], 7.84, 2)
+        self.assertIn('takes out the 7.8 s silence beside it', cut_takes.render_paper_edit(result['paperEdit']))
+        # A short pause beside a removal is not worth a word.
+        words = said('This is the tool.', 1.0) + said('This is the tool.', 3.0)
+        result = plan_words(words)
+        self.assertNotIn('silence beside', cut_takes.render_paper_edit(result['paperEdit']))
+        # The silence before a removed last take counts too.
+        words = said('This is the tool.', 1.0) + said('This is the, um, um, tool.', 12.0)
+        result = plan_words(words)
+        removal, = result['paperEdit']['removed']
+        self.assertEqual(removal['reason'], 'worse-later-take')
+        self.assertAlmostEqual(removal['silenceBeside'], 9.84, 2)
+
     def test_a_retake_far_from_its_first_take_is_matched_by_the_script(self):
         script = 'The review page saves every comment. Other things happen. The end.'
         words = [['The', 10.0, 10.2], ['review', 10.24, 10.6], ['page', 10.64, 10.9], ['saves', 10.94, 11.2],
