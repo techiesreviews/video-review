@@ -518,7 +518,7 @@ PAGE_HEAD = """<!doctype html>
   h1 { font: 700 20px/1.2 system-ui; margin: 0 0 2px; overflow-wrap: anywhere; }
   .sub { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
   .sub b { color: var(--text); }
-  .off { color: var(--warn); font-size: 13px; margin: 0 0 14px; }
+  .off { color: var(--warn); font-size: 13px; margin: 0 0 14px; overflow-wrap: anywhere; }
   .cut { display: flex; gap: 3px; margin: 0 0 4px; overflow-x: auto; scrollbar-width: thin; }
   .cut div { display: grid; place-items: center; height: 34px; background: var(--chip); border-radius: 6px; font: 700 12px/1 system-ui; color: var(--text); min-width: 18px; overflow: hidden; }
   .cut div.none { background: transparent; box-shadow: inset 0 0 0 1px var(--border); color: var(--dim); }
@@ -568,7 +568,7 @@ PAGE_BODY = """<body data-server="{server}" data-video="{video}" data-code="{cod
 <div class="page">
   <h1>{name} · overview</h1>
   <p class="sub">{summary}</p>
-  <p class="off" id="stars-off" hidden>{off}</p>
+  <p class="off" id="stars-off" role="status" data-text="{off}"></p>
   <div class="cut" tabindex="0" role="group" aria-label="Rough cut order">{strip}</div>
   <p class="cutlabel">Rough cut: the best take of every scene, in script order.</p>
   <div id="scenes">{scenes}</div>
@@ -580,14 +580,17 @@ PAGE_BODY = """<body data-server="{server}" data-video="{video}" data-code="{cod
 PAGE_SCRIPT = """<script>
 (() => {
   const body = document.body, server = body.dataset.server, video = body.dataset.video, code = body.dataset.code;
-  const stars = [...document.querySelectorAll('.st')], off = document.getElementById('stars-off'), offText = off.textContent;
+  const stars = [...document.querySelectorAll('.st')], off = document.getElementById('stars-off'), offText = off.dataset.text;
   const player = document.getElementById('player'), clip = player.querySelector('video');
   const title = player.querySelector('.t'), detail = player.querySelector('.d');
-  const setStars = on => { stars.forEach(s => { s.disabled = !on; }); off.hidden = on; };
+  // The stars line is a live region: on the page from the start and empty until there is something to say, so a
+  // screen reader reads it out when it changes (a line that is unhidden with its text already in it may stay silent).
+  const say = text => { off.textContent = text; };
+  const setStars = on => { stars.forEach(s => { s.disabled = !on; }); if (on) say(''); };
   fetch(server + '/api/scenes?video=' + encodeURIComponent(video) + '&code=' + encodeURIComponent(code))
     .then(r => r.ok ? r.json() : r.json().then(j => Promise.reject(j.error), () => Promise.reject()), () => Promise.reject())
     // The server answered but said no (this page is out of date): show what it said; no answer: the usual line.
-    .then(() => setStars(true), said => { off.textContent = typeof said === 'string' && said ? said : offText; setStars(false); });
+    .then(() => setStars(true), said => { setStars(false); say(typeof said === 'string' && said ? said : offText); });
   document.addEventListener('click', e => {
     const star = e.target.closest('.st');
     if (star) {
@@ -600,8 +603,8 @@ PAGE_SCRIPT = """<script>
         if (r.ok) return location.reload();
         // The server answered but could not do it: say what it said and keep the stars usable.
         const said = await r.json().then(j => j && j.error, () => '');
-        off.textContent = typeof said === 'string' && said ? said : offText; off.hidden = false; stars.forEach(s => { s.disabled = false; });
-      }, () => { off.textContent = offText; setStars(false); });
+        say(typeof said === 'string' && said ? said : offText); stars.forEach(s => { s.disabled = false; });
+      }, () => { setStars(false); say(offText); });
       return;
     }
     const play = e.target.closest('[data-play]');

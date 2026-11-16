@@ -10,7 +10,8 @@ What it does, in order:
 2. A sentence begun and dropped, then restarted after a pause with the same words, loses the dropped start.
 3. Takes of the same line (a restart, the same script sentence however far apart, or a near copy within a minute
    when there is no script) keep the last complete take. When that take is clearly worse than an earlier one, the
-   better take stays and Lex is told.
+   better take stays and Lex is told. Two sentences that say different parts of one script line are not takes of
+   it, and a start the script has as words of its own, or as a line it says twice, is listed instead of cut.
 4. Unfinished starts that the transcript ran into other words (no full stop, a stray word between attempts, or a
    restart part way through a phrase) go too: every attempt before a complete take that opens with the take's
    first two words, back to a sentence that says something else. The whole run of failed tries goes up to the take
@@ -23,6 +24,7 @@ no speech in it stays in the kept ranges, with the silence between it and the sp
 """
 import argparse
 from collections import Counter
+from difflib import SequenceMatcher
 import json
 import math
 from pathlib import Path
@@ -57,6 +59,9 @@ SETTINGS = {
     'nearTakeMatch': 0.6,
     'nearTakeRest': 0.5,
     'restartRepeat': 0.6,
+    # Two sentences are takes of one script line only when this share of the line's words that the shorter one says
+    # is said by the other too; less, and they are two parts of the line.
+    'samePartOfLine': 0.6,
     'completeCoverage': 0.8,
     'worseCoverageDrop': 0.15,
     'worseStumbles': 2,
@@ -268,6 +273,11 @@ class Cutter:
                           'listen and cut by hand if it is one.')
             elif len(first) < SETTINGS['shortStartWords']:
                 self.ask_restart(first, second[size - 1])
+            elif self.script_keeps(first, second):
+                # Often the transcript only missed a full stop: the script wants both, so Lex decides.
+                self.flag('possible-restart', first[0], second[size - 1],
+                          f'Possible restart: "{self.text(first)}" then "{self.text(second[:size])}". '
+                          f'{self.script_keeps(first, second)}, so left in; listen and cut by hand if it is one.')
             else:
                 self.drop(first, 'abandoned-start', second[0])
         # A stray word or two between a sentence and its redo ("So," or "and then") still makes a pair.
@@ -309,14 +319,44 @@ class Cutter:
         return len(first) >= 2 and len(second) >= 2 \
             and all(loose_equal(self.norms[a], self.norms[b]) for a, b in zip(first[:2], second[:2]))
 
+    def said_twice(self, sentence):
+        """True when the script itself says this sentence's line more than once: two readings of it are never takes
+        of one line."""
+        if not self.script:
+            return False
+        score, line = self.best_line(sentence)
+        return score >= SETTINGS['scriptMatch'] and tuple(self.script[line]) in self.repeated
+
+    def part_of_line(self, sentence, line):
+        """The places in a script line that a sentence says, found by lining the two up."""
+        names = [self.norms[index] for index in sentence]
+        blocks = SequenceMatcher(None, names, self.script[line], autojunk=False).get_matching_blocks()
+        return {block.b + offset for block in blocks for offset in range(block.size)}
+
+    def same_part(self, first, second, line):
+        """True when two sentences say the same part of a script line, as two takes of it do. The script may join
+        two sentences into one line ("The camera is easy to use and the battery lasts all day."): said as two
+        sentences, both match that line, but they are two parts of it and both stay."""
+        part, other = self.part_of_line(first, line), self.part_of_line(second, line)
+        return bool(part and other) and len(part & other) >= SETTINGS['samePartOfLine'] * min(len(part), len(other))
+
+    def script_keeps(self, first, second):
+        """Why the script wants the earlier words kept although the later ones open the same way, or None: the
+        script says their line more than once, or it has them as a line or a part of a line of their own."""
+        if self.said_twice(first) or self.said_twice(second):
+            return 'The script says this line more than once'
+        if self.script and not self.repeats_whole(first, second) and self.other_line(first, second):
+            return 'The script has both'
+        return None
+
     def same_line(self, first, second):
-        """True when two sentences say the same line: the same script sentence, or a near copy when neither
-        sentence is in the script (or there is no script)."""
+        """True when two sentences say the same line: the same part of the same script sentence, or a near copy
+        when neither sentence is in the script (or there is no script)."""
         if self.script:
             (score, line), (other_score, other_line) = self.best_line(first), self.best_line(second)
             if max(score, other_score) >= SETTINGS['scriptMatch']:
                 return line == other_line and min(score, other_score) >= SETTINGS['scriptMatch'] \
-                    and tuple(self.script[line]) not in self.repeated
+                    and tuple(self.script[line]) not in self.repeated and self.same_part(first, second, line)
             # Neither is in the script (an ad-lib said twice): compare the two sentences themselves.
         names = [self.norms[index] for index in first]
         other = [self.norms[index] for index in second]
@@ -381,13 +421,14 @@ class Cutter:
         if self.script:
             for number, sentence in enumerate(sentences):
                 score, line = self.best_line(sentence)
-                # A short sentence, or one the script itself says twice, is not grouped with others.
+                # A short sentence, or one the script itself says twice, is not grouped with others; nor is one
+                # that says another part of the line than the others do.
                 if score >= SETTINGS['scriptMatch'] and len(sentence) >= 3 \
                         and tuple(self.script[line]) not in self.repeated:
+                    for other, value in lines.items():
+                        if value == line and self.same_part(sentences[other], sentence, line):
+                            join(other, number)
                     lines[number] = line
-                    first = next((other for other, value in lines.items() if value == line and other != number), None)
-                    if first is not None:
-                        join(first, number)
         else:
             for number, sentence in enumerate(sentences):
                 for other in range(number + 1, len(sentences)):
@@ -534,9 +575,16 @@ class Cutter:
             and self.gap_ms(before, first) < SETTINGS['attemptBreakMs']
 
     def other_line(self, first, second):
-        """True when the script has the first sentence as a line of its own, not the line of the second."""
+        """True when the script has the first sentence as a line of its own, not the line of the second, or as
+        another part of the second's line."""
         (score, line), (_, other) = self.best_line(first), self.best_line(second)
-        return score >= SETTINGS['scriptMatch'] and line != other
+        if score < SETTINGS['scriptMatch']:
+            return False
+        if line == other:
+            return not self.same_part(first, second, line)
+        # A sentence that fits the second's line just as well ("The tool is quick" before "The tool is fast.") is
+        # no line of its own.
+        return score > dice([self.norms[index] for index in first], self.script[other])
 
     def restarted_lines(self):
         """Remove the attempts before a complete take that open with the take's first two words, even when the
@@ -594,8 +642,10 @@ class Cutter:
                     and not self.script_says_once(attempt, take):
                 continue  # "The tool is fast, the tool is cheap." may repeat on purpose: restarts() flagged it.
             if self.script:
-                # Everything removed must belong to the take's own script line, not to the talk around it.
-                if self.best_line(attempt)[1] == self.best_line(take)[1]:
+                # Everything removed must belong to the take's own script line, and to the part of it the take
+                # says, not to the talk around it.
+                line = self.best_line(take)[1]
+                if self.best_line(attempt)[1] == line and self.same_part(attempt, take, line):
                     self.drop(attempt, 'abandoned-start', take[0])
             elif unsure or any(len(other) >= 3 and other[0] > start for other in passed):
                 # Without a script, more than a stray word between the attempts may be real talk: ask, do not cut.
