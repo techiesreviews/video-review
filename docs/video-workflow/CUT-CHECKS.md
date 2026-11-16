@@ -59,15 +59,20 @@ What it does:
   complete, a take more than a minute from the others stays and is listed.
 - **What the script says stays.** Two sentences that the script joins into one line ("The camera is easy to use
   and the battery lasts all day.") are two parts of that line, not two takes: both stay, and a whole take of the
-  line still replaces them. A start is not cut when the script has its words as a line or a part of a line of
-  their own, or says the line more than once, also when the transcript left the full stop off: it is listed as a
-  possible restart instead.
+  line still replaces them. A take is removed only when the take that stays says what it says: one that says
+  another part of the line, or more of it than a kept take that picks the line up half way, stays and is listed.
+  A start is not cut when the script has its words as a line or a part of a line of their own, or says the line
+  more than once, also when the transcript left the full stop off: it is listed as a possible restart instead.
+  When two script lines have the same words ("The camera beats the phone." / "The phone beats the camera."), a
+  sentence belongs to the one with its word order.
 - **Timing (Lex, 2026-11-10 and 2026-11-11).** 100-150 ms of room before and after speech at every cut, the start
   of the clip too; a whole silence of 200-300 ms between linked phrases (it aims for 250) and 350-500 ms before a
   new thought (it aims for 400); Lex chose these longer pauses (version B) after listening to the cutter's version
   next to the original, so a silence of up to 500 ms before a new thought is left as it is. Two sides of 100-150 ms
   add up to 300 ms at most, so before a new thought the room may reach 200 ms on a side (a working value, listed in
-  each paper edit). A breath inside a linked phrase stays; 15 ms fade at every cut. No cut lands inside a word.
+  each paper edit). A breath inside a linked phrase stays; 15 ms fade at every cut. No cut lands inside a word:
+  a removal that touches the kept word beside it between two frames has no frame to cut at, so it goes back in
+  and is listed for Lex to cut by hand, as a removal too short for whole frames is.
 - **Left in and listed for Lex:** anything inside a `--demo` range (start-end in source seconds, repeat it for
   more), a silence of 3 s or more (a screen demo or a pause?), a possible restart without a pause, a possible
   retake cue, and lines not in the script (ad-libs). An ad-lib is a line whose words are not in the script and

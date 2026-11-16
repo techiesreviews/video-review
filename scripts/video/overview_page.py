@@ -10,7 +10,8 @@ computer's favorite as a hollow star ("pick") and a strip of the rough cut on to
 
 The page is rewritten after every take registration (take_intake.py) and every star change (server.py). The stars
 work only while video-review's server runs on this computer: the page asks it for the take list, and without an
-answer the stars are greyed out with one line saying why. The page holds the server's address, so a server that
+answer the stars are greyed out with one line saying why. That line is a live region, and the stars show what the
+server has saved, also on a page that could not be written again. The page holds the server's address, so a server that
 starts on another port writes the saved pages again (point_saved_pages_at_the_server). The server also serves the same page at
 `/scenes/<video>`, where <video> is the key from video_key(); the server finds the folder in a small registry in
 its data folder, which this command (and the take intake) fills.
@@ -57,6 +58,9 @@ STARS_OFF_TEXT = 'Stars are off. Start video-review on this computer to change t
 STALE_PAGE_TEXT = 'This saved page is out of date and cannot change stars. It is written again after the next take.'
 RECORD_TILE_TEXT = 'Coming with the Prompter'
 OLDER_TAKE_TEXT = 'Older take in front: the newest has a sound problem'
+# What a star button says: on a starred take, on the unstarred take in the rough cut, on any other take. The
+# page's script holds the same three for the stars it brings up to date (show in PAGE_SCRIPT).
+STAR_LABELS = ('Take the star off', 'Keep in rough cut (star it)', 'Put in rough cut')
 THUMB_EXTENSION = '.jpg'
 # A frame a second in: the very first frame of a recording is often black or mid-blink. A take shorter than two
 # seconds is looked at halfway instead.
@@ -330,7 +334,7 @@ def _take_card(scene, take, best, thumbs, prefix):
     pick = ''
     if scene.get('favorite') == number and best != number:
         pick = '<span class="pick" title="Computer\'s favorite">☆ pick</span>'
-    star_label = 'Take the star off' if starred else 'Keep in rough cut (star it)' if best == number else 'Put in rough cut'
+    star_label = STAR_LABELS[0 if starred else 1 if best == number else 2]
     return (
         f'<div class="take" data-scene="{esc(scene["id"])}" data-take="{number}">'
         f'<button class="thumb" type="button" data-play="{esc(media)}" data-label="{esc(label)}"'
@@ -587,10 +591,24 @@ PAGE_SCRIPT = """<script>
   // screen reader reads it out when it changes (a line that is unhidden with its text already in it may stay silent).
   const say = text => { off.textContent = text; };
   const setStars = on => { stars.forEach(s => { s.disabled = !on; }); if (on) say(''); };
-  fetch(server + '/api/scenes?video=' + encodeURIComponent(video) + '&code=' + encodeURIComponent(code))
-    .then(r => r.ok ? r.json() : r.json().then(j => Promise.reject(j.error), () => Promise.reject()), () => Promise.reject())
-    // The server answered but said no (this page is out of date): show what it said; no answer: the usual line.
-    .then(() => setStars(true), said => { setStars(false); say(typeof said === 'string' && said ? said : offText); });
+  // The take list as the server has it saved; a refusal passes on what the server said, no answer passes nothing.
+  const list = () => fetch(server + '/api/scenes?video=' + encodeURIComponent(video) + '&code=' + encodeURIComponent(code))
+    .then(r => r.ok ? r.json() : r.json().then(j => Promise.reject(j.error), () => Promise.reject()), () => Promise.reject());
+  // The stars show what the server has saved. A star can be saved while the page could not be written again, and
+  // a click on a star that still showed the old state would switch it the wrong way.
+  const show = saved => {
+    const scenes = saved && Array.isArray(saved.scenes) ? saved.scenes : [];
+    stars.forEach(s => {
+      const scene = scenes.find(x => x && x.id === s.dataset.scene);
+      if (!scene) return;
+      const take = Number(s.dataset.take), starred = scene.star === take, on = scene.best === take;
+      const label = starred ? 'Take the star off' : on ? 'Keep in rough cut (star it)' : 'Put in rough cut';
+      s.dataset.starred = String(starred); s.dataset.on = String(on); s.textContent = on ? '★' : '☆';
+      s.title = label; s.setAttribute('aria-label', label);
+    });
+  };
+  // The server answered but said no (this page is out of date): show what it said; no answer: the usual line.
+  list().then(saved => { show(saved); setStars(true); }, said => { setStars(false); say(typeof said === 'string' && said ? said : offText); });
   document.addEventListener('click', e => {
     const star = e.target.closest('.st');
     if (star) {
@@ -601,9 +619,14 @@ PAGE_SCRIPT = """<script>
         body: JSON.stringify({ video, code, scene: star.dataset.scene, take: star.dataset.starred === 'true' ? null : Number(star.dataset.take) })
       }).then(async r => {
         if (r.ok) return location.reload();
-        // The server answered but could not do it: say what it said and keep the stars usable.
+        // The server answered but could not do it: say what it said. The star may be saved all the same (the rough
+        // cut or the page could not follow), so the stars take what is saved before they can be used again; when
+        // that cannot be read they stay off.
         const said = await r.json().then(j => j && j.error, () => '');
-        say(typeof said === 'string' && said ? said : offText); stars.forEach(s => { s.disabled = false; });
+        say(typeof said === 'string' && said ? said : offText);
+        const use = on => stars.forEach(s => { s.disabled = !on; });
+        use(false);
+        return list().then(saved => { show(saved); use(true); }, () => {});
       }, () => { setStars(false); say(offText); });
       return;
     }

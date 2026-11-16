@@ -31,14 +31,17 @@ try{
   const context=await browser.newContext({viewport:{width:320,height:640},deviceScaleFactor:2,hasTouch:true,isMobile:true});
   // The page is served from a made-up address, so its own request for the stars can be answered: stars on.
   // listError, starError: the server answers the take list or a star click with this error instead.
-  const open=async(stars,{listError,starError}={})=>{
+  // later: what the take list answers when it is asked again after the page opened.
+  const open=async(stars,{listError,starError,later}={})=>{
     const page=await context.newPage();
+    let lists=0;
     await page.route('http://overview.test/**',route=>{
       const path=new URL(route.request().url()).pathname;
       if(path==='/')return route.fulfill({contentType:'text/html; charset=utf-8',body:made.stdout});
       const error=path==='/api/scenes/star'?starError:listError;
       if(error)return route.fulfill({status:500,contentType:'application/json',body:JSON.stringify({error})});
-      return stars?route.fulfill({contentType:'application/json',body:'{}'}):route.abort();
+      if(path==='/api/scenes')lists+=1;
+      return stars?route.fulfill({contentType:'application/json',body:JSON.stringify(lists>1&&later||{})}):route.abort();
     });
     await page.goto('http://overview.test/');
     await page.locator(stars?'.st:not(:disabled)':'#stars-off:not(:empty)').first().waitFor();
@@ -127,7 +130,22 @@ try{
   check(await told.evaluate(line=>line.id==='stars-off'),'a failed star click is not said in the stars line');
   size=await fits(failing);
   check(size.page<=size.screen,`after a failed star click the page is ${size.page} px wide on a ${size.screen} px screen`);
+  await failing.locator('.st:not(:disabled)').first().waitFor();
   check(await failing.locator('.st:disabled').count()===0,'a failed star click leaves stars switched off');
+
+  // A star the server saved although it reports a problem (the rough cut could not follow): the star shows what
+  // is saved, so the same star tapped again takes the star off instead of setting it a second time.
+  const SAVED='The star is saved, but the rough cut could not be rebuilt: no cue file.';
+  const saved=await open(true,{starError:SAVED,later:{scenes:[{id:'02-scene',star:1,best:1}]}});
+  const star=saved.locator('.scene').nth(1).locator('.st').first();
+  check(await star.getAttribute('aria-label')==='Keep in rough cut (star it)','the second scene does not start unstarred');
+  await star.tap();
+  await saved.getByRole('status').filter({hasText:SAVED}).waitFor();
+  await saved.locator('.scene').nth(1).locator('.st:not(:disabled)').first().waitFor();
+  check(await star.getAttribute('aria-label')==='Take the star off'&&await star.getAttribute('data-starred')==='true',
+    'a star that was saved with a problem still shows as not starred');
+  const [again]=await Promise.all([saved.waitForRequest(request=>request.url().endsWith('/api/scenes/star')),star.tap()]);
+  check(again.postDataJSON().take===null,'the saved star tapped again sets the star once more instead of taking it off');
   assert.deepEqual(faults,[]);
   console.log(`overview page at 320 px: ${strip.count} scenes reachable in the strip, long title and long server error wrap, a failed star click is said in the live region, ${stars.length} stars with a 44 px touch target`);
 }finally{await browser.close();}

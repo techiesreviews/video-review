@@ -11,14 +11,16 @@ What it does, in order:
 3. Takes of the same line (a restart, the same script sentence however far apart, or a near copy within a minute
    when there is no script) keep the last complete take. When that take is clearly worse than an earlier one, the
    better take stays and Lex is told. Two sentences that say different parts of one script line are not takes of
-   it, and a start the script has as words of its own, or as a line it says twice, is listed instead of cut.
+   it, a take goes only when the take that stays says what it says, and a start the script has as words of its
+   own, or as a line it says twice, is listed instead of cut.
 4. Unfinished starts that the transcript ran into other words (no full stop, a stray word between attempts, or a
    restart part way through a phrase) go too: every attempt before a complete take that opens with the take's
    first two words, back to a sentence that says something else. The whole run of failed tries goes up to the take
    that stays, never into it; a breath inside a take does not start a new one. A dropped start of under four words
    is only listed, as the paper edit's "inspect" restarts are. An "again" the script itself says is speech.
 5. Joins keep room around speech and a whole silence in Lex's ranges; long pauses are shortened, a breath inside a
-   linked phrase stays, and a cut never lands inside a word.
+   linked phrase stays, and a cut never lands inside a word: a removal with no frame between it and the kept
+   word beside it goes back in and is listed.
 A marked screen demo is never cut: what would have been removed there is listed for Lex instead, and a demo with
 no speech in it stays in the kept ranges, with the silence between it and the speech kept beside it.
 """
