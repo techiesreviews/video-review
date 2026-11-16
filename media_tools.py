@@ -45,7 +45,8 @@ class ToolMissing(MediaToolError):
 
     def __init__(self, tool, windows=None, found=None, reason=None):
         self.tool = tool
-        problem = f'{tool} at {found} could not be started ({reason})' if found else \
+        because = f' ({reason})' if reason else ''
+        problem = f'{tool} at {found} could not be started{because}' if found else \
             f'{tool} is not installed (or this computer cannot find it)'
         super().__init__(f'{problem}. {install_hint(windows)}')
 
@@ -155,7 +156,9 @@ def run(tool, arguments, timeout, text=False):
     except OSError as error:
         # There, but it cannot start (a damaged download, a file Windows will not run, or no handles left).
         forget()
-        raise ToolMissing(tool, found=command[0], reason=error.strerror or error) from None
+        # Windows leaves its own placeholder in the text: "%1 is not a valid Win32 application."
+        reason = str(error.strerror or error).replace('%1', os.path.basename(command[0])).rstrip('.')
+        raise ToolMissing(tool, found=command[0], reason=reason) from None
 
 
 def main(argv):
