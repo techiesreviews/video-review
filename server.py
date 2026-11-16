@@ -94,7 +94,7 @@ class Handler(BaseHTTPRequestHandler):
             key=route[7:];item=next((x for x in store.videos(DATA) if x['id']==key),None)
             if not item:return self.send_error(404)
             path=Path(item['path'])
-        elif route in ['/','/index.html','/app.js','/backend.js','/review-core.js','/transcript-core.js','/transcript-panel.js','/edit-bar-core.js','/cut-core.js','/cut-playback.js','/join-fade.js','/waveform-core.js','/waveform-panel.js','/library-panel.js','/cut-preferences.json','/style.css']:
+        elif route in ['/','/index.html','/app.js','/backend.js','/review-core.js','/transcript-core.js','/transcript-panel.js','/edit-bar-core.js','/cut-core.js','/cut-playback.js','/join-fade.js','/waveform-core.js','/waveform-panel.js','/library-panel.js','/cut-preferences.json','/review-rules.json','/style.css']:
             path=WEB/('index.html' if route=='/' else route[1:])
         else:return self.send_error(404)
         if not path.is_file():return self.send_error(404)
@@ -166,7 +166,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(store.save_transcript(DATA,self.path[len('/api/transcript/'):],cmd))
             if self.path=='/api/view':store.set_view(DATA,cmd);return self.send_json({'ok':True})
             # The browser always speaks as the reviewer; only the MCP server writes as the AI.
-            if cmd.get('action') in ['add','reply']:cmd['author']='you'
+            if cmd.get('action') in ['add','reply']:cmd['author']=store.RULES['pageAuthor']
             data,_=store.apply(DATA,cmd)
             self.send_json(data)
         except scene_store.SceneFileError as e:self.send_json({'error':str(e)},409,extra=self.cors())
