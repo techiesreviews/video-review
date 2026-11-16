@@ -223,8 +223,30 @@ def add_local_video(directory,path,title=''):
 def same_file(manifest,media):
     return next((x for x in manifest if Path(x['path']).resolve()==media),None)
 
-def save_transcript(directory,video_id,data):
+def save_transcript(directory,video_id,data,edits_only=False):
+    """Saves a word-timed transcript for a video. edits_only: a save of its preview cuts only, as the page sends after a
+    Delete, Undo or Restore; it is refused when the saved transcript is no longer the one those cuts were made on (a new
+    render or an import came in meanwhile), so the page never writes old words over new ones."""
     video=find_video(directory,video_id)
+    result=_clean_transcript(video,data)
+    path=transcript_path(directory,video_id);path.parent.mkdir(parents=True,exist_ok=True)
+    with locked(path):
+        if edits_only and not _same_words(video,read(path,None),result):raise ValueError(MESSAGES['transcriptChanged'])
+        write(path,result)
+    if result.get('keepRanges') is not None and result['keepRanges']!=video.get('keepRanges'):
+        update_render(directory,video_id,None,result['keepRanges'])
+    return result
+
+def _same_words(video,saved,result):
+    """True when the saved transcript is the one result was made on: everything but the preview cuts is the same."""
+    if not isinstance(saved,dict):return False
+    try:current=_clean_transcript(video,saved)
+    except ValueError:return False
+    def words_only(transcript):return {key:value for key,value in transcript.items() if key!='draftEdits'}
+    return words_only(current)==words_only(result)
+
+def _clean_transcript(video,data):
+    """The transcript as it is saved, checked against the video; a ValueError says what is wrong."""
     if not isinstance(data,dict) or not isinstance(data.get('words'),list) or not 0<len(data['words'])<=50000:
         raise ValueError('A word-timed transcript is required')
     previous=-1;ids=set();words=[]
@@ -281,10 +303,6 @@ def save_transcript(directory,video_id,data):
         if not isinstance(ranges,list) or not ranges or not all(isinstance(r,list) and len(r)==2 and all(isinstance(x,(int,float)) and not isinstance(x,bool) and math.isfinite(x) for x in r) and 0<=r[0]<r[1] for r in ranges):raise ValueError('Invalid transcript source mapping')
         if abs(sum(b-a for a,b in ranges)/fps*1000-video['durationMs'])>1000/fps:raise ValueError('The source mapping belongs to a different cut')
         result['keepRanges']=ranges;result['fps']=fps
-    path=transcript_path(directory,video_id);path.parent.mkdir(parents=True,exist_ok=True)
-    with locked(path):write(path,result)
-    if result.get('keepRanges') is not None and result['keepRanges']!=video.get('keepRanges'):
-        update_render(directory,video_id,None,result['keepRanges'])
     return result
 
 def apply(directory,cmd):

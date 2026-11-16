@@ -163,7 +163,7 @@ class Handler(BaseHTTPRequestHandler):
                 else:raise ValueError('Unknown library action')
                 return self.send_json({'ok':True})
             if self.path.startswith('/api/transcript/'):
-                return self.send_json(store.save_transcript(DATA,self.path[len('/api/transcript/'):],cmd))
+                return self.send_json(store.save_transcript(DATA,self.path[len('/api/transcript/'):],cmd,edits_only=cmd.get('editsOnly') is True))
             if self.path=='/api/view':store.set_view(DATA,cmd);return self.send_json({'ok':True})
             # The browser always speaks as the reviewer; only the MCP server writes as the AI.
             if cmd.get('action') in ['add','reply']:cmd['author']=store.RULES['pageAuthor']

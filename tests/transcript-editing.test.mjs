@@ -22,11 +22,12 @@ function setup({transcript=TRANSCRIPT}={}){
   const hold={},fail={},timers=[];
   let now=0;
   const editing=createTranscriptEditing({
-    async saveTranscript(video,data){
+    async saveTranscript(video,data,options){
       calls.saves.push(data);
+      assert.deepEqual(options,{editsOnly:true},'an edit saves only the preview cuts');
       if(fail.save){const error=fail.save;delete fail.save;throw error;}
       if(hold.save){const wait=hold.save;delete hold.save;await wait.promise;}
-      return storeTranscript(state,video.id,data);
+      return storeTranscript(state,video.id,data,options);
     },
     async request(selection){
       calls.requests.push(selection);
@@ -213,15 +214,15 @@ test('a Delete that a recut overtakes before it saves is dropped, not written on
   const recut={revision:'r2',words:TEXT.slice(2).map((_,i)=>word(i+2,2000)),cuts:[]};
   editing.load(storeTranscript(state,VIDEO.id,recut),state.videos[0]);
   ask.resolve();
-  await assert.rejects(cut,/new render/);
+  await assert.rejects(cut,/transcript changed/);
   assert.equal(calls.saves.length,0,'the old cut never reaches the new transcript');
   assert.equal(editing.transcript.revision,'r2');assert.deepEqual(editing.edits(),[]);
   assert.deepEqual(calls.cancels,[state.comments[0].id]);
   assert.equal(editing.busy,false);
 });
 
-test('a save that finishes after a recut does not replace the new transcript',async()=>{
-  const {editing,state,hold}=setup();
+test('an Undo whose save reaches the store after a recut is refused there, so the new words stay saved',async()=>{
+  const {editing,state,calls,hold}=setup();
   editing.selectWords(1);await editing.remove();
   hold.save=held();const wait=hold.save;
   const undo=editing.undo();
@@ -230,8 +231,50 @@ test('a save that finishes after a recut does not replace the new transcript',as
   const fresh=storeTranscript(state,VIDEO.id,recut);
   editing.load(fresh,state.videos[0]);
   wait.resolve();
-  await assert.rejects(undo,/new render/);
+  await assert.rejects(undo,/transcript changed/);
   assert.equal(editing.transcript,fresh);
+  assert.equal(state.transcripts.v.revision,'r2','the store kept the new render');
+  assert.deepEqual(calls.cancels,[],'the cut was not brought back, so its note stays open');
+});
+
+test('a Delete whose save reaches the store after a recut is refused there, and its note is closed',async()=>{
+  const {editing,state,calls,hold}=setup();
+  editing.selectWords(1);
+  hold.save=held();const wait=hold.save;
+  const cut=editing.remove();
+  await new Promise(r=>setTimeout(r));
+  editing.load(storeTranscript(state,VIDEO.id,{revision:'r2',words:TEXT.slice(2).map((_,i)=>word(i+2,2000)),cuts:[]}),state.videos[0]);
+  wait.resolve();
+  await assert.rejects(cut,/transcript changed/);
+  assert.equal(state.transcripts.v.revision,'r2');assert.deepEqual(state.transcripts.v.draftEdits,[]);
+  assert.deepEqual(calls.cancels,[state.comments[0].id]);
+});
+
+test('a Delete saved while the same words came in again is kept, says so, and keeps its note',async()=>{
+  const {editing,state,calls,hold}=setup();
+  editing.selectWords(1);
+  hold.save=held();const wait=hold.save;
+  const cut=editing.remove();
+  await new Promise(r=>setTimeout(r));
+  // An agent attaches the same transcript again: the words did not change, so the store takes the cut.
+  editing.load(storeTranscript(state,VIDEO.id,TRANSCRIPT),state.videos[0]);
+  wait.resolve();
+  const error=await cut.then(()=>null,error=>error);
+  assert.equal(error.saved,true,'the panel loads the transcript again to show the saved cut');
+  assert.match(error.message,/The edit was saved/);
+  assert.deepEqual(state.transcripts.v.draftEdits.map(e=>e.wordIds),[['W1']]);
+  assert.deepEqual(calls.cancels,[],'its note stays open with its cut');
+});
+
+test('an edit-only save is refused by the browser store when the saved words differ, or nothing is saved yet',()=>{
+  const state={videos:[{...VIDEO}],comments:[]};
+  assert.throws(()=>storeTranscript(state,VIDEO.id,TRANSCRIPT,{editsOnly:true}),/transcript changed/);
+  storeTranscript(state,VIDEO.id,TRANSCRIPT);
+  const edit={id:'e1',startMs:1000,endMs:1900,wordIds:['W1'],quote:'one',kind:'words'};
+  assert.equal(storeTranscript(state,VIDEO.id,{...TRANSCRIPT,draftEdits:[edit]},{editsOnly:true}).draftEdits.length,1);
+  const moved={...TRANSCRIPT,words:TRANSCRIPT.words.map(w=>w.id==='W3'?{...w,text:'tree'}:w)};
+  assert.throws(()=>storeTranscript(state,VIDEO.id,moved,{editsOnly:true}),/transcript changed/);
+  assert.equal(state.transcripts.v.draftEdits.length,1);
 });
 
 test('a note opened from a comment saves its typing after a pause, and leaving it saves at once',async()=>{
@@ -250,6 +293,15 @@ test('a note opened from a comment saves its typing after a pause, and leaving i
   assert.equal(editing.noteId,null);
   await new Promise(r=>setTimeout(r));
   assert.deepEqual(calls.errors,['Comment not found','Comment not found'],'a failed note save is reported, not dropped');
+});
+
+test('the typing in a note opened from a comment is saved to that comment after the pause',async()=>{
+  const {editing,state,fire}=setup();
+  editing.selectWords(1);await editing.send('First thought');
+  editing.editNote(state.comments[0].id,'Base');
+  editing.noteTyped('more');
+  fire();await new Promise(r=>setTimeout(r));
+  assert.equal(state.comments[0].text,'Base — more');
 });
 
 test('Enter on a note opened from a comment updates that comment',async()=>{

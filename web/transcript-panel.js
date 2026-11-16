@@ -15,7 +15,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   let backendRef=null,videoRef=null,barTarget=null,dragPoint=null,scrollFrame=null;
   let pauseNodes=[],currentNode=null,auditionRange=null,pauseThreshold=450;
   // What is selected and what an edit does live in transcript-editing.js; this file draws it and passes clicks in.
-  const editing=createTranscriptEditing({saveTranscript:(v,data)=>backendRef.saveTranscript(v,data),request,updateRequest,cancelRequest,onError:error=>showError(error.message)});
+  const editing=createTranscriptEditing({saveTranscript:(v,data,options)=>backendRef.saveTranscript(v,data,options),request,updateRequest,cancelRequest,onError:error=>showError(error.message)});
   const waveform=createWaveform({media,seek,pause,onRange:adjustSelection,onAudition:range=>{playContext(Math.max(0,range.startMs-750),Math.min(videoRef.durationMs,range.endMs+750));auditionRange=range;}});
   try{pauseThreshold=Number(localStorage.getItem('techies-review-pause-threshold'))||450;}catch{}
   if(![250,450,650,1000].includes(pauseThreshold))pauseThreshold=450;
@@ -186,6 +186,8 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     }
   }
   $('#restoreOriginalSelection').onclick=()=>{if(editing.selection?.kind==='source')requestSourceRestore(editing.selection,$('#restoreOriginalSelection'));};
+  // An edit saved while a new transcript came in: the panel loads it again, so it shows what was saved.
+  function failed(error){showError(error.message);if(error.saved&&videoRef)panel.load(videoRef,backendRef);}
   function hasDraft(){const selected=editing.selection;return !editing.noteId&&!!noteBox.value.trim()&&!!selected&&selected.kind!=='source';}
   // An unsent note, including letters typed while an edit was saving, is handed back for the next selection.
   const draftAfter=done=>done.noteOpen?'':noteBox.value;
@@ -204,7 +206,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
       else if(after.show==='deleted'){editing.anchor=done.first;choose(done.first,done.last);keepDraft(after.draft);barStatus(done.line);}
       else focusWords(done.first,done.wasWords);
     }
-    catch(error){showError(error.message);}finally{refreshCuts();}
+    catch(error){failed(error);}finally{refreshCuts();}
   }
   async function undoCut(){
     if(!editing.edits().length||editing.busy)return;const fromBar=document.activeElement===noteBox;
@@ -217,7 +219,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
       // The words that came back are selected again, so a mistaken undo is one Backspace from being redone.
       if(done.first>=0&&done.last>=done.first){editing.anchor=done.first;choose(done.first,done.last,{focus:false});keepDraft([done.note,draft].filter(Boolean).join(' '));barStatus(broughtBackLine({selectedAgain:!noteBox.value}));if(fromBar)focusBar();}
     }
-    catch(error){showError(error.message);}finally{refreshCuts();}
+    catch(error){failed(error);}finally{refreshCuts();}
   }
   async function restoreCut(ids,{fromBar=false}={}){
     if(!editing.edits().some(e=>ids.includes(e.id))||editing.busy)return;pause();
@@ -227,7 +229,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
       const done=await editing.restore(ids,{keep:stay});if(!done)return;
       if(stay)barStatus(broughtBackLine({noteResolved:done.noteResolved,selectedAgain:fromBar&&!noteBox.value}));
       else{clearView();refreshCuts();seek(done.back[0].startMs);}
-    }catch(error){showError(error.message);}finally{refreshCuts();}
+    }catch(error){failed(error);}finally{refreshCuts();}
   }
   $('#undoTranscriptCut').onclick=undoCut;
   $('#exportTranscriptCut').onclick=()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(exportCut(editing.transcript,videoRef),null,2)],{type:'application/json'})),link=document.createElement('a');link.href=url;link.download=videoId+'-cut.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
@@ -288,7 +290,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     if(next&&next!==currentNode){currentNode=next;if($('#followTranscript').checked&&dragAnchor==null)centre(currentNode);}
   }
   function removals(){return playbackRemovals(cutsOn(),editing.edits(),auditionRange);}
-  return {
+  const panel={
     async load(v,backend){
       const token=++loadToken;backendRef=backend;videoRef=v;videoId=v?.id;editing.load(null,v);pendingFocus=null;waveform.load(v);$('#cutPreviewBar').hidden=true;$('#transcriptSummary').textContent=v?'Loading transcript…':'Open a video to read its transcript.';render();
       if(!v)return;
@@ -310,4 +312,5 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     changeContext(startMs,endMs){return editing.changeContext(startMs,endMs);},
     get selecting(){return dragAnchor!=null;},
   };
+  return panel;
 }

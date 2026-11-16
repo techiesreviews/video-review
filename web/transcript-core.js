@@ -46,12 +46,20 @@ export function normalizeTranscript(data, durationMs=Infinity, videoFps=null) {
 }
 
 /** Saves a transcript in the browser's review state. A new source mapping in it moves the video's comments to their
- * places in the new mapping, as saving a transcript in the local app does. */
-export function storeTranscript(state,videoId,data){
+ * places in the new mapping, as saving a transcript in the local app does. editsOnly: a save of its preview cuts only,
+ * refused when the saved transcript is no longer the one they were made on (a new render or an import came in). */
+export function storeTranscript(state,videoId,data,{editsOnly=false}={}){
   const video=state.videos.find(v=>v.id===videoId);if(!video)throw Error(RULES.messages.unknownVideo);
   const transcript=normalizeTranscript(data,video.durationMs,video.fps);
+  if(editsOnly&&!sameWords(state.transcripts?.[video.id],transcript,video))throw Error(RULES.messages.transcriptChanged);
   if(transcript.keepRanges)applyRender(state,video.id,{keepRanges:transcript.keepRanges});
   (state.transcripts||(state.transcripts={}))[video.id]=transcript;return transcript;
+}
+function sameWords(saved,transcript,video){
+  if(!saved)return false;
+  let current;try{current=normalizeTranscript(saved,video.durationMs,video.fps);}catch{return false;}
+  const wordsOnly=({draftEdits,...rest})=>JSON.stringify(rest);
+  return wordsOnly(current)===wordsOnly(transcript);
 }
 
 // Removed source ranges use the recording clock; preview cuts use the review clock.
