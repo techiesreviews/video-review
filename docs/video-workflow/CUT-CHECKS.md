@@ -34,10 +34,15 @@ on `cutlist.json` and listen.
 
 What it does:
 
+- **Reading the script.** A script sentence ends at a full stop, question mark or exclamation mark (also in
+  front of a closing quote, bracket or bold mark), and at a heading, a blank line or a list item, so a line
+  without a full stop does not run into the next one. Headings and `[directions]` are left out.
 - **Retakes.** A quiet "again" with a pause around it marks a retake: the failed attempt and the word itself are
   removed. "Again and again", an "again" inside a sentence and an "again" the script itself says ("So, again,
   you see") stay. A sentence begun, dropped and restarted after a pause loses the dropped start; a dropped start
-  of fewer than four words ("And then I—", "But I'm—") is only listed, as the Sunday paper edit asks.
+  of fewer than four words ("And then I—", "But I'm—") is only listed, as the Sunday paper edit asks, also in
+  front of a take that stays while a later take of the line is removed; in a run of failed tries it goes with
+  the run.
 - **The whole run of failed tries.** From the first failed start to just before the take that stays, as one
   passage, never into that take: a breath of under 1.5 s inside a take does not start a new one. A broken-off
   start ("If you could—") before a long pause goes when, with a script, the rest says the whole line. A finished

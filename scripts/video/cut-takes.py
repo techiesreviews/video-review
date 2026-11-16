@@ -79,6 +79,9 @@ SETTINGS = {
 }
 SENTENCE_END = re.compile(r'[.!?]["\')\]]*$')
 TRAILING_MARK = re.compile(r'[,;:.!?–—-]["\')\]]*$')
+# In a script: the end of a sentence with the quotes, brackets and bold marks that close after it, and a list item.
+SCRIPT_STOP = re.compile(r'(?<=[.!?])["\'”’»)\]*_`]*\s+')
+LIST_ITEM = re.compile(r'^\s*(?:[-*+]|\d+[.)])\s+')
 BROKEN_OFF = re.compile(r'[–—-]["\')\]]*$')
 FILLERS = {'um', 'uh', 'uhm', 'er', 'erm', 'ah', 'hmm', 'mm'}
 REASONS = {
@@ -120,10 +123,23 @@ def in_order(first, second):
 
 
 def script_sentences(text):
-    lines = [line for line in text.splitlines() if not line.lstrip().startswith('#')]
-    text = re.sub(r'\[[^\]]*\]', ' ', ' '.join(lines))
-    sentences = [sentence.strip() for sentence in re.split(r'(?<=[.!?])\s+', text)]
-    return [[norm(word) for word in sentence.split() if norm(word)] for sentence in sentences if sentence]
+    """The script as one list of words per sentence. A sentence ends at . ! or ? (also in front of a closing quote,
+    bracket or bold mark), and at a heading, a blank line or a list item, so a line without a full stop does not
+    run into the next one. Headings and [directions] are left out."""
+    blocks = [[]]
+    for line in text.splitlines():
+        heading, item = line.lstrip().startswith('#'), LIST_ITEM.match(line)
+        if not line.strip() or heading or item:
+            blocks.append([])
+        if line.strip() and not heading:
+            blocks[-1].append(LIST_ITEM.sub('', line))
+    sentences = []
+    for block in blocks:
+        for sentence in SCRIPT_STOP.split(re.sub(r'\[[^\]]*\]', ' ', ' '.join(block))):
+            words = [norm(word) for word in sentence.split() if norm(word)]
+            if words:
+                sentences.append(words)
+    return sentences
 
 
 class Cutter:
@@ -589,7 +605,12 @@ class Cutter:
                     chosen = best
         keeps = takes[chosen][0]
         start, rest = self.false_start(takes[chosen], takes, line)
-        if start and self.drop(start, 'abandoned-start', rest[0]):
+        if start and chosen == 0 and len(start) < SETTINGS['shortStartWords']:
+            # A short start with no failed try before it is only listed, here as everywhere ("And then I—").
+            if not any(item['code'] == 'possible-restart' and item['start'] <= self.words[start[-1]].end
+                       and item['end'] >= self.words[start[0]].start for item in self.flags):
+                self.ask_restart(start, rest[min(1, len(rest) - 1)])
+        elif start and self.drop(start, 'abandoned-start', rest[0]):
             keeps = rest[0]
         # Takes are grouped pair by pair, so one that overlaps two parts of a script line brings both into its
         # group: drop() leaves in a take that says more than the take that stays.
