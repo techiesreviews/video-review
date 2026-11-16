@@ -815,6 +815,38 @@ class OneScriptLineTests(unittest.TestCase):
         self.assertEqual((flag['code'], flag['start']), ('take-says-more', 1.0))
         self.assertIn('5.00', flag['message'])
 
+    def test_a_sentence_that_says_a_script_word_the_kept_take_leaves_out_stays(self):
+        # Fourth whole-file look, 2026-11-16: five of the six script words of the first sentence are in the
+        # second, but "use" is not, and the script says both.
+        script = 'The camera is easy to use and carry.'
+        words = said('The camera is easy to use.', 1.0) + said('The camera is easy to carry.', 3.4)
+        result = plan_words(words, script)
+        self.assertEqual(removed_texts(result), [])
+        flag, = result['paperEdit']['flags']
+        self.assertEqual((flag['code'], flag['start']), ('take-says-more', 1.0))
+        # A wrong word that the script does not have is no reason to keep a take.
+        words = said('The camera is easy to move.', 1.0) + said('The camera is easy to carry.', 3.4)
+        self.assertEqual(removed_texts(plan_words(words, 'The camera is easy to carry.')),
+                         ['The camera is easy to move.'])
+
+    def test_a_short_script_line_that_a_retake_cue_would_remove_stays(self):
+        # Fourth whole-file look, 2026-11-16: the script says "Thanks again." and the "again" has a pause on both
+        # sides, as a retake cue has.
+        script = 'Thanks again. Next comes the demo.'
+        words = [['Thanks', 1.0, 1.3], ['again.', 1.94, 2.3], ['Okay,', 3.14, 3.4], ['next', 3.44, 3.7],
+                 ['comes', 3.74, 4.0], ['the', 4.04, 4.2], ['demo.', 4.24, 4.7]]
+        result = plan_words(words, script)
+        self.assertEqual(removed_texts(result), [])
+        self.assertEqual(len(result['paperEdit']['flags']), 1)
+        # The same words without that script line are a retake cue, as before.
+        self.assertEqual(removed_texts(plan_words(words)), ['Thanks again.'])
+        # A short script line is counted at sentence ends only, not inside another sentence.
+        cutter = cut_takes.Cutter(cut_timeline.load_words(said('So thanks again for that. The end.', 1.0)), FPS,
+                                  'Thanks again. The end.')
+        cutter.drop(range(0, 5), 'earlier-take', 5)
+        cutter.keep_script_lines()
+        self.assertEqual(cutter.keep, [False] * 5 + [True] * 2)
+
     def test_a_script_line_said_word_for_word_is_never_lost(self):
         # The last check, whatever made the removal: here each sentence fits the other script line just as well
         # when word order is ignored, and the script says the second line twice.

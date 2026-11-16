@@ -893,6 +893,14 @@ class SavedPageScript(unittest.TestCase):
         seen = self.run_page_script('network', click=True)
         self.assertEqual((seen['said'], seen['on']), (overview_page.STARS_OFF_TEXT, False))
 
+    def test_every_star_is_off_while_one_is_being_saved(self):
+        # Fourth whole-file look, 2026-11-16: two quick clicks on different takes sent two saves that could land in
+        # the wrong order. The click handler switches every star off before it sends anything.
+        script = overview_page.PAGE_SCRIPT
+        click = script[script.index("const star = e.target.closest('.st');"):script.index("fetch(server + '/api/scenes/star'")]
+        self.assertIn('stars.forEach(s => { s.disabled = true; });', click)
+        self.assertNotIn('star.disabled = true;', click)
+
     def test_a_failed_star_click_with_an_odd_answer_shows_the_usual_line_and_keeps_the_stars(self):
         for answer in ([500, json.dumps({'error': {'x': 1}})], [500, '{"error": 7}'], [500, 'null'], [500, 'not json']):
             seen = self.run_page_script(answer, click=True)
