@@ -182,12 +182,13 @@ try{
     await page.locator('.source-word',{hasText:'resolvegone'}).click();
     assert.equal(await page.locator('#transcriptNoteForm').isHidden(),true,`${name}: a removed word's bar has no note box.`);
     assert.equal(await page.locator('#transcriptNote').inputValue(),'',`${name}: the waiting note is not put in the hidden box.`);
+    assert.equal(await page.locator('#transcriptNotice').innerText(),'',`${name}: the line goes once something is selected.`);
     await word(3).click();
     assert.equal(await page.locator('#transcriptNote').inputValue(),'rough join',`${name}: the typed note is kept for the next selection.`);
-    assert.equal(await page.locator('#transcriptNotice').innerText(),'',`${name}: the line goes once something is selected.`);
 
     // A refused Delete whose transcript was removed elsewhere meanwhile says so on the panel, not "try again".
     await word(1).click();await page.locator('.bar-delete').click();
+    // Waits for the word to be struck through: the cut bar already shows, for the cut kept on the newer words above.
     await page.waitForFunction(()=>document.querySelectorAll('.transcript-word')[1].classList.contains('removed-word'));
     await replace('W15','fifteen-new');
     await page.route('**/api/transcript/words',route=>route.request().method()==='GET'?route.fulfill({status:200,contentType:'application/json',body:'null'}):route.continue());
