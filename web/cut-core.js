@@ -1,6 +1,7 @@
 // Preview cuts use the loaded media clock; originals and comment times stay intact.
 // The join fade is Lex's, from the cut preferences file the cutter and the join check read too.
 import preferences from './cut-preferences.json' with {type:'json'};
+import {frame} from './time-format.js';
 export function normalizeDraftEdits(edits=[],durationMs=Infinity){
   if(!Array.isArray(edits)||edits.length>5000)throw Error('Invalid preview cuts.');
   const ids=new Set();
@@ -67,7 +68,7 @@ export function makeRemoval(transcript,selection,durationMs,fps=30){
 export function exportCut(transcript,video){
   const duration=video.durationMs,removed=removedRanges(transcript.draftEdits),kept=[];let at=0;
   for(const [a,b] of removed){if(a>at)kept.push([at,a]);at=b;}if(at<duration)kept.push([at,duration]);
-  const fps=video.fps,sourceRanges=video.keepRanges||[[0,Math.round(duration*fps/1000)]],keepRanges=[];
+  const fps=video.fps,sourceRanges=video.keepRanges||[[0,frame(duration,fps)]],keepRanges=[];
   for(const [a,b] of kept){let cursor=0;for(const [start,end] of sourceRanges){const length=(end-start)/fps*1000,left=Math.max(a,cursor),right=Math.min(b,cursor+length);if(right>left)keepRanges.push([Math.round(start+(left-cursor)*fps/1000),Math.round(start+(right-cursor)*fps/1000)]);cursor+=length;}}
   return {schemaVersion:1,videoId:video.id,transcriptRevision:transcript.revision,fps,keepRanges,draftEdits:transcript.draftEdits||[],durationMs:Math.round(keepRanges.reduce((n,[a,b])=>n+b-a,0)/fps*1000),note:'Preview cut decisions for the existing Resolve timeline; original media and review timestamps are unchanged.'};
 }
