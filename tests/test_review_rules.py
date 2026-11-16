@@ -80,7 +80,7 @@ class DataFolder:
 
 
 def run_local(case):
-    """What the local app answers for one case: {'returns': ...} plus the saved state it touched."""
+    """What the local app answers for one case: {'returns': ...} or {'error': ...}, plus the saved state it touched."""
     call, args = case['call'], expand(case['args'])
     simple = {'parseTime': store.parse_time, 'timecode': store.timecode, 'sourceSpans': store.source_spans,
               'checkEditRequest': store.check_edit_request, 'describe': store.describe}
@@ -89,17 +89,18 @@ def run_local(case):
     if call == 'checkRender':
         return {'returns': store.check_render(args[0].get('durationMs'), args[0].get('keepRanges'))}
     folder = DataFolder(args[0])
-    try:
-        if call == 'applyChange':
-            _, comment = store.apply(folder.path, args[1])
-            return {'returns': comment, 'comments': folder.comments(), 'videos': folder.videos()}
-        if call == 'applyRender':
-            store.update_render(folder.path, args[1], args[2].get('durationMs'), args[2].get('keepRanges'))
-            return {'comments': folder.comments(), 'videos': folder.videos()}
-        if call == 'saveTranscript':
-            store.save_transcript(folder.path, args[1], args[2])
-            return {'comments': folder.comments(), 'videos': folder.videos()}
+    calls = {'applyChange': lambda: store.apply(folder.path, args[1])[1],
+             'applyRender': lambda: store.update_render(folder.path, args[1], args[2].get('durationMs'),
+                                                        args[2].get('keepRanges')),
+             'saveTranscript': lambda: store.save_transcript(folder.path, args[1], args[2])}
+    if call not in calls:
         raise AssertionError(f'The table names a call the local runner does not know: {call}')
+    try:
+        try:
+            answer = {'returns': calls[call]()}
+        except ValueError as error:  # a refused change: the saved state shows what it left behind
+            answer = {'error': error}
+        return {**answer, 'comments': folder.comments(), 'videos': folder.videos()}
     finally:
         folder.close()
 
@@ -109,12 +110,12 @@ class TheLocalAppFollowsTheTable(unittest.TestCase):
         self.assertGreater(len(TABLE['cases']), 40)
         for case in TABLE['cases']:
             with self.subTest(case['name']):
-                if 'error' in case:
-                    with self.assertRaises(Exception) as caught:
-                        run_local(case)
-                    self.assertEqual(str(caught.exception), RULES['messages'][case['error']])
-                    continue
-                answer = run_local(case)
+                try:
+                    answer = run_local(case)
+                except Exception as error:
+                    answer = {'error': error}
+                if 'error' in case or 'error' in answer:
+                    self.assertEqual(str(answer.get('error')), RULES['messages'].get(case.get('error')))
                 for key in ('returns', 'comments', 'videos'):
                     if key in case:
                         self.assertEqual(plain(answer[key]), expand(case[key]), key)

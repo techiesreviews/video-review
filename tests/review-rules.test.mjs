@@ -30,18 +30,18 @@ function runHosted({call,args}){
   args=expand(args);
   const simple={parseTime,timecode,sourceSpans,checkEditRequest,describe,checkRender};
   if(simple[call])return {returns:simple[call](...args)};
-  const state=args[0];
-  if(call==='applyChange'){const comment=applyChange(state,args[1],TABLE.now);return {returns:comment,comments:state.comments,videos:state.videos};}
-  if(call==='applyRender'){applyRender(state,args[1],args[2]);return {comments:state.comments,videos:state.videos};}
-  if(call==='saveTranscript'){storeTranscript(state,args[1],args[2]);return {comments:state.comments,videos:state.videos};}
-  throw Error(`The table names a call the hosted runner does not know: ${call}`);
+  const state=args[0],calls={applyChange:()=>applyChange(state,args[1],TABLE.now),applyRender:()=>applyRender(state,args[1],args[2]),saveTranscript:()=>storeTranscript(state,args[1],args[2])};
+  if(!calls[call])throw Error(`The table names a call the hosted runner does not know: ${call}`);
+  // A refused change: the state shows what it left behind.
+  let answer;try{answer={returns:calls[call]()};}catch(error){answer={error};}
+  return {...answer,comments:state.comments,videos:state.videos};
 }
 
 test('the table covers every kind of rule',()=>{assert.ok(TABLE.cases.length>40);});
 for(const c of TABLE.cases){
   test(`hosted: ${c.name}`,()=>{
-    if('error' in c){assert.throws(()=>runHosted(c),{message:RULES.messages[c.error]});return;}
-    const answer=runHosted(c);
+    let answer;try{answer=runHosted(c);}catch(error){answer={error};}
+    if('error' in c||'error' in answer)assert.equal(answer.error?.message,RULES.messages[c.error]);
     for(const key of ['returns','comments','videos'])if(key in c)assert.deepEqual(plain(answer[key]),expand(c[key]),key);
   });
 }
