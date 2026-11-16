@@ -751,6 +751,31 @@ class CommandLine(unittest.TestCase):
         self.assertEqual(overview_page.give_old_pages_a_code(self.data), [])  # once is enough
         self.assertEqual(overview_page.page_code(self.data, key), code)
 
+    def test_a_folder_that_may_not_be_read_does_not_stop_the_old_pages_after_it_getting_their_code(self):
+        # Sixth whole-file look, 2026-11-16: the codes are saved before the pages are written, so a page skipped
+        # here is not looked at again on the next start and its stars would stay off.
+        locked = Path(self.temp.name) / 'A locked folder'
+        locked.mkdir()
+        scene_store.save(locked, sample_store())
+        overview_page.publish(locked, data_dir=self.data)  # registered first, so it is looked at first
+        page = overview_page.publish(self.raw, data_dir=self.data)
+        key = overview_page.video_key(self.raw)
+        registry_path = self.data / overview_page.REGISTRY_NAME
+        registry = json.loads(registry_path.read_text(encoding='utf-8'))
+        for entry in registry.values():
+            del entry['code']
+        registry_path.write_text(json.dumps(registry), encoding='utf-8')
+        page.write_text('old page without a code', encoding='utf-8')
+        real_lookup = overview_page.lookup
+
+        def lookup(data_dir, asked):
+            if asked != key:
+                raise PermissionError(13, 'Permission denied', str(locked))
+            return real_lookup(data_dir, asked)
+        with mock.patch.object(overview_page, 'lookup', side_effect=lookup):
+            self.assertEqual(overview_page.give_old_pages_a_code(self.data), [key])
+        self.assertIn(f'data-code="{overview_page.page_code(self.data, key)}"', page.read_text(encoding='utf-8'))
+
     def test_a_page_that_asks_another_port_is_written_again_when_the_server_starts(self):
         overview_page.remember_port(self.data, 8879)
         page = overview_page.publish(self.raw, data_dir=self.data)
