@@ -102,8 +102,20 @@ class SceneCards(unittest.TestCase):
         self.assertIn('data-take="3" data-on="true" data-starred="false"', costs)
         self.assertIn('data-take="2" data-on="false"', costs)
         # The gold take is already in the rough cut: its button keeps it there rather than putting it in.
-        self.assertIn('data-take="3" data-on="true" data-starred="false" aria-label="Keep in rough cut (star it)"', costs)
-        self.assertIn('data-take="2" data-on="false" data-starred="false" aria-label="Put in rough cut"', costs)
+        self.assertIn('data-take="3" data-on="true" data-starred="false"'
+                      ' aria-label="Keep scene 2, take 3 in rough cut (star it)"', costs)
+        self.assertIn('data-take="2" data-on="false" data-starred="false" aria-label="Put scene 2, take 2 in rough cut"',
+                      costs)
+
+    def test_every_stars_name_says_its_scene_its_take_and_what_it_does(self):
+        # A screen reader's list of buttons shows only the names: each one says which recording it is about.
+        stars = re.findall(r'<button class="st"[^>]*data-scene="([^"]*)" data-take="(\d)"[^>]*aria-label="([^"]*)"',
+                           render())
+        self.assertEqual(stars, [(COSTS, '2', 'Take the star off scene 2, take 2'),
+                                 (COSTS, '1', 'Put scene 2, take 1 in rough cut'),
+                                 (COSTS, '3', 'Put scene 2, take 3 in rough cut'),
+                                 ('04-room-1-what-changed', '1', 'Keep scene 4, take 1 in rough cut (star it)')])
+        self.assertEqual(len({name for _, _, name in stars}), len(stars))
 
     def test_the_script_text_opens_from_the_keyboard_too(self):
         text = re.search(r'<p class="stext"[^>]*>', scene_html(render(), COSTS)).group(0)
