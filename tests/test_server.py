@@ -627,6 +627,17 @@ class ReviewServerTests:
         else:raise AssertionError('Followed a link out of the scenes folder')
         finally:link.unlink()
 
+    def test_every_module_the_page_imports_is_served(self):
+        web=Path(server.__file__).resolve().parent/'web';wanted,seen=['app.js'],set()
+        while wanted:
+            name=wanted.pop()
+            if name in seen:continue
+            seen.add(name)
+            with self.request('/'+name) as r:assert r.status==200,name;body=r.read()
+            assert body==(web/name).read_bytes(),name;text=body.decode()
+            wanted+=re.findall(r"""from\s*['"]\./([\w.-]+)['"]""",text)
+        assert {'app.js','review-core.js','time-format.js','review-rules.json'}<=seen,seen
+
 if __name__=='__main__':
     ReviewServerTests.setUpClass()
     try:
