@@ -575,7 +575,7 @@ PAGE_BODY = """<body data-server="{server}" data-video="{video}" data-code="{cod
   <p class="cutlabel">Rough cut: the best take of every scene, in script order.</p>
   <div id="scenes">{scenes}</div>
   <div class="player" id="player" hidden><video controls playsinline preload="metadata"></video><div class="t"></div><div class="d"></div></div>
-  <p class="legend"><b>★</b> in the rough cut (your star, or the newest take by default) &nbsp; ☆ computer's favorite, when it differs. Click a take to play it; click the star of an archived take to bring it to the front.</p>
+  <p class="legend"><b>★</b> in the rough cut (your star, or the newest take by default) &nbsp; ☆ pick: the computer's favorite, when it differs. Click a take to play it; click the star of an archived take to bring it to the front.</p>
 </div>
 """
 
