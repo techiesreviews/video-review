@@ -81,11 +81,11 @@ class Folder(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def tool(self, *parts, executable=True):
+    def tool(self, *parts):
         path = self.dir.joinpath(*parts)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b'')
-        path.chmod(stat.S_IRWXU if executable else stat.S_IRUSR | stat.S_IWUSR)
+        path.chmod(stat.S_IRWXU)
         return path
 
 
@@ -98,9 +98,12 @@ class LinuxLookup(Folder):
         self.assertEqual(self.find('ffprobe', os.pathsep.join([str(first.parent), str(second.parent)])), str(first))
 
     def test_a_file_that_cannot_run_is_passed_over(self):
-        self.tool('a', 'ffmpeg', executable=False)
+        # The run permission is made up, so the test means the same on Windows, which has no execute bit.
+        blocked = self.tool('a', 'ffmpeg')
         good = self.tool('b', 'ffmpeg')
-        self.assertEqual(self.find('ffmpeg', os.pathsep.join([str(self.dir / 'a'), str(self.dir / 'b')])), str(good))
+        runnable = lambda path, mode: path != str(blocked)
+        with mock.patch.object(media_tools.os, 'access', side_effect=runnable):
+            self.assertEqual(self.find('ffmpeg', os.pathsep.join([str(blocked.parent), str(good.parent)])), str(good))
 
     def test_the_own_bin_folder_is_looked_in_after_the_path(self):
         own = self.tool('video-review-bin', 'ffmpeg')
