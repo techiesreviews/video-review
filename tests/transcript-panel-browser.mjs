@@ -164,12 +164,24 @@ try{
     // panel, and the typed note waits for the next selection.
     await page.locator('.transcript-join',{hasText:'J1'}).click();
     await page.locator('#transcriptNote').fill('rough join');
-    await writeFile(join(temp,'transcripts/words.json'),JSON.stringify({words,cuts:[],revision:'no-join'}));
+    const kept=stored.draftEdits;
+    await writeFile(join(temp,'transcripts/words.json'),JSON.stringify({words,cuts:[],draftEdits:kept,revision:'no-join'}));
     await page.locator('.bar-delete').click();
     await page.waitForFunction(()=>document.querySelector('#transcriptNotice').textContent);
     assert.equal(await page.locator('#transcriptNotice').innerText(),'Not saved: the words changed elsewhere. Try again.');
     assert.equal(await page.locator('.transcript-join',{hasText:'J1'}).count(),0);
     assert.equal(await page.locator('#transcriptSelection').isHidden(),true,`${name}: nothing else is selected in its place.`);
+    // A second refused edit with nothing selected (an Undo) keeps the waiting note. The newer words now come with the
+    // original recording, so a word Resolve removed shows under "Removed in Resolve".
+    const original={durationMs:9000,words:[...words,{id:'R1',text:'resolvegone',startMs:8100,endMs:8400}]};
+    await writeFile(join(temp,'transcripts/words.json'),JSON.stringify({words:words.map(w=>w.id==='W13'?{...w,text:'thirteen-new'}:w),cuts:[],draftEdits:kept,original,revision:'no-join-again'}));
+    await page.locator('#undoTranscriptCut').click();
+    await page.waitForSelector('.source-word');
+    assert.equal(await page.locator('#transcriptNotice').innerText(),'Not saved: the words changed elsewhere. Try again.');
+    // A word under "Removed in Resolve" has no note box, so the waiting note is not put in the hidden one.
+    await page.locator('.source-word',{hasText:'resolvegone'}).click();
+    assert.equal(await page.locator('#transcriptNoteForm').isHidden(),true,`${name}: a removed word's bar has no note box.`);
+    assert.equal(await page.locator('#transcriptNote').inputValue(),'',`${name}: the waiting note is not put in the hidden box.`);
     await word(3).click();
     assert.equal(await page.locator('#transcriptNote').inputValue(),'rough join',`${name}: the typed note is kept for the next selection.`);
     assert.equal(await page.locator('#transcriptNotice').innerText(),'',`${name}: the line goes once something is selected.`);
