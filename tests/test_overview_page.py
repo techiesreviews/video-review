@@ -215,6 +215,15 @@ class SceneCards(unittest.TestCase):
         self.assertIn('Take 2 (1:58)', scene_html(render(), COSTS))
         self.assertIn('Take 3 (1:04)', scene_html(render(), COSTS))
 
+    def test_a_take_length_is_rounded_to_the_nearest_second_halves_to_even(self):
+        store = scene_store.new_store(scene_store.parse_cue_file(CUE))
+        for number, duration in enumerate((62.5, 63.5, 3599.5, 62.49), 1):
+            scene_store.add_take(store, '01-intro', number, duration=duration)
+        scene_store.apply_best(store)
+        intro = scene_html(render(store), '01-intro')
+        for length in ('Take 1 (1:02)', 'Take 2 (1:04)', 'Take 3 (1:00:00)', 'Take 4 (1:02)'):
+            self.assertIn(length, intro)
+
     def test_a_take_without_a_length_shows_only_its_number(self):
         store = scene_store.new_store(scene_store.parse_cue_file(CUE))
         scene_store.add_take(store, '01-intro', 1)

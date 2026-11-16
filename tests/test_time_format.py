@@ -27,17 +27,26 @@ HAND_MADE = {
     '.js': [re.compile(r'/\s*(60000|3600000)\b'), re.compile(r'%\s*60\b'), re.compile(r'%\s*1000\b')],
 }
 HAND_MADE['.mjs'] = HAND_MADE['.js']
+HAND_MADE['.html'] = []
+# A page written by a Python script, or an HTML file, may carry a script of its own: it is read with the JS rules too.
+INLINE_SCRIPT = re.compile(r'<script\b[^>]*>(.*?)</script>', re.S)
 
 
 def writers():
     """Every source file of the tool (tests, docs and prototypes aside)."""
     files = [*ROOT.glob('*.py'), *ROOT.glob('scripts/video/*.py'), *ROOT.glob('scripts/video/*.mjs'),
-             *ROOT.glob('web/*.js'), *ROOT.glob('cloud/*.js')]
+             *ROOT.glob('web/*.js'), *ROOT.glob('web/*.html'), *ROOT.glob('cloud/*.js')]
     return sorted(path for path in files if path.relative_to(ROOT).as_posix() not in HOMES)
 
 
 def hand_made(text, suffix):
-    return [line.strip() for line in text.splitlines() if any(rule.search(line) for rule in HAND_MADE[suffix])]
+    def matches(lines, rules):
+        return [line.strip() for line in lines if any(rule.search(line) for rule in rules)]
+    found = matches(text.splitlines(), HAND_MADE[suffix])
+    if suffix in ('.py', '.html'):
+        for script in INLINE_SCRIPT.findall(text):
+            found += matches(script.splitlines(), HAND_MADE['.js'])
+    return list(dict.fromkeys(found))
 
 
 class SharedTableTest(unittest.TestCase):
@@ -78,6 +87,14 @@ class NoHandMadeTimesTest(unittest.TestCase):
             for line in lines:
                 with self.subTest(line):
                     self.assertEqual(hand_made(line, suffix), [line])
+
+    def test_the_guard_reads_a_script_inside_a_page(self):
+        line = "const stamp=ms=>Math.floor(ms/60000)+':'+String(Math.floor(ms/1000)).padStart(2,'0');"
+        for suffix in ('.py', '.html'):
+            with self.subTest(suffix):
+                page = f"PAGE = '''<p>Total</p>\n<script>\n{line}\n</script>'''\n"
+                self.assertEqual(hand_made(page, suffix), [line])
+                self.assertEqual(hand_made(page.replace('script>', 'p>'), suffix), [])
 
     def test_no_place_formats_a_time_by_hand(self):
         self.assertGreater(len(writers()), 20)
