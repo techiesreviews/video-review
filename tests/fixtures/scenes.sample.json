@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "saved_at": "2026-11-13T10:00:00Z",
+  "scenes": [
+    {
+      "id": "01-intro",
+      "number": 1,
+      "title": "INTRO",
+      "script_changed": false,
+      "star": null,
+      "favorite": null,
+      "best": 1,
+      "flagged": false,
+      "takes": [
+        {
+          "number": 1,
+          "file": "take-01.mkv",
+          "name": "scene-01-intro-take-01",
+          "recorded_at": "2026-11-13T10:05:00Z",
+          "duration": 61.5,
+          "sound": {"ends_early": false, "long_pause": false}
+        }
+      ]
+    },
+    {
+      "id": "02-what-it-really-costs",
+      "number": 2,
+      "title": "WHAT IT REALLY COSTS",
+      "script_changed": false,
+      "star": 2,
+      "favorite": 3,
+      "best": 2,
+      "flagged": false,
+      "takes": [
+        {
+          "number": 2,
+          "file": "take-02.mkv",
+          "name": "scene-02-what-it-really-costs-take-02",
+          "duration": 118.0,
+          "sound": {"ends_early": false, "long_pause": false}
+        },
+        {
+          "number": 3,
+          "file": "take-03.mkv",
+          "name": "scene-02-what-it-really-costs-take-03",
+          "duration": 64.0,
+          "sound": {"ends_early": true, "long_pause": false}
+        }
+      ]
+    }
+  ],
+  "markers": []
+}

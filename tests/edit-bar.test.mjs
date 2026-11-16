@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {barKey,suggestion,recentNotes,nextWordAfterDelete,sentLine,QUICK_PHRASES,barSpot,barSpotOffWords,deletedIds,cutsToRestore,cutMarks,keptRuns,lastCutGroup} from '../web/edit-bar-core.js';
+import {barKey,suggestion,recentNotes,nextWordAfterDelete,sentLine,afterDelete,broughtBackLine,QUICK_PHRASES,barSpot,barSpotOffWords,deletedIds,cutsToRestore,cutMarks,keptRuns,lastCutGroup} from '../web/edit-bar-core.js';
 
 const key=(k,extra={})=>({key:k,...extra});
 
@@ -135,4 +135,25 @@ test('the pieces of one Delete share its note, so Ctrl+Z brings them all back at
   assert.equal(lastCutGroup([{commentId:'y'},{commentId:null},{commentId:null}]),1,'cuts without a note are undone one by one');
   assert.equal(lastCutGroup([{commentId:'x'}]),1);
   assert.equal(lastCutGroup([]),0);
+});
+
+test('after a Delete the words after the cut stay selected, with any letters typed during the save',()=>{
+  assert.deepEqual(afterDelete({next:7,draft:'tigh'}),{show:'next',draft:'tigh',focus:'bar'});
+  assert.deepEqual(afterDelete({next:0,draft:''}),{show:'next',draft:'',focus:'bar'});
+});
+test('deleting the very last words keeps letters typed during the save, on the words just deleted',()=>{
+  assert.deepEqual(afterDelete({next:-1,draft:'tigh',wasWords:true}),{show:'deleted',draft:'tigh',focus:'bar'});
+});
+test('deleting the very last words with nothing typed puts the focus on the words, not nowhere',()=>{
+  assert.deepEqual(afterDelete({next:-1,draft:'',wasWords:true}),{show:'none',draft:'',focus:'words'});
+  assert.deepEqual(afterDelete({next:-1,draft:'  ',wasWords:true}),{show:'none',draft:'',focus:'words'},'spaces alone are not a note');
+});
+test('a deleted pause has no words to hold typed letters, so the focus goes back to the words',()=>{
+  assert.deepEqual(afterDelete({next:-1,draft:'tigh',wasWords:false}),{show:'none',draft:'',focus:'words'});
+});
+test('Undo and Restore bring words back with one and the same line',()=>{
+  assert.equal(broughtBackLine(),'Brought back.');
+  assert.equal(broughtBackLine({noteResolved:true}),'Brought back. Its note is under Resolved.');
+  assert.equal(broughtBackLine({selectedAgain:true}),'Brought back. Backspace deletes it again.');
+  assert.equal(broughtBackLine({noteResolved:true,selectedAgain:true}),'Brought back. Its note is under Resolved. Backspace deletes it again.');
 });

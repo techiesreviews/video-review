@@ -1,0 +1,1539 @@
+"""Offline checks for the take cutter.
+
+The Sunday fixture (tests/fixtures/sunday-retakes.words.json) is synthetic: the real Sunday transcript stays on the
+editing PC. It follows the raw HappyScribe export shape and mirrors the Sunday paper edit's clear retake candidates
+and "inspect before cutting" items at the same source seconds, plus a worse last take, an ad-lib, a demo, a long
+pause before a new thought and a breath inside a linked phrase. No media is read.
+
+The retakes copy the shapes that the real run on LexTop (2026-11-10) only flagged or cut in part: the transcript
+has no quiet "again" there, an unfinished start runs into the next take without a full stop, a stray word sits
+between two attempts, and a restart can begin part way through a phrase or after a comma.
+
+The second real run (PR #17) showed more shapes, copied here at the same seconds with made-up words: a breath of
+340 ms inside the preferred take at 603.68, unfinished pieces left between a removed take and the take it keeps,
+a finished first try that opens like its take ("Setting up the things."), short stutters ("And then I—",
+"But I'm—") that the paper edit only wants inspected, "So, again," that the script itself says, and a line
+110 s away that only looks like an earlier take.
+"""
+import importlib.util
+import json
+from pathlib import Path
+import random
+import subprocess
+import sys
+import tempfile
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = ROOT / 'scripts/video/cut-takes.py'
+FIXTURES = ROOT / 'tests/fixtures'
+sys.path.insert(0, str(ROOT / 'scripts/video'))
+
+
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+cut_takes = load('cut_takes', SCRIPT)
+join_check = load('join_check', ROOT / 'scripts/video/join-check.py')
+import cut_timeline  # noqa: E402
+
+FPS = 30
+TRANSCRIPT = json.loads((FIXTURES / 'sunday-retakes.words.json').read_text(encoding='utf-8'))
+SCRIPT_TEXT = (FIXTURES / 'sunday-retakes.script.md').read_text(encoding='utf-8')
+WORDS = cut_timeline.load_words(TRANSCRIPT)
+DEMO = [(410.0, 418.0)]
+
+# The Sunday paper edit's clear retake candidates (source seconds) and where the take it prefers begins.
+CANDIDATES = [((92.78, 98.42), 102.25), ((324.17, 326.37), 329.03), ((341.05, 349.23), 353.96),
+              ((362.15, 370.21), 374.57), ((592.80, 601.86), 603.68), ((619.03, 621.10), 621.68)]
+TOLERANCE = 0.011
+# Lex's answers of 2026-11-10 (room around speech) and 2026-11-11 (he chose the longer pauses, version B).
+ROOM_MS = (100, 150)
+GAP_MS = {'linked': (200, 300), 'new-thought': (350, 500)}
+# 100-150 ms on each side adds up to 300 ms at most, so a new-thought join may leave up to 200 ms on a side.
+ROOM_MAX_MS = {'linked': 150, 'new-thought': 200}
+
+
+def plan(transcript=TRANSCRIPT, script=SCRIPT_TEXT, demos=DEMO):
+    return cut_takes.plan(cut_timeline.load_words(transcript), FPS, script_text=script, demos=demos)
+
+
+SUNDAY = plan()
+
+
+def kept_starts(result, words=WORDS):
+    timeline = cut_timeline.load_cutlist(result['cutlist'])
+    return {round(piece.word.start, 3) for piece in cut_timeline.retained_words(words, timeline)
+            if not piece.is_partial}
+
+
+def words_between(start, end):
+    return [word for word in WORDS if word.start >= start - TOLERANCE and word.end <= end + TOLERANCE]
+
+
+def take_from(start):
+    """The words of the sentence that starts at this source second."""
+    chosen = []
+    for word in WORDS:
+        if word.start >= start - TOLERANCE:
+            chosen.append(word)
+            if word.text[-1] in '.!?':
+                break
+    return chosen
+
+
+def removed_at(result, start):
+    return next(item for item in result['paperEdit']['removed'] if abs(item['start'] - start) < TOLERANCE)
+
+
+def flags(result, code):
+    return [item for item in result['paperEdit']['flags'] if item['code'] == code]
+
+
+def joins_from_frames(result, words=WORDS):
+    """Measure every join from the cut list frames and the transcript, not from what the cutter reports."""
+    timeline = cut_timeline.load_cutlist(result['cutlist'])
+    by_run = {}
+    for piece in cut_timeline.retained_words(words, timeline):
+        by_run.setdefault(piece.run_index, []).append(piece)
+    measured = []
+    for before, after in zip(timeline.runs, timeline.runs[1:]):
+        last, first = by_run[before.index][-1], by_run[after.index][0]
+        tail = round((before.source_end - last.word.end) * 1000)
+        head = round((first.word.start - after.source_start) * 1000)
+        kind = 'new-thought' if last.word.text[-1] in '.!?' else 'linked'
+        measured.append({'after': last.word, 'before': first.word, 'tail': tail, 'head': head,
+                         'gap': tail + head, 'kind': kind})
+    return measured
+
+
+class SundayRetakeTests(unittest.TestCase):
+    def test_every_clear_retake_candidate_is_removed_and_its_preferred_take_kept(self):
+        kept = kept_starts(SUNDAY)
+        for (start, end), take in CANDIDATES:
+            attempt = words_between(start, end)
+            self.assertTrue(attempt, f'fixture has words at {start}-{end}')
+            self.assertFalse([word.text for word in attempt if round(word.start, 3) in kept],
+                             f'the failed attempt at {start}-{end} is removed')
+            whole_take = take_from(take)
+            self.assertTrue(all(round(word.start, 3) in kept for word in whole_take),
+                            f'the complete take at {take} is kept whole')
+
+    def test_each_preferred_take_is_fully_inside_the_kept_ranges(self):
+        timeline = cut_timeline.load_cutlist(SUNDAY['cutlist'])
+        for _, take in CANDIDATES:
+            for word in take_from(take):
+                self.assertTrue(any(run.source_start <= word.start and word.end <= run.source_end
+                                    for run in timeline.runs), f'"{word.text}" at {word.start} in the take at {take}')
+
+    def test_each_attempt_run_is_one_removal_up_to_the_take_it_keeps(self):
+        # One passage from the first failed start to just before the preferred take, not pieces.
+        expected = {92.78: (98.42, 'retake-run', 102.25), 323.70: (326.37, 'abandoned-start', 329.03),
+                    341.05: (349.23, 'retake-run', 353.96), 362.15: (370.21, 'earlier-take', 374.57),
+                    592.80: (601.86, 'abandoned-start', 603.68), 619.03: (621.10, 'abandoned-start', 621.68)}
+        for start, (end, reason, keeps) in expected.items():
+            removal = removed_at(SUNDAY, start)
+            self.assertEqual((round(removal['end'], 2), removal['reason'], removal['keeps']), (end, reason, keeps),
+                             f'removal at {start}')
+        self.assertEqual(len(SUNDAY['paperEdit']['removed']), len(expected) + 1)  # plus the worse take at 205
+
+    def test_a_breath_inside_the_preferred_take_is_not_a_new_take(self):
+        # 340 ms after "next week, I am" the take goes on: the removal stops before 603.68, not before 605.36.
+        removal = removed_at(SUNDAY, 592.80)
+        self.assertLess(removal['end'], 603.68)
+        self.assertIn(603.68, kept_starts(SUNDAY))
+
+    def test_a_removal_that_takes_out_a_long_silence_says_so(self):
+        removal = removed_at(SUNDAY, 592.80)
+        self.assertAlmostEqual(removal['longestSilence'], 3.43, 2)
+        self.assertIn('3.4 s silence', cut_takes.render_paper_edit(SUNDAY['paperEdit']))
+
+    def test_a_restart_part_way_through_a_phrase_keeps_the_take_and_the_line_before(self):
+        self.assertAlmostEqual(removed_at(SUNDAY, 323.70)['end'], 326.37, 3)
+        self.assertAlmostEqual(removed_at(SUNDAY, 619.03)['end'], 621.10, 3)
+
+    def test_no_restart_flag_is_left_on_a_clear_retake(self):
+        for (start, end), _ in CANDIDATES:
+            self.assertFalse([item for item in SUNDAY['paperEdit']['flags'] if item['code'] == 'possible-restart'
+                              and start - TOLERANCE <= item['start'] <= end], f'flag inside {start}-{end}')
+
+    def test_the_introduction_before_the_closing_question_stays(self):
+        kept = kept_starts(SUNDAY)
+        self.assertTrue(all(round(word.start, 3) in kept for word in words_between(618.29, 618.92)))
+
+    def test_again_and_again_and_look_again_are_speech(self):
+        kept = kept_starts(SUNDAY)
+        for start in (142.65, 560.00):
+            self.assertTrue(all(round(word.start, 3) in kept for word in take_from(start)), f'line at {start}')
+        self.assertFalse([item for item in SUNDAY['paperEdit']['removed'] if 139 < item['start'] < 146
+                          or 559 < item['start'] < 562])
+
+    def test_so_again_that_the_script_says_is_speech_not_a_retake_cue(self):
+        kept = kept_starts(SUNDAY)
+        self.assertTrue(all(round(word.start, 3) in kept for word in words_between(533.35, 537.03)))
+        self.assertFalse([item for item in SUNDAY['paperEdit']['flags'] if 'again' in item['text']
+                          and 533 < item['start'] < 535])
+        # The 5.3 s silence before it now stays, so it is listed for Lex.
+        self.assertTrue(any(abs(item['start'] - 528.09) < TOLERANCE for item in flags(SUNDAY, 'long-silence')))
+
+    def test_a_line_far_away_that_only_looks_like_an_earlier_take_is_kept(self):
+        kept = kept_starts(SUNDAY)
+        self.assertTrue(all(round(word.start, 3) in kept for word in take_from(174.27)))
+        self.assertTrue(all(round(word.start, 3) in kept for word in take_from(283.91)))
+        flag, = flags(SUNDAY, 'no-complete-take')
+        self.assertIn('174.27', flag['message'])
+
+    def test_a_worse_last_take_keeps_the_better_one_and_flags_it(self):
+        kept = kept_starts(SUNDAY)
+        self.assertTrue(all(round(word.start, 3) in kept for word in take_from(200.00)))
+        self.assertFalse([word for word in take_from(205.00) if round(word.start, 3) in kept])
+        self.assertEqual(removed_at(SUNDAY, 205.00)['reason'], 'worse-later-take')
+        flag, = flags(SUNDAY, 'kept-better-take')
+        self.assertAlmostEqual(flag['start'], 200.00, 3)
+        self.assertIn('205.00', flag['message'])
+
+    def test_a_marked_screen_demo_is_flagged_instead_of_cut(self):
+        kept = kept_starts(SUNDAY)
+        self.assertTrue(all(round(word.start, 3) in kept for word in words_between(410.0, 418.0)))
+        flag, = flags(SUNDAY, 'demo-protected')
+        self.assertGreaterEqual(flag['start'], 410.0)
+
+    def test_inspect_items_are_flagged_and_left_in(self):
+        kept = kept_starts(SUNDAY)
+        # The paper edit says inspect, not cut, at 63-70, 139-143, 410-418, 489-495 and 532-536.
+        restarts = sorted(round(item['start']) for item in flags(SUNDAY, 'possible-restart'))
+        self.assertEqual([start // 10 for start in restarts], [6, 14, 49])
+        for start, end in ((63, 70), (139, 146), (410, 418), (489, 495), (532, 538)):
+            self.assertTrue(all(round(word.start, 3) in kept for word in words_between(start, end)), f'{start}-{end}')
+            self.assertFalse([item for item in SUNDAY['paperEdit']['removed'] if start <= item['start'] <= end])
+        self.assertFalse([item for item in SUNDAY['paperEdit']['flags'] if 'short' in item['text']],
+                         'repeated "short" is natural emphasis, not a flag')
+
+    def test_ad_libs_are_kept_and_listed(self):
+        # A failed try before a take of the same line (362.15, 592.80) is not an ad-lib, and neither is a short
+        # take whose words are all in its script line (374.57).
+        self.assertEqual([(item['start'], item['text']) for item in SUNDAY['paperEdit']['adLibs']],
+                         [(450.0, 'By the way, this part was not planned at all.')])
+        self.assertIn(450.0, kept_starts(SUNDAY))
+
+    def test_a_long_silence_is_kept_and_flagged(self):
+        silences = flags(SUNDAY, 'long-silence')
+        self.assertTrue(any(abs(item['start'] - 3.40) < TOLERANCE for item in silences))
+        timeline = cut_timeline.load_cutlist(SUNDAY['cutlist'])
+        self.assertTrue(any(run.source_start < 4.0 and run.source_end > 63.0 for run in timeline.runs))
+
+
+class TimingTests(unittest.TestCase):
+    def test_no_cut_lands_inside_any_word(self):
+        timeline = cut_timeline.load_cutlist(SUNDAY['cutlist'])
+        for run in timeline.runs:
+            for edge in (run.source_start, run.source_end):
+                inside = [word.text for word in WORDS
+                          if word.start + TOLERANCE < edge < word.end - TOLERANCE]
+                self.assertEqual(inside, [], f'cut at {edge:.3f} s')
+
+    def test_every_join_keeps_room_around_speech_and_a_whole_silence_in_range(self):
+        measured = joins_from_frames(SUNDAY)
+        self.assertEqual(len(measured), 10)
+        for join in measured:
+            where = f'join after "{join["after"].text}" at {join["after"].end}'
+            most = ROOM_MAX_MS[join['kind']]
+            self.assertTrue(ROOM_MS[0] <= join['tail'] <= most, f'{where}: tail {join["tail"]} ms')
+            self.assertTrue(ROOM_MS[0] <= join['head'] <= most, f'{where}: head {join["head"]} ms')
+            low, high = GAP_MS[join['kind']]
+            self.assertTrue(low <= join['gap'] <= high, f'{where}: {join["kind"]} gap {join["gap"]} ms')
+
+    def test_reported_joins_match_the_frames(self):
+        reported = SUNDAY['paperEdit']['joins']
+        measured = joins_from_frames(SUNDAY)
+        self.assertEqual([(item['tailMs'], item['headMs'], item['gapMs'], item['kind']) for item in reported],
+                         [(item['tail'], item['head'], item['gap'], item['kind']) for item in measured])
+
+    def test_opening_and_ending_keep_room(self):
+        timeline = cut_timeline.load_cutlist(SUNDAY['cutlist'])
+        lead_in = round((WORDS[0].start - timeline.runs[0].source_start) * 1000)
+        tail = round((timeline.runs[-1].source_end - WORDS[-1].end) * 1000)
+        self.assertTrue(ROOM_MS[0] <= lead_in <= ROOM_MS[1], lead_in)
+        self.assertTrue(ROOM_MS[0] <= tail <= ROOM_MS[1], tail)
+        self.assertEqual(SUNDAY['paperEdit']['opening']['leadInMs'], lead_in)
+
+    def test_a_breath_inside_a_linked_phrase_is_kept(self):
+        timeline = cut_timeline.load_cutlist(SUNDAY['cutlist'])
+        self.assertTrue(any(run.source_start < 564.6 and run.source_end > 565.15 for run in timeline.runs),
+                        'the 550 ms breath after "better," is not cut')
+
+    def test_a_long_pause_before_a_new_thought_is_tightened(self):
+        join = next(item for item in joins_from_frames(SUNDAY) if item['after'].text == 'again.')
+        self.assertEqual(join['kind'], 'new-thought')
+        self.assertLess(join['gap'], 1200)
+
+    def test_the_pauses_are_the_longer_ones_lex_chose(self):
+        self.assertEqual(cut_takes.SETTINGS['roomMs'], list(ROOM_MS))
+        self.assertEqual(cut_takes.SETTINGS['linkedGapMs'], list(GAP_MS['linked']))
+        self.assertEqual(cut_takes.SETTINGS['newThoughtGapMs'], list(GAP_MS['new-thought']))
+        text = cut_takes.render_paper_edit(SUNDAY['paperEdit'])
+        self.assertIn('200-300 ms', text)
+        self.assertIn('350-500 ms', text)
+        self.assertIn('up to 200 ms on a side', text)
+        self.assertNotIn('150-250 ms', text)
+        self.assertNotIn('250-450 ms', text)
+
+    def test_a_new_thought_silence_up_to_500_ms_is_left_alone(self):
+        # 480 ms is inside Lex's 350-500 ms range, so nothing is cut there.
+        result = plan_words([['Intro.', 0.5, 1.0], ['Next', 1.48, 1.8], ['thing.', 1.84, 2.2]])
+        self.assertEqual(result['paperEdit']['joins'], [])
+        self.assertEqual(len(result['cutlist']['segments']), 1)
+
+    def test_a_long_silence_before_a_new_thought_is_cut_to_350_500_ms(self):
+        result = plan_words([['Intro.', 0.5, 1.0], ['Next', 1.8, 2.1], ['thing.', 2.14, 2.5]])
+        joins = joins_from_frames(result, cut_timeline.load_words(
+            [['Intro.', 0.5, 1.0], ['Next', 1.8, 2.1], ['thing.', 2.14, 2.5]]))
+        self.assertEqual(len(joins), 1)
+        self.assertEqual(joins[0]['kind'], 'new-thought')
+        self.assertTrue(350 <= joins[0]['gap'] <= 500, joins[0]['gap'])
+        self.assertTrue(ROOM_MS[0] <= joins[0]['tail'] <= 200 and ROOM_MS[0] <= joins[0]['head'] <= 200)
+        self.assertTrue(abs(joins[0]['gap'] - 400) <= 34, joins[0]['gap'])
+
+    def test_a_new_thought_join_only_has_a_note_when_the_room_goes_past_200_ms(self):
+        words = [['Intro.', 0.5, 1.0], ['Next', 1.8, 2.1], ['thing.', 2.14, 2.5]]
+        join = plan_words(words)['paperEdit']['joins'][0]
+        self.assertTrue(join['tailMs'] <= 200 and join['headMs'] <= 200)
+        self.assertIsNone(join['note'])
+
+    def test_new_thought_pauses_hold_at_other_frame_rates(self):
+        words = [['Intro.', 0.5, 1.0], ['Next', 2.0, 2.3], ['thing.', 2.34, 2.7]]
+        for fps in (24, 25):
+            join = plan_words(words, fps=fps)['paperEdit']['joins'][0]
+            self.assertTrue(350 <= join['gapMs'] <= 500, f'{fps} fps: {join["gapMs"]} ms')
+            side = max(join['tailMs'], join['headMs'])
+            self.assertTrue(ROOM_MS[0] <= min(join['tailMs'], join['headMs']) and side <= 200 + 1000 // fps,
+                            f'{fps} fps: {join["tailMs"]} and {join["headMs"]} ms of room')
+            # A note appears only when a side went past 200 ms, and it names that room.
+            self.assertEqual(join['note'] is not None, side > 200, f'{fps} fps: {join}')
+            if side > 200:
+                self.assertIn(f'{side} ms of room on one side, over 200 ms', join['note'])
+
+    def test_a_long_pause_between_linked_phrases_is_cut_to_200_300_ms(self):
+        words = [['Intro', 0.5, 1.0], ['next', 2.0, 2.3], ['thing.', 2.34, 2.7]]
+        result = plan_words(words)
+        joins = joins_from_frames(result, cut_timeline.load_words(words))
+        self.assertEqual(len(joins), 1)
+        self.assertEqual(joins[0]['kind'], 'linked')
+        self.assertTrue(200 <= joins[0]['gap'] <= 300, joins[0]['gap'])
+        self.assertTrue(ROOM_MS[0] <= joins[0]['tail'] <= ROOM_MS[1] and ROOM_MS[0] <= joins[0]['head'] <= ROOM_MS[1])
+
+    def test_fades_are_noted(self):
+        self.assertEqual(SUNDAY['cutlist']['audioFadeMs'], 15)
+        self.assertTrue(all(item['fadeMs'] == 15 for item in SUNDAY['paperEdit']['joins']))
+        self.assertIn('15 ms', cut_takes.render_paper_edit(SUNDAY['paperEdit']))
+
+    def test_the_join_check_finds_no_problems(self):
+        report = join_check.check_joins(WORDS, cut_timeline.load_cutlist(SUNDAY['cutlist']))
+        problems = [flag for entry in report['joins'] + [report['opening'], report['ending']]
+                    for flag in entry['flags'] if flag['severity'] == 'problem']
+        self.assertEqual(problems, [])
+
+    def test_the_join_check_accepts_the_cutters_opening(self):
+        # Lex's choice of 2026-11-10: the join check wants 100-150 ms before the first word, as the cutter leaves.
+        report = join_check.check_joins(WORDS, cut_timeline.load_cutlist(SUNDAY['cutlist']))
+        self.assertEqual(report['opening']['flags'], [])
+        self.assertEqual(join_check.THRESHOLDS['leadInMs'], list(ROOM_MS))
+
+
+class OutputTests(unittest.TestCase):
+    def test_cut_list_uses_the_repo_schema(self):
+        cutlist = SUNDAY['cutlist']
+        self.assertEqual((cutlist['schemaVersion'], cutlist['fps']), (1, FPS))
+        cut_timeline.load_cutlist(cutlist)
+        self.assertEqual(cutlist['durationFrames'], sum(item['durationFrames'] for item in cutlist['segments']))
+        self.assertEqual(cutlist['segments'][0]['id'], 'C01')
+        self.assertEqual(set(cutlist['segments'][0]),
+                         {'id', 'sourceInFrame', 'sourceOutFrame', 'timelineStartFrame', 'durationFrames'})
+        self.assertEqual(cutlist['status'], 'proposal')
+
+    def test_paper_edit_waits_for_lex(self):
+        paper = SUNDAY['paperEdit']
+        self.assertEqual((paper['status'], paper['approvedByLex'], paper['rendered']), ('proposal', False, False))
+        text = cut_takes.render_paper_edit(paper)
+        self.assertTrue(text.startswith('# Paper edit'))
+        self.assertIn('Not approved', text)
+        self.assertIn('Nothing is cut or rendered', text)
+        for needle in ('92.78', 'Kept the earlier take', 'By the way, this part was not planned at all.'):
+            self.assertIn(needle, text)
+
+
+class WithoutScriptTests(unittest.TestCase):
+    def test_retakes_are_still_found_and_ad_libs_are_not_judged(self):
+        result = plan(script=None, demos=())
+        kept = kept_starts(result)
+        timeline = cut_timeline.load_cutlist(result['cutlist'])
+        for (start, end), take in CANDIDATES:
+            for word in take_from(take):
+                self.assertTrue(any(run.source_start <= word.start and word.end <= run.source_end
+                                    for run in timeline.runs), f'"{word.text}" in the take at {take}')
+            asked = [item for item in flags(result, 'possible-restart') if start - TOLERANCE <= item['end']
+                     and item['start'] <= end + TOLERANCE]
+            if start in (324.17, 362.15):
+                self.assertFalse([word for word in words_between(start, end) if round(word.start, 3) in kept])
+                self.assertEqual(asked, [], f'{start}-{end}')
+            else:
+                # Without a script nothing says these are one line said twice: exactly one flag, nothing cut.
+                self.assertEqual(len(asked), 1, f'{start}-{end}')
+                self.assertFalse([item for item in result['paperEdit']['removed'] if start <= item['start'] <= end])
+        spans = sorted((item['start'], item['end']) for item in result['paperEdit']['removed'])
+        self.assertFalse([pair for pair in zip(spans, spans[1:]) if pair[1][0] < pair[0][1]], 'removals overlap')
+        self.assertEqual(result['paperEdit']['adLibs'], [])
+        self.assertIn('No script', cut_takes.render_paper_edit(result['paperEdit']))
+        self.assertEqual(removed_at(result, 205.00)['reason'], 'worse-later-take')
+
+
+def plan_words(words, script=None, demos=(), fps=FPS):
+    return cut_takes.plan(cut_timeline.load_words(words), fps, script_text=script, demos=demos)
+
+
+def removed_texts(result):
+    return [item['text'] for item in result['paperEdit']['removed']]
+
+
+class CueTests(unittest.TestCase):
+    def test_a_quiet_again_is_removed_with_its_failed_attempt(self):
+        words = [['The', 92.78, 93.1], ['picture', 93.14, 93.6], ['from,', 93.64, 94.0], ['from', 94.04, 94.4],
+                 ['start', 94.44, 94.9], ['again', 96.2, 96.5], ['The', 98.0, 98.2], ['picture', 98.24, 98.6],
+                 ['shows', 98.64, 99.0], ['the', 99.04, 99.2], ['demo.', 99.24, 99.7]]
+        removal, = plan_words(words)['paperEdit']['removed']
+        self.assertEqual((removal['text'], removal['reason'], removal['keeps']),
+                         ('The picture from, from start again', 'retake-cue', 98.0))
+
+    def test_a_real_cue_is_still_a_cue_when_the_script_says_again_elsewhere(self):
+        script = 'So, again, keep it short.'
+        words = [['keep', 1.0, 1.2], ['it', 1.24, 1.4], ['long', 1.44, 1.8], ['again', 2.6, 2.9], ['keep', 3.6, 3.8],
+                 ['it', 3.84, 4.0], ['short.', 4.04, 4.5]]
+        self.assertEqual(removed_texts(plan_words(words, script)), ['keep it long again'])
+        # An "again" the script says, even as the first word, is speech.
+        words = [['Again,', 1.0, 1.3], ['keep', 1.9, 2.1], ['it', 2.14, 2.3], ['short.', 2.34, 2.8]]
+        result = plan_words(words, script)
+        self.assertEqual((removed_texts(result), result['paperEdit']['flags']), ([], []))
+
+    def test_again_with_pauses_both_sides_is_a_retake_cue(self):
+        words = [['Start', 1.0, 1.3], ['the', 1.34, 1.5], ['show', 1.54, 1.9], ['again', 2.6, 2.9],
+                 ['Start', 3.6, 3.9], ['the', 3.94, 4.1], ['show', 4.14, 4.5], ['now.', 4.54, 4.9]]
+        self.assertEqual(removed_texts(plan_words(words)), ['Start the show again'])
+
+    def test_a_retake_inside_a_marked_demo_is_flagged_instead_of_removed(self):
+        words = [['Start', 1.0, 1.3], ['the', 1.34, 1.5], ['show', 1.54, 1.9], ['again', 2.6, 2.9],
+                 ['Start', 3.6, 3.9], ['the', 3.94, 4.1], ['show', 4.14, 4.5], ['now.', 4.54, 4.9]]
+        result = plan_words(words, demos=[(0.5, 3.0)])
+        self.assertEqual(removed_texts(result), [])
+        flag, = result['paperEdit']['flags']
+        self.assertEqual(flag['code'], 'demo-protected')
+        self.assertIn('a quiet "again" marks a retake', flag['message'])
+
+    def test_again_inside_normal_speech_is_kept(self):
+        words = [['Say', 1.0, 1.3], ['it', 1.34, 1.5], ['again', 1.54, 1.9], ['louder.', 1.94, 2.4]]
+        result = plan_words(words)
+        self.assertEqual(removed_texts(result), [])
+        self.assertEqual(result['paperEdit']['flags'], [])
+
+    def test_again_and_again_is_speech_even_after_a_pause(self):
+        words = [['Refine,', 1.0, 1.4], ['again', 1.9, 2.2], ['and', 2.24, 2.4], ['again.', 2.44, 2.8]]
+        self.assertEqual(removed_texts(plan_words(words)), [])
+
+    def test_an_again_after_a_pause_with_a_different_restart_is_flagged_not_cut(self):
+        words = [['We', 1.0, 1.2], ['tried', 1.24, 1.6], ['it', 1.64, 1.8], ['again', 2.4, 2.7],
+                 ['today.', 2.74, 3.2]]
+        result = plan_words(words)
+        self.assertEqual(removed_texts(result), [])
+        self.assertEqual([item['code'] for item in result['paperEdit']['flags']], ['possible-retake-cue'])
+
+
+class RestartTests(unittest.TestCase):
+    def test_a_dropped_start_is_removed(self):
+        words = [['So', 1.0, 1.2], ['the', 1.24, 1.4], ['new', 1.44, 1.6], ['tool', 1.64, 1.8], ['So', 2.6, 2.8],
+                 ['the', 2.84, 3.0], ['new', 3.04, 3.2], ['tool', 3.24, 3.4], ['works.', 3.44, 3.9]]
+        result = plan_words(words)
+        self.assertEqual([(item['text'], item['reason']) for item in result['paperEdit']['removed']],
+                         [('So the new tool', 'abandoned-start')])
+
+    def test_a_dropped_start_of_under_four_words_is_flagged_not_cut(self):
+        # The paper edit's inspect-only restarts ("And then I—", "But I'm—") are this short.
+        for start in (['And', 'then', 'I—'], ["But", "I'm—"]):
+            words = [[text, 1.0 + 0.3 * number, 1.2 + 0.3 * number] for number, text in enumerate(start)]
+            words += [['and', 3.0, 3.2], ['then', 3.24, 3.4], ['I', 3.44, 3.5], ['look', 3.54, 3.8],
+                      ['again.', 3.84, 4.2]] if len(start) == 3 else \
+                [['but', 3.0, 3.2], ['I', 3.24, 3.3], ['managed', 3.34, 3.8], ['it.', 3.84, 4.0]]
+            for script in (None, 'And then I look again. But I managed it.'):
+                result = plan_words(words, script)
+                self.assertEqual(removed_texts(result), [], (start, script))
+                self.assertEqual([item['code'] for item in result['paperEdit']['flags']], ['possible-restart'],
+                                 (start, script))
+
+    def test_a_short_start_in_front_of_the_take_that_stays_is_listed_also_when_a_later_take_is_removed(self):
+        # Fifth whole-file look, 2026-11-16: the worse third reading made the first two one group of takes, and
+        # the three-word start in front of the kept take was cut without the listing the rules promise.
+        words = [['And', 1.0, 1.2], ['then', 1.24, 1.4], ['I—', 1.44, 1.6]] + said('And then I look at the timeline.', 4.0) \
+            + said('And then I um um look at the timeline.', 8.0)
+        result = plan_words(words, 'And then I look at the timeline.')
+        self.assertEqual(removed_texts(result), ['And then I um um look at the timeline.'])
+        flag, = flags(result, 'possible-restart')
+        self.assertEqual(flag['start'], 1.0)
+        # In a run of failed tries before the take that stays, a short start still goes with the run.
+        words = said('And then I look at the.', 1.0) + [['And', 4.0, 4.2], ['then', 4.24, 4.4], ['I—', 4.44, 4.6]] \
+            + said('And then I look at the timeline.', 7.0)
+        result = plan_words(words, 'And then I look at the timeline.')
+        self.assertEqual(removed_texts(result), ['And then I look at the. And then I—'])
+        # Review round 1: an earlier take of the line minutes before does not make the short start part of a run.
+        words = said('And then I look at the timeline.', 1.0) + said('Other things happen.', 4.0) \
+            + [['And', 200.0, 200.2], ['then', 200.24, 200.4], ['I—', 200.44, 200.6]] \
+            + said('And then I look at the timeline.', 203.0)
+        result = plan_words(words, 'And then I look at the timeline. Other things happen.')
+        self.assertEqual(removed_texts(result), ['And then I look at the timeline.'])
+        self.assertEqual(result['paperEdit']['removed'][0]['keeps'], 203.0)
+        flag, = flags(result, 'possible-restart')
+        self.assertEqual(flag['start'], 200.0)
+
+    def test_two_lines_that_only_open_alike_are_both_kept(self):
+        words = [['This', 1.0, 1.2], ['is', 1.24, 1.4], ['the', 1.44, 1.6], ['tool.', 1.64, 2.0],
+                 ['This', 2.6, 2.8], ['is', 2.84, 3.0], ['the', 3.04, 3.2], ['price.', 3.24, 3.6]]
+        self.assertEqual(removed_texts(plan_words(words)), [])
+        self.assertEqual(removed_texts(plan_words(words, 'This is the tool. This is the price.')), [])
+
+    def test_an_ad_lib_said_twice_keeps_the_last_take_even_with_a_script(self):
+        words = [['Quick', 1.0, 1.2], ['note', 1.24, 1.4], ['on', 1.44, 1.6], ['pricing.', 1.64, 2.0],
+                 ['Quick', 2.6, 2.8], ['note', 2.84, 3.0], ['on', 3.04, 3.2], ['pricing.', 3.24, 3.6]]
+        result = plan_words(words, 'This is the tool.')
+        self.assertEqual([(item['text'], item['reason']) for item in result['paperEdit']['removed']],
+                         [('Quick note on pricing.', 'earlier-take')])
+        self.assertEqual([item['text'] for item in result['paperEdit']['adLibs']], ['Quick note on pricing.'])
+
+    def test_a_restart_after_a_comma_is_cut_when_the_script_says_the_line_once(self):
+        words = [['What', 619.03, 619.3], ['would', 619.34, 619.6], ['you', 619.64, 619.9], ['build', 619.94, 620.3],
+                 ['if', 620.34, 620.6], ['you,', 620.64, 621.1], ['What', 621.68, 621.9], ['would', 621.94, 622.2],
+                 ['you', 622.24, 622.5], ['build', 622.54, 622.9], ['with', 622.94, 623.2], ['this?', 623.24, 623.5]]
+        result = plan_words(words, 'My question for you. What would you build with this?')
+        self.assertEqual([(item['text'], item['reason']) for item in result['paperEdit']['removed']],
+                         [('What would you build if you,', 'abandoned-start')])
+        self.assertEqual(result['paperEdit']['flags'], [])
+        # Without a script nothing says it is one line said twice: flag it, do not cut.
+        result = plan_words(words)
+        self.assertEqual(removed_texts(result), [])
+        self.assertEqual([item['code'] for item in result['paperEdit']['flags']], ['possible-restart'])
+
+    def test_a_repeat_after_a_comma_that_the_script_has_as_two_lines_is_flagged_not_cut(self):
+        words = [['The', 1.0, 1.2], ['tool', 1.24, 1.5], ['is', 1.54, 1.7], ['fast,', 1.74, 2.1],
+                 ['the', 2.6, 2.8], ['tool', 2.84, 3.1], ['is', 3.14, 3.3], ['cheap.', 3.34, 3.8]]
+        # Two lines in the script: nothing to ask. One line with a comma: the repeat may be a restart, so it is listed.
+        for script, asked in (('The tool is fast. The tool is cheap.', []),
+                              ('The tool is fast, the tool is cheap.', ['possible-restart'])):
+            result = plan_words(words, script)
+            self.assertEqual(removed_texts(result), [], script)
+            self.assertEqual([item['code'] for item in result['paperEdit']['flags']], asked, script)
+
+    def test_a_different_sentence_between_two_openings_stops_the_restart(self):
+        words = [['Next', 1.0, 1.2], ['week', 1.24, 1.5], ['I', 1.54, 1.6], ['will', 1.64, 1.8], ['show', 1.84, 2.1],
+                 ['you', 2.14, 2.4], ['That', 4.0, 4.2], ['is', 4.24, 4.4], ['all', 4.44, 4.6], ['today.', 4.64, 5.0],
+                 ['Next', 6.0, 6.2], ['week', 6.24, 6.5], ['I', 6.54, 6.6], ['will', 6.64, 6.8],
+                 ['show', 6.84, 7.1], ['the', 7.14, 7.3], ['export.', 7.34, 7.8]]
+        self.assertEqual(removed_texts(plan_words(words)), [])
+
+    def test_two_script_lines_that_open_alike_are_both_kept(self):
+        words = [['Here', 1.0, 1.2], ['is', 1.24, 1.4], ['the', 1.44, 1.6], ['plan.', 1.64, 2.0],
+                 ['Here', 3.0, 3.2], ['is', 3.24, 3.4], ['the', 3.44, 3.6], ['plan', 3.64, 3.9], ['for', 3.94, 4.1],
+                 ['the', 4.14, 4.3], ['whole', 4.34, 4.6], ['week.', 4.64, 5.0]]
+        self.assertEqual(removed_texts(plan_words(words, 'Here is the plan. Here is the plan for the whole week.')),
+                         [])
+
+    def test_talk_between_two_openings_that_belongs_to_another_line_stays(self):
+        script = 'I think this is great. The next thing is the board. I think this is the best part.'
+        words = [['I', 1.0, 1.1], ['think', 1.14, 1.4], ['this', 1.44, 1.6], ['is', 1.64, 1.8], ['great', 1.84, 2.2],
+                 ['and', 3.0, 3.2], ['the', 3.24, 3.4], ['next', 3.44, 3.7], ['thing', 3.74, 4.0], ['is', 4.04, 4.2],
+                 ['the', 4.24, 4.4], ['board', 4.44, 4.8],
+                 ['I', 6.0, 6.1], ['think', 6.14, 6.4], ['this', 6.44, 6.6], ['is', 6.64, 6.8], ['the', 6.84, 7.0],
+                 ['best', 7.04, 7.3], ['part.', 7.34, 7.8]]
+        self.assertEqual(removed_texts(plan_words(words, script)), [])
+        result = plan_words(words)
+        self.assertEqual(removed_texts(result), [])
+        flag, = flags(result, 'possible-restart')
+        self.assertIn('I think this is', flag['text'])
+        self.assertEqual(flag['start'], 1.0)
+        self.assertIn('6.00', flag['message'])
+
+    def test_a_short_sentence_and_a_longer_different_one_that_open_alike_are_asked_about_not_cut(self):
+        words = [['This', 1.0, 1.2], ['is', 1.24, 1.4], ['the', 1.44, 1.6], ['tool.', 1.64, 2.0], ['This', 3.8, 4.0],
+                 ['is', 4.04, 4.2], ['the', 4.24, 4.4], ['price', 4.44, 4.7], ['we', 4.74, 4.9], ['pay', 4.94, 5.1],
+                 ['for', 5.14, 5.3], ['it.', 5.34, 5.7]]
+        result = plan_words(words)
+        self.assertEqual(removed_texts(result), [])
+        self.assertEqual([item['code'] for item in result['paperEdit']['flags']], ['possible-restart'])
+
+    def test_a_line_the_script_says_twice_in_a_row_keeps_both(self):
+        script = 'Thanks for watching this week. Thanks for watching this week.'
+        words = [['Thanks', 1.0, 1.3], ['for', 1.34, 1.5], ['watching', 1.54, 1.9], ['this', 1.94, 2.1],
+                 ['week.', 2.14, 2.5], ['Thanks', 4.5, 4.8], ['for', 4.84, 5.0], ['watching', 5.04, 5.4],
+                 ['this', 5.44, 5.6], ['week.', 5.64, 6.0]]
+        self.assertEqual(removed_texts(plan_words(words, script)), [])
+
+    def test_an_unfinished_start_inside_a_marked_demo_is_flagged_once_instead_of_cut(self):
+        words = [['So', 1.0, 1.2], ['next,', 1.3, 1.6], ['the', 1.64, 1.8], ['animation', 1.84, 2.3],
+                 ['skills', 2.34, 2.7], ['Next,', 4.0, 4.3], ['the', 4.34, 4.5], ['animation', 4.54, 5.0],
+                 ['skills', 5.04, 5.4], ['make', 5.44, 5.6], ['every', 5.64, 5.9], ['move', 5.94, 6.2],
+                 ['feel', 6.24, 6.4], ['smooth.', 6.44, 6.9]]
+        script = 'Next, the animation skills make every move feel smooth.'
+        for text in (script, None):
+            result = plan_words(words, text, demos=[(0.5, 7.0)])
+            self.assertEqual(removed_texts(result), [], text)
+            self.assertEqual([item['code'] for item in result['paperEdit']['flags']], ['demo-protected'], text)
+
+    def test_an_unscripted_line_that_only_opens_like_the_take_is_an_ad_lib(self):
+        script = 'Setting up the AI took three tries.'
+        words = [['Setting', 1.0, 1.3], ['up', 1.34, 1.5], ['the', 1.54, 1.7], ['lights', 1.74, 2.1],
+                 ['was', 2.14, 2.3], ['a', 2.34, 2.4], ['real', 2.44, 2.7], ['pain', 2.74, 3.0], ['today.', 3.04, 3.5],
+                 ['Setting', 5.5, 5.8], ['up', 5.84, 6.0], ['the', 6.04, 6.2], ['AI', 6.24, 6.5], ['took', 6.54, 6.8],
+                 ['three', 6.84, 7.1], ['tries.', 7.14, 7.6]]
+        result = plan_words(words, script)
+        self.assertEqual(removed_texts(result), [])
+        self.assertEqual([item['text'] for item in result['paperEdit']['adLibs']],
+                         ['Setting up the lights was a real pain today.'])
+
+    def test_an_ad_lib_followed_by_a_different_line_that_opens_alike_is_still_listed(self):
+        script = 'And then I look again at the timeline.'
+        words = [['And', 1.0, 1.2], ['then', 1.24, 1.4], ['I', 1.44, 1.5], ['spilled', 1.54, 1.9], ['my', 1.94, 2.1],
+                 ['coffee.', 2.14, 2.6], ['And', 4.0, 4.2], ['then', 4.24, 4.4], ['I', 4.44, 4.5], ['look', 4.54, 4.8],
+                 ['again', 4.84, 5.1], ['at', 5.14, 5.2], ['the', 5.24, 5.4], ['timeline.', 5.44, 5.9]]
+        result = plan_words(words, script)
+        self.assertEqual(removed_texts(result), [])
+        self.assertEqual([item['text'] for item in result['paperEdit']['adLibs']], ['And then I spilled my coffee.'])
+
+    def test_failed_tries_for_different_takes_stay_separate_removals(self):
+        words = [['So', 1.0, 1.2], ['the', 1.24, 1.4], ['new', 1.44, 1.6], ['tool', 1.64, 1.8], ['So', 2.6, 2.8],
+                 ['the', 2.84, 3.0], ['new', 3.04, 3.2], ['tool', 3.24, 3.4], ['works.', 3.44, 3.9],
+                 ['Then', 5.0, 5.2], ['the', 5.24, 5.4], ['robot', 5.44, 5.7], ['ships', 5.74, 6.0], ['Then', 7.0, 7.2],
+                 ['the', 7.24, 7.4], ['robot', 7.44, 7.7], ['ships', 7.74, 8.0], ['it.', 8.04, 8.4]]
+        result = plan_words(words)
+        self.assertEqual([(item['text'], item['keeps']) for item in result['paperEdit']['removed']],
+                         [('So the new tool', 2.6), ('Then the robot ships', 7.0)])
+
+    def test_a_stray_word_after_a_short_breath_still_leaves_a_restart(self):
+        words = [['So', 1.0, 1.2], ['the', 1.24, 1.4], ['new', 1.44, 1.6], ['tool', 1.64, 1.8], ['and', 2.3, 2.5],
+                 ['So', 3.0, 3.2], ['the', 3.24, 3.4], ['new', 3.44, 3.6], ['tool', 3.64, 3.8], ['works.', 3.84, 4.3]]
+        result = plan_words(words)
+        self.assertEqual([(item['text'], item['keeps']) for item in result['paperEdit']['removed']],
+                         [('So the new tool and', 3.0)])
+
+    def test_no_removal_reaches_across_a_marked_demo(self):
+        words = [['So', 1.0, 1.2], ['the', 1.24, 1.4], ['new', 1.44, 1.7], ['and', 2.1, 2.2], ['here', 2.24, 2.4],
+                 ['is', 2.44, 2.5], ['the', 2.54, 2.7], ['screen', 2.74, 2.9], ['So', 4.0, 4.2], ['the', 4.24, 4.4],
+                 ['new', 4.44, 4.6], ['tool', 4.64, 4.9], ['So', 6.0, 6.2], ['the', 6.24, 6.4], ['new', 6.44, 6.6],
+                 ['tool', 6.64, 6.8], ['works.', 6.84, 7.3]]
+        result = plan_words(words, demos=[(2.0, 3.0)])
+        self.assertEqual([(item['text'], item['keeps']) for item in result['paperEdit']['removed']],
+                         [('So the new tool', 6.0)])
+        kept = kept_starts(result, cut_timeline.load_words(words))
+        self.assertTrue({1.0, 2.1, 2.74} <= kept, 'the words before and inside the demo stay')
+        flag, = flags(result, 'possible-restart')
+        self.assertEqual(flag['start'], 1.0)
+        self.assertIn('6.00', flag['message'])
+        # With a script the start would be cut, but the demo between stops it.
+        result = plan_words(words, 'So the new tool works.', demos=[(2.0, 3.0)])
+        self.assertTrue({1.0, 2.1, 2.74} <= kept_starts(result, cut_timeline.load_words(words)))
+        self.assertIn('demo-protected', [item['code'] for item in result['paperEdit']['flags']])
+
+    def test_a_far_take_of_a_line_with_none_complete_is_never_removed(self):
+        script = 'The board shows every task.'
+        words = []
+        for start in (1.0, 10.0, 200.0):
+            words += [['The', start, start + 0.2], ['board', start + 0.24, start + 0.5], ['shows.', start + 0.54,
+                      start + 0.9]]
+        result = plan_words(words, script)
+        kept = kept_starts(result, cut_timeline.load_words(words))
+        self.assertTrue({10.0, 200.0} <= kept and 1.0 not in kept, 'the last of the near pair and the far take stay')
+        far, = [item for item in flags(result, 'no-complete-take') if 'more than 60 s' in item['message']]
+        self.assertIn('200.00', far['message'])
+        # The far take first: it stays too.
+        words = []
+        for start in (1.0, 191.0, 200.0):
+            words += [['The', start, start + 0.2], ['board', start + 0.24, start + 0.5], ['shows.', start + 0.54,
+                      start + 0.9]]
+        kept = kept_starts(plan_words(words, script), cut_timeline.load_words(words))
+        self.assertTrue({1.0, 200.0} <= kept and 191.0 not in kept)
+
+    def test_a_long_pause_inside_a_sentence_without_a_restart_stays(self):
+        words = [['So', 1.0, 1.2], ['I', 1.24, 1.3], ['click', 1.34, 1.6], ['here', 1.64, 1.9], ['and', 4.0, 4.2],
+                 ['the', 4.24, 4.4], ['page', 4.44, 4.7], ['opens.', 4.74, 5.2],
+                 ['So', 6.0, 6.2], ['I', 6.24, 6.3], ['click', 6.34, 6.6], ['save', 6.64, 6.9], ['now.', 6.94, 7.3]]
+        self.assertEqual(removed_texts(plan_words(words)), [])
+        self.assertEqual(removed_texts(plan_words(words, 'So I click here and the page opens. So I click save now.')),
+                         [])
+
+    def test_repeating_on_purpose_after_a_comma_is_flagged_not_cut(self):
+        words = [['The', 1.0, 1.2], ['tool', 1.24, 1.5], ['is', 1.54, 1.7], ['fast,', 1.74, 2.1],
+                 ['the', 2.6, 2.8], ['tool', 2.84, 3.1], ['is', 3.14, 3.3], ['cheap.', 3.34, 3.8]]
+        result = plan_words(words)
+        self.assertEqual(removed_texts(result), [])
+        self.assertEqual([item['code'] for item in result['paperEdit']['flags']], ['possible-restart'])
+
+    def test_a_line_the_script_says_twice_is_not_treated_as_a_retake(self):
+        script = 'Thanks for watching this week. Next up the demo. Thanks for watching this week.'
+        words = [['Thanks', 1.0, 1.3], ['for', 1.34, 1.5], ['watching', 1.54, 1.9], ['this', 1.94, 2.1],
+                 ['week.', 2.14, 2.5], ['Next', 3.0, 3.3], ['up', 3.34, 3.5], ['the', 3.54, 3.7], ['demo.', 3.74, 4.1],
+                 ['Thanks', 4.6, 4.9], ['for', 4.94, 5.1], ['watching', 5.14, 5.5], ['this', 5.54, 5.7],
+                 ['week.', 5.74, 6.1]]
+        self.assertEqual(removed_texts(plan_words(words, script)), [])
+
+
+def said(text, at, pause=0.0):
+    """Made-up word times for a sentence that starts at this second; pause: silence added before it."""
+    words, at = [], at + pause
+    for word in text.split():
+        words.append([word, round(at, 2), round(at + 0.26, 2)])
+        at += 0.3
+    return words
+
+
+def remove(cutter, first, last):
+    """Mark words as removed the way an earlier step would have, past the guard in drop(): for the last check."""
+    for index in range(first, last + 1):
+        cutter.keep[index] = False
+    cutter.removed.append({'first': first, 'last': last, 'reason': 'earlier-take', 'keeps': last + 1})
+
+
+class OneScriptLineTests(unittest.TestCase):
+    """The script may join two sentences into one line, or say a line twice: neither makes them takes of each other
+    (second look on release #35, 2026-11-16)."""
+    SCRIPT = 'My intro. The camera is easy to use and the battery lasts all day. The end.'
+
+    def test_two_sentences_the_script_joins_into_one_line_are_both_kept(self):
+        words = said('The camera is easy to use.', 1.0) + said('The battery lasts all day.', 3.2)
+        result = plan_words(words, self.SCRIPT)
+        self.assertEqual(removed_texts(result), [])
+        self.assertEqual(result['paperEdit']['flags'], [])
+        self.assertEqual(kept_starts(result, cut_timeline.load_words(words)), {word[1] for word in words})
+
+    def test_two_parts_of_one_line_that_open_alike_are_both_kept_however_long_the_pause(self):
+        script = 'The camera is easy to use and the camera is cheap.'
+        for pause in (0.4, 2.0):
+            words = said('The camera is easy to use.', 1.0) + said('The camera is cheap.', 2.8, pause)
+            self.assertEqual(removed_texts(plan_words(words, script)), [], pause)
+
+    def test_a_whole_take_of_the_line_still_replaces_its_two_parts(self):
+        words = said('The camera is easy to use.', 1.0) + said('The battery lasts all day.', 3.2) \
+            + said('The camera is easy to use and the battery lasts all day.', 6.0)
+        result = plan_words(words, self.SCRIPT)
+        self.assertEqual(removed_texts(result), ['The camera is easy to use. The battery lasts all day.'])
+        self.assertEqual(result['paperEdit']['removed'][0]['keeps'], 6.0)
+
+    def test_a_second_take_of_one_part_replaces_only_that_part(self):
+        words = said('The camera is easy to use.', 1.0) + said('The camera is easy to use.', 3.2) \
+            + said('The battery lasts all day.', 5.4)
+        result = plan_words(words, self.SCRIPT)
+        self.assertEqual([(item['start'], item['text']) for item in result['paperEdit']['removed']],
+                         [(1.0, 'The camera is easy to use.')])
+
+    def test_a_take_that_changes_the_end_of_the_line_is_still_a_take(self):
+        script = 'The review page saves every comment.'
+        words = said('The review page keeps all comments.', 1.0) + said('The review page saves every comment.', 4.0)
+        self.assertEqual(removed_texts(plan_words(words, script)), ['The review page keeps all comments.'])
+
+    def test_a_line_the_script_says_twice_keeps_both_when_the_transcript_misses_the_full_stop(self):
+        script = 'Thanks for watching this week. Thanks for watching this week.'
+        words = said('Thanks for watching this week', 1.0) + said('Thanks for watching this week.', 3.5)
+        result = plan_words(words, script)
+        self.assertEqual(removed_texts(result), [])
+        # The first reading says the whole line and the next one starts a line: the script puts a full stop there.
+        self.assertEqual(result['paperEdit']['flags'], [])
+
+    def test_a_dropped_start_of_a_line_the_script_says_twice_is_listed_not_cut(self):
+        script = 'Thanks for watching this week. Thanks for watching this week.'
+        words = said('Thanks for watching this', 1.0) + said('Thanks for watching this week.', 3.0) \
+            + said('Thanks for watching this week.', 6.0)
+        result = plan_words(words, script)
+        self.assertEqual(removed_texts(result), [])
+        flag, = result['paperEdit']['flags']
+        self.assertEqual((flag['code'], flag['start']), ('possible-restart', 1.0))
+        self.assertIn('script says this line more than once', flag['message'])
+
+    def test_a_part_of_the_line_without_its_full_stop_is_not_cut_as_a_dropped_start(self):
+        # The transcript often leaves a full stop off: the first part then looks like a start that was dropped.
+        words = said('The camera is easy to use', 1.0) + said('The battery lasts all day.', 3.2)
+        self.assertEqual(removed_texts(plan_words(words, self.SCRIPT)), [])
+        script = 'The camera is easy to use and the camera is cheap.'
+        for pause in (0.4, 2.0):
+            words = said('The camera is easy to use', 1.0) + said('The camera is cheap.', 2.8, pause)
+            result = plan_words(words, script)
+            self.assertEqual(removed_texts(result), [], pause)
+            flag, = result['paperEdit']['flags']
+            self.assertIn(flag['code'], ('possible-restart', 'take-says-more'), pause)
+            self.assertIn('Left in', flag['message'])
+
+    def test_a_script_line_of_its_own_without_its_full_stop_stays(self):
+        words = said('The tool is fast', 1.0) + said('The tool is cheap.', 2.6)
+        result = plan_words(words, 'The tool is fast. The tool is cheap.')
+        self.assertEqual(removed_texts(result), [])
+        self.assertEqual(result['paperEdit']['flags'], [])
+        # A start that says most of a line of its own, but not through to its end, is listed.
+        longer = said('The tool is really fast', 1.0) + said('The tool is really cheap.', 2.9)
+        result = plan_words(longer, 'The tool is really fast today. The tool is really cheap.')
+        self.assertEqual(removed_texts(result), [])
+        flag, = result['paperEdit']['flags']
+        self.assertEqual(flag['code'], 'possible-restart')
+        self.assertIn('The script has both', flag['message'])
+        # Without a script nothing says they are two lines: a start repeated after a pause is a dropped start.
+        self.assertEqual(removed_texts(plan_words(words)), ['The tool is fast'])
+
+    def test_a_dropped_start_with_a_changed_word_is_still_cut_when_two_lines_open_alike(self):
+        words = said('The tool is quick', 1.0) + said('The tool is fast.', 2.6) + said('The tool is cheap.', 4.4)
+        result = plan_words(words, 'The tool is fast. The tool is cheap.')
+        self.assertEqual(removed_texts(result), ['The tool is quick'])
+
+    def test_a_retake_of_one_part_of_the_line_loses_only_its_dropped_start(self):
+        words = said('The camera is easy to use.', 1.0) + said('The battery lasts all', 3.2) \
+            + said('The battery lasts all day.', 5.2)
+        self.assertEqual(removed_texts(plan_words(words, self.SCRIPT)), ['The battery lasts all'])
+
+    def test_a_whole_script_line_that_the_next_line_repeats_stays(self):
+        # Whole-file look, 2026-11-16: the next line opens with every word of this one, as a restart would.
+        script = 'The tool is fast. The tool is fast and easy to use.'
+        words = said('The tool is fast', 1.0) + said('The tool is fast and easy to use.', 2.6)
+        result = plan_words(words, script)
+        self.assertEqual(removed_texts(result), [])
+        self.assertEqual(result['paperEdit']['flags'], [])
+        # Second whole-file look: a second reading of the long line must not take the short line with it.
+        words += said('The tool is fast and easy to use.', 8.0)
+        result = plan_words(words, script)
+        self.assertEqual(removed_texts(result), ['The tool is fast and easy to use.'])
+        self.assertEqual(result['paperEdit']['removed'][0]['start'], 2.6)
+        # A start that stops part way through its own line is still a dropped start.
+        words = said('The tool is fast and', 1.0) + said('The tool is fast and easy to use.', 2.8)
+        self.assertEqual(removed_texts(plan_words(words, 'Hello there. The tool is fast and easy to use.')),
+                         ['The tool is fast and'])
+
+    def test_two_lines_with_the_same_words_in_another_order_are_both_kept(self):
+        # Whole-file look, 2026-11-16: both sentences fit the second line equally well when word order is ignored.
+        text = 'The camera beats the phone. The phone beats the camera.'
+        words = said('The camera beats the phone.', 1.0) + said('The phone beats the camera.', 3.2)
+        result = plan_words(words, text)
+        self.assertEqual(removed_texts(result), [])
+        self.assertEqual(result['paperEdit']['flags'], [])
+
+    def test_a_take_that_overlaps_two_parts_does_not_make_them_takes_of_each_other(self):
+        # Whole-file look, 2026-11-16: the middle sentence shares words with both parts, so all three were one group
+        # and only the last sentence stayed.
+        words = said('The camera is easy to use.', 1.0) + said('The camera is easy and the battery lasts.', 4.0) \
+            + said('The battery lasts all day.', 8.0)
+        result = plan_words(words, self.SCRIPT)
+        self.assertEqual(removed_texts(result), [])
+        # Lex is told three things: no take is complete, the last one does not say what the others say, and the
+        # middle sentence ends with the words the last one opens with.
+        self.assertEqual(sorted(item['code'] for item in result['paperEdit']['flags']),
+                         ['no-complete-take', 'possible-restart', 'take-says-more', 'take-says-more'])
+        told = flags(result, 'take-says-more')
+        self.assertEqual([item['start'] for item in told], [1.0, 4.0])
+        self.assertTrue(all('8.00' in item['message'] for item in told))
+
+    def test_a_take_the_kept_one_does_not_cover_stays_and_is_listed(self):
+        # The last take picks the line up half way: it does not say what the first one says, so the first stays.
+        words = said('The camera is easy to use and the battery', 1.0) + said('And the battery lasts all day.', 5.0)
+        result = plan_words(words + said('The end.', 8.0), self.SCRIPT)
+        self.assertEqual(removed_texts(result), [])
+        # Second whole-file look, 2026-11-16: a shorter restart repeats the opening but never says "the battery".
+        words = said('The camera is easy to use and the battery', 1.0) + said('The camera is easy to use.', 5.0)
+        result = plan_words(words, self.SCRIPT)
+        self.assertEqual(removed_texts(result), [])
+        flag, = result['paperEdit']['flags']
+        self.assertEqual((flag['code'], flag['start']), ('take-says-more', 1.0))
+        self.assertIn('5.00', flag['message'])
+
+    def test_a_sentence_that_says_a_script_word_the_kept_take_leaves_out_stays(self):
+        # Fourth whole-file look, 2026-11-16: five of the six script words of the first sentence are in the
+        # second, but "use" is not, and the script says both.
+        script = 'The camera is easy to use and carry.'
+        words = said('The camera is easy to use.', 1.0) + said('The camera is easy to carry.', 3.4)
+        result = plan_words(words, script)
+        self.assertEqual(removed_texts(result), [])
+        flag, = flags(result, 'take-says-more')
+        self.assertEqual(flag['start'], 1.0)
+        # A wrong word that the script does not have is no reason to keep a take.
+        words = said('The camera is easy to move.', 1.0) + said('The camera is easy to carry.', 3.4)
+        self.assertEqual(removed_texts(plan_words(words, 'The camera is easy to carry.')),
+                         ['The camera is easy to move.'])
+
+    def test_a_short_script_line_that_a_retake_cue_would_remove_stays(self):
+        # Fourth whole-file look, 2026-11-16: the script says "Thanks again." and the "again" has a pause on both
+        # sides, as a retake cue has.
+        script = 'Thanks again. Next comes the demo.'
+        words = [['Thanks', 1.0, 1.3], ['again.', 1.94, 2.3], ['Okay,', 3.14, 3.4], ['next', 3.44, 3.7],
+                 ['comes', 3.74, 4.0], ['the', 4.04, 4.2], ['demo.', 4.24, 4.7]]
+        result = plan_words(words, script)
+        self.assertEqual(removed_texts(result), [])
+        self.assertEqual(len(result['paperEdit']['flags']), 1)
+        # The same words without that script line are a retake cue, as before.
+        self.assertEqual(removed_texts(plan_words(words)), ['Thanks again.'])
+        # A short script line is counted at sentence ends only, not inside another sentence.
+        cutter = cut_takes.Cutter(cut_timeline.load_words(said('So thanks again for that. The end.', 1.0)), FPS,
+                                  'Thanks again. The end.')
+        remove(cutter, 0, 4)
+        cutter.keep_script_lines()
+        self.assertEqual(cutter.keep, [False] * 5 + [True] * 2)
+
+    def test_script_sentences_end_before_a_closing_quote_or_bold_mark_and_at_a_new_paragraph(self):
+        # Fifth whole-file look, 2026-11-16: '"The tool is fast." Next comes the demo.' was read as one line, so
+        # the script's own repeat of the first sentence was not seen.
+        lines = cut_takes.script_sentences
+        self.assertEqual(lines('"The tool is fast." Next comes the demo. "The tool is fast."'),
+                         [['the', 'tool', 'is', 'fast'], ['next', 'comes', 'the', 'demo'], ['the', 'tool', 'is', 'fast']])
+        self.assertEqual(lines('**The tool is fast.** Next up: _the demo!_ (It works.) Done?'),
+                         [['the', 'tool', 'is', 'fast'], ['next', 'up', 'the', 'demo'], ['it', 'works'], ['done']])
+        # A heading, a blank line or a list item ends a sentence that has no full stop.
+        self.assertEqual(lines('# Intro\nThe tool is fast\n\nNext comes\nthe demo\n## Part two\n- First point\n- Second point\n1. Third point'),
+                         [['the', 'tool', 'is', 'fast'], ['next', 'comes', 'the', 'demo'], ['first', 'point'],
+                          ['second', 'point'], ['third', 'point']])
+        self.assertEqual(lines('See [the notes] here. Version 2.5 is out.'), [['see', 'here'], ['version', '25', 'is', 'out']])
+        script = '"The tool is fast." Next comes the demo. "The tool is fast."'
+        words = said('The tool is fast.', 1.0) + said('Next comes this demo.', 4.0) + said('The tool is fast.', 7.0)
+        result = plan_words(words, script)
+        self.assertEqual(removed_texts(result), [])
+        self.assertEqual(kept_starts(result, cut_timeline.load_words(words)), {word[1] for word in words})
+
+    def test_a_take_left_in_that_a_later_step_removes_in_part_is_still_listed_for_what_stays(self):
+        cutter = cut_takes.Cutter(cut_timeline.load_words(said('The camera is easy to use. The end.', 1.0)), FPS,
+                                  'The camera is easy to use. The end.')
+        cutter.flag('take-says-more', 0, 5, 'Left in.')
+        remove(cutter, 0, 1)
+        cutter.restarted_lines()
+        flag, = cutter.flags
+        self.assertEqual((flag['code'], flag['start'], flag['text']), ('take-says-more', 1.6, 'is easy to use.'))
+        remove(cutter, 2, 5)
+        cutter.restarted_lines()
+        self.assertEqual(cutter.flags, [])
+        # The end moves too when the tail goes.
+        cutter = cut_takes.Cutter(cut_timeline.load_words(said('The camera is easy to use. The end.', 1.0)), FPS,
+                                  'The camera is easy to use. The end.')
+        cutter.flag('take-says-more', 0, 5, 'Left in.')
+        remove(cutter, 3, 5)
+        cutter.restarted_lines()
+        flag, = cutter.flags
+        self.assertEqual((flag['start'], flag['end'], flag['text']), (1.0, 1.86, 'The camera is'))
+
+    def test_a_direction_in_brackets_that_runs_over_a_blank_line_or_a_list_is_left_out(self):
+        self.assertEqual(cut_takes.script_sentences('Say hello. [B-roll:\n- shot one\n\n- shot two] Then go on.'),
+                         [['say', 'hello'], ['then', 'go', 'on']])
+        # A direction never runs past a heading, so a missing closing bracket cannot swallow the scenes after it.
+        self.assertEqual(cut_takes.script_sentences('Say hello. [B-roll\n## Two\nThen go on. [music] The end.'),
+                         [['say', 'hello'], ['broll'], ['then', 'go', 'on'], ['the', 'end']])
+
+    def test_a_link_in_the_script_never_leaves_its_address_behind_as_a_word(self):
+        # Release review of 2026-11-16 (R1-1): the prompter cue file is what --script gets. Its link line
+        # "[The survey: 300 valid responses.](https://example.com/survey)" left the address behind, glued onto the
+        # next line as "httpsexamplecomsurvey two out of three had a problem".
+        lines = cut_takes.script_sentences
+        cue_file = lines((FIXTURES / 'scene-cue-file.md').read_text(encoding='utf-8'))
+        self.assertEqual([word for line in cue_file for word in line if word.startswith('http')], [])
+        self.assertIn(['two', 'out', 'of', 'three', 'had', 'a', 'problem'], cue_file)
+        # A link on a line of its own is a direction with an address: not spoken, like any other direction.
+        self.assertEqual(lines('Say hello.\n[The survey: 300 responses.](https://example.com/survey)\nYes.'),
+                         [['say', 'hello'], ['yes']])
+        self.assertEqual(lines('Sources\n- [The survey](https://example.com/survey "300 responses")\n- Thanks for watching.'),
+                         [['sources'], ['thanks', 'for', 'watching']])
+        self.assertEqual(lines('Sources\n1. [The survey](https://example.com/survey)\n2) Thanks.'), [['sources'], ['thanks']])
+        # A link inside a spoken line is read as its text, also when the address has brackets of its own.
+        self.assertEqual(lines('Open [the practice site](https://example.com/practice-site) now. Then wait.'),
+                         [['open', 'the', 'practice', 'site', 'now'], ['then', 'wait']])
+        self.assertEqual(lines('Read [the page](https://example.com/wiki/Site_(web)) first.'),
+                         [['read', 'the', 'page', 'first']])
+        # Second look, 2026-11-16 (SL-1): the address ends at its own closing bracket, however many pairs it holds.
+        self.assertEqual(lines('Read [the page](pages/Site_(web_(page))) first.'), [['read', 'the', 'page', 'first']])
+        self.assertEqual(lines('Say hello.\n- [The page](pages/Site_(web_(page)))\nYes.'), [['say', 'hello'], ['yes']])
+        # A link that starts inside an earlier link's address is part of that address.
+        self.assertEqual(lines('Read [the page](pages/a[b](c)) first.'), [['read', 'the', 'page', 'first']])
+        # Second look on PR #45: a bracket inside the link's "quoted title" does not close the address.
+        self.assertEqual(lines('Read [the guide](https://example.com "Step 1) Setup") first.'),
+                         [['read', 'the', 'guide', 'first']])
+        self.assertEqual(lines('Say hello.\n[The guide](https://example.com "Step 1) Setup")\nYes.'), [['say', 'hello'], ['yes']])
+        self.assertEqual(lines("Read [the guide](https://example.com 'Step 1) Setup') first."), [['read', 'the', 'guide', 'first']])
+        # Second look, round 3: a mark with a backslash in front of it is text, in the address and in the title,
+        # and the link's own text may hold pairs of brackets.
+        self.assertEqual(lines('Read [the guide](docs/step\\)one.md) first.'), [['read', 'the', 'guide', 'first']])
+        self.assertEqual(lines('Read [the guide](https://example.com "Step \\"1) Setup\\" then") first.'),
+                         [['read', 'the', 'guide', 'first']])
+        self.assertEqual(lines('Read [the [new] guide](docs/guide.md) first.'), [['read', 'the', 'guide', 'first']])
+        self.assertEqual(lines('Read [the guide](<docs/my guide (1.md>) first.'), [['read', 'the', 'guide', 'first']])
+        # An address that is never closed is no link, and never runs past its line.
+        self.assertEqual(lines('Read [the page](pages/site first.\nThen go on.'),
+                         [['read', 'pagessite', 'first'], ['then', 'go', 'on']])
+        # A link inside a direction goes with the direction.
+        self.assertEqual(lines('Say hello. [Show [the site](https://example.com) on screen] Then go on.'),
+                         [['say', 'hello'], ['then', 'go', 'on']])
+
+    def test_an_image_or_a_bare_address_in_the_script_is_not_a_word(self):
+        lines = cut_takes.script_sentences
+        self.assertEqual(lines('Say hello.\n![The chart](https://example.com/chart.png)\nYes.'), [['say', 'hello'], ['yes']])
+        self.assertEqual(lines('Look at this ![chart](charts/one.png) first.'), [['look', 'at', 'this', 'first']])
+        self.assertEqual(lines('Look ![The [new] chart](charts/one.png) now.'), [['look', 'now']])
+        # Review round 2 on PR #45: an image that is itself a link goes with its link's address.
+        self.assertEqual(lines('Watch [![The demo](thumb.png)](videos/demo.mp4) now.'), [['watch', 'now']])
+        self.assertEqual(lines('Say hello.\n[![Badge](badge.svg)](docs/status)\nYes.'), [['say', 'hello'], ['yes']])
+        # The full stop after an address still ends the sentence.
+        self.assertEqual(lines('The survey is at https://example.com/survey. Two out of three had a problem.'),
+                         [['the', 'survey', 'is', 'at'], ['two', 'out', 'of', 'three', 'had', 'a', 'problem']])
+        self.assertEqual(lines('The survey is at http://example.com/survey. Two out of three had a problem.'),
+                         [['the', 'survey', 'is', 'at'], ['two', 'out', 'of', 'three', 'had', 'a', 'problem']])
+        self.assertEqual(lines('Say hello.\nhttps://example.com/survey?id=3&x=1\nYes.'), [['say', 'hello'], ['yes']])
+        # A closing bracket or bold mark after an address is not part of it.
+        self.assertEqual(lines('Sources (see https://example.com/a). Then **https://example.com/b** now.'),
+                         [['sources', 'see'], ['then', 'now']])
+        self.assertEqual(lines('Write to <https://example.com/contact> today.'), [['write', 'to', 'today']])
+        # A name with a dot that is said aloud is no address.
+        self.assertEqual(lines('Go to example.com today.'), [['go', 'to', 'examplecom', 'today']])
+
+    def test_a_one_word_line_after_a_link_line_still_counts_when_said_on_its_own(self):
+        # R1-1: with the address glued on, "Yes." was no longer a script line of one word.
+        cutter = cut_takes.Cutter(cut_timeline.load_words(said('Yes.', 1.0)), FPS,
+                                  '[The survey.](https://example.com/survey)\nYes.')
+        self.assertEqual(cutter.script, [['yes']])
+
+    def test_a_short_line_is_not_counted_inside_a_take_of_a_longer_line(self):
+        # Second look on PR #42: after a quiet "again" the longer line follows, which opens with the short line's
+        # words. Those words belong to the longer line, also when its take leaves a word out ("very").
+        words = said('The tool is fast.', 1.0) + [['again', 3.0, 3.3]] + said('The tool is fast and easy to use.', 4.2)
+        for script in ('The tool is fast. The tool is fast and easy to use.',
+                       'The tool is fast. The tool is fast and very easy to use.'):
+            result = plan_words(words, script)
+            self.assertEqual(kept_starts(result, cut_timeline.load_words(words)) >= {1.0, 1.3, 1.6, 1.9}, True, script)
+            flag, = flags(result, 'script-line-kept')
+            self.assertEqual((flag['start'], flag['text']), (1.0, 'The tool is fast.'), script)
+
+    def test_a_one_word_line_without_its_full_stop_is_not_cut_with_a_take_of_the_next_line(self):
+        # Second look on PR #42: the script says "Yes." and then a line that opens with the same word. Without its
+        # full stop the "Yes" ran into the first take of that line and went with it, without a word to Lex.
+        script = 'Yes. Yes this is good.'
+        words = said('Yes', 1.0) + said('Yes this is good.', 3.0) + said('Yes this is good.', 7.0)
+        result = plan_words(words, script)
+        self.assertEqual([(item['start'], item['text']) for item in result['paperEdit']['removed']],
+                         [(3.0, 'Yes this is good.')])
+        self.assertEqual(result['paperEdit']['flags'], [])
+        self.assertEqual(kept_starts(result, cut_timeline.load_words(words)), {1.0, 7.0, 7.3, 7.6, 7.9})
+        # Said once each, the two lines are simply the script: nothing to ask.
+        result = plan_words(words[:5], script)
+        self.assertEqual(removed_texts(result), [])
+        self.assertEqual(result['paperEdit']['flags'], [])
+        # The line before may have lost its full stop too: the one-word line is the next line there, and the pause
+        # after "fast" ends that sentence.
+        words = said('The tool is fast', 1.0) + said('Yes', 3.0) + said('Yes this is good.', 4.0) \
+            + said('Yes this is good.', 8.0)
+        result = plan_words(words, 'The tool is fast. Yes. Yes this is good.')
+        self.assertEqual([(item['start'], item['text']) for item in result['paperEdit']['removed']],
+                         [(4.0, 'Yes this is good.')])
+        self.assertEqual(result['paperEdit']['flags'], [])
+
+    def test_a_word_is_a_one_word_line_only_when_said_on_its_own(self):
+        def stops(words, script):
+            cutter = cut_takes.Cutter(cut_timeline.load_words(words), FPS, script)
+            cutter.script_stops()
+            return cutter.stops
+
+        script = 'Yes. Yes this is good. The end.'
+        self.assertEqual(stops(said('Yes', 1.0) + said('Yes this is good.', 3.0), script), {0})
+        # No pause after it, or a comma or a dash on it: a word of the sentence that goes on.
+        self.assertEqual(stops(said('Yes Yes this is good.', 1.0), script), set())
+        self.assertEqual(stops(said('Yes,', 1.0) + said('Yes this is good.', 3.0), script), set())
+        self.assertEqual(stops(said('Yes—', 1.0) + said('Yes this is good.', 3.0), script), set())
+        # Not at the start of a sentence, or with no script line after the pause.
+        self.assertEqual(stops(said('And then yes', 1.0) + said('Yes this is good.', 3.0), script), set())
+        self.assertEqual(stops(said('Yes', 1.0) + said('We go on here.', 3.0), script), set())
+        # Without the one-word line in the script it is a short start, as before.
+        words = said('Yes', 1.0) + said('Yes this is good.', 3.0) + said('Yes this is good.', 7.0)
+        self.assertEqual(stops(words, 'Yes this is good. The end.'), set())
+        self.assertEqual(removed_texts(plan_words(words, 'Yes this is good. The end.')), ['Yes Yes this is good.'])
+        # The last word of the recording needs no pause after it.
+        self.assertEqual(stops(said('The end.', 1.0) + said('Yes', 3.0), script), {2})
+        # A word that opens a longer script line together with the next word is a breath inside that line.
+        script = 'So. The tool is fast. So the tool is cheap.'
+        words = said('The tool is fast.', 1.0) + said('So', 3.0) + said('the tool is cheap.', 4.0)
+        self.assertEqual(stops(words, script), set())
+        result = plan_words(words + said('So the tool is cheap.', 7.0), script)
+        self.assertEqual([(item['start'], item['text']) for item in result['paperEdit']['removed']],
+                         [(3.0, 'So the tool is cheap.')])
+        # Only two words are looked at, so "So | The tool is fast." is held back the same way although another
+        # line follows the pause: the last check keeps that "So" and Lex is told.
+        words = said('So', 1.0) + said('The tool is fast.', 2.0) + said('The tool is fast.', 5.0)
+        self.assertEqual(stops(words, script), set())
+        result = plan_words(words, script)
+        self.assertEqual([(item['start'], item['text']) for item in result['paperEdit']['removed']],
+                         [(2.0, 'The tool is fast.')])
+        self.assertEqual([(item['code'], item['start'], item['text']) for item in result['paperEdit']['flags']],
+                         [('script-line-kept', 1.0, 'So')])
+        self.assertIn(1.0, kept_starts(result, cut_timeline.load_words(words)))
+
+    def test_a_one_word_line_that_no_script_line_follows_goes_back_in_and_is_listed(self):
+        # The last check: after the pause comes a start of one word, or a take that changes a word, so no script
+        # line opens there and the "Yes" still runs into the take that goes.
+        for first_take, script in (('The The tool is fast.', 'Yes. The tool is fast.'),
+                                   ('Yes that is good.', 'Yes. Yes this is good.')):
+            words = said('Yes', 1.0) + said(first_take, 3.0) + said(script[5:], 7.0)
+            result = plan_words(words, script)
+            self.assertEqual([(item['start'], item['text']) for item in result['paperEdit']['removed']],
+                             [(3.0, first_take)], script)
+            flag, = result['paperEdit']['flags']
+            self.assertEqual((flag['code'], flag['start'], flag['text']), ('script-line-kept', 1.0, 'Yes'), script)
+            self.assertIn(1.0, kept_starts(result, cut_timeline.load_words(words)), script)
+        # A comma or a dash on the word, or no pause after it: not the line said on its own, so it goes as before.
+        for first in ('Yes,', 'Yes—'):
+            words = said(first, 1.0) + said('Yes that is good.', 3.0) + said('Yes this is good.', 7.0)
+            result = plan_words(words, 'Yes. Yes this is good.')
+            self.assertEqual(removed_texts(result), [f'{first} Yes that is good.'], first)
+        words = said('Yes yes that is good.', 1.0) + said('Yes this is good.', 7.0)
+        self.assertEqual(removed_texts(plan_words(words, 'Yes. Yes this is good.')), ['Yes yes that is good.'])
+
+    def test_a_script_line_said_word_for_word_is_never_lost(self):
+        # The last check, whatever made the removal: here each sentence fits the other script line just as well
+        # when word order is ignored, and the script says the second line twice.
+        text = 'The camera beats the phone. The phone beats the camera. The phone beats the camera.'
+        words = said('The camera beats the phone.', 1.0) + said('The phone beats the camera.', 3.2) \
+            + said('The phone beats the camera.', 5.4)
+        result = plan_words(words, text)
+        self.assertEqual(removed_texts(result), [])
+        cutter = cut_takes.Cutter(cut_timeline.load_words(words), FPS, text)
+        remove(cutter, 0, 4)
+        remove(cutter, 5, 9)
+        cutter.keep_script_lines()
+        self.assertEqual(cutter.keep, [True] * 15)
+        self.assertEqual(cutter.removed, [])
+        self.assertEqual([(item['code'], item['start']) for item in cutter.flags],
+                         [('script-line-kept', 1.0), ('script-line-kept', 3.2)])
+
+    def test_a_line_said_once_in_the_script_still_loses_its_dropped_start(self):
+        script = 'Thanks for watching this week.'
+        words = said('Thanks for watching this week', 1.0) + said('Thanks for watching this week.', 3.5)
+        self.assertEqual(removed_texts(plan_words(words, script)), ['Thanks for watching this week'])
+
+
+class EveryScriptLineStaysTests(unittest.TestCase):
+    """Many made-up recordings instead of one shape at a time: lines that open alike or hold another line, failed
+    starts, second takes, a line said as two sentences, full stops the transcript left out, and lines of one word
+    in front of a line that may open with that word. Whatever the cutter removes, every script line must still be
+    there word for word, as often as the script says it."""
+    OPENERS = ['the tool is', 'the camera is', 'this is the', 'so the tool', 'the phone beats']
+    TAILS = ['fast', 'cheap', 'easy to use', 'fast and easy to use', 'the best part', 'ready today',
+             'good for the price', 'on the desk', 'small and light', 'what you need',
+             'easy and the battery lasts all day']
+
+    ONE_WORD = ['yes', 'okay', 'right']
+
+    def recording(self, seed):
+        """(script lines, words, one-word readings): the readings are the start seconds of every word said on its
+        own, a one-word line or a start that stops after one word. The one-word lines draw from a second run of
+        numbers, so the longer lines of a seed stay as they were before one-word lines were added."""
+        rng, short = random.Random(seed), random.Random(f'one word {seed}')
+        longer = []
+        for _ in range(rng.randint(2, 5)):
+            line = f'{rng.choice(self.OPENERS)} {rng.choice(self.TAILS)}'.split()
+            longer.append(list(rng.choice(longer)) if longer and rng.random() < 0.12 else line)
+        lines = []
+        for line in longer:
+            if short.random() < 0.3:  # a one-word line first: often the word the next line opens with
+                lines.append([line[0] if short.random() < 0.6 else short.choice(self.ONE_WORD)])
+            lines.append(line)
+        words, at, alone = [], 1.0, {}
+
+        def say(tokens, stop, pause):
+            nonlocal at
+            at += pause
+            if len(tokens) == 1 and stop in ('', '.'):
+                alone.setdefault(tokens[0], []).append(round(at, 3))
+            for number, token in enumerate(tokens):
+                text = token + (stop if number == len(tokens) - 1 else '')
+                words.append([text.capitalize() if number == 0 else text, round(at, 3), round(at + 0.25, 3)])
+                at += 0.29
+
+        for line in lines:
+            if len(line) == 1:
+                for _ in range(2 if short.random() < 0.15 else 1):
+                    say(line, '.' if short.random() < 0.6 else '', short.choice([0.4, 0.8, 1.2, 2.0]))
+                continue
+            pause = rng.choice([0.4, 0.8, 1.2, 2.0])
+            if rng.random() < 0.3:  # a failed start
+                say(line[:rng.randint(1, len(line) - 1)], rng.choice(['', '', '—', ',']), pause)
+                pause = rng.choice([0.4, 0.9, 1.6, 2.4])
+            for _ in range(2 if rng.random() < 0.2 else 1):
+                stop = '.' if rng.random() < 0.75 else ''
+                if rng.random() < 0.15 and len(line) >= 6:  # said as two sentences
+                    cut = rng.randint(3, len(line) - 3)
+                    say(line[:cut], '.' if rng.random() < 0.75 else '', pause)
+                    say(line[cut:], stop, rng.choice([0.35, 0.6, 1.0]))
+                else:
+                    say(line, stop, pause)
+                pause = rng.choice([0.4, 0.9, 1.6, 2.4])
+        return lines, words, alone
+
+    def lost_lines(self, lines, words, alone=None):
+        script = ' '.join(' '.join(line).capitalize() + '.' for line in lines)
+        loaded = cut_timeline.load_words(words)
+        kept = kept_starts(cut_takes.plan(loaded, FPS, script_text=script), loaded)
+        lost = self.missing(lines, [cut_takes.norm(text) for text, start, _ in words if start in kept])
+        # A one-word line is a word many other sentences say too, so the times it is said on its own are counted
+        # here: as many of them stay as the script says the line (a second reading of it may go as a retake).
+        for word, starts in (alone or {}).items():
+            if sum(start in kept for start in starts) < min(lines.count([word]), len(starts)):
+                lost.append(f'{word} (said on its own at {starts})')
+        return lost
+
+    @staticmethod
+    def missing(lines, names):
+        """The script lines that these kept words do not say word for word, as often as the script says them."""
+        # Longer lines are counted first, and their words are not counted again for a shorter line.
+        used, lost = set(), []
+        counts = cut_takes.Counter(map(tuple, lines))
+        for line in sorted(counts, key=len, reverse=True):
+            found, at = 0, 0
+            while at + len(line) <= len(names):
+                here = range(at, at + len(line))
+                if tuple(names[at:at + len(line)]) == line and not used.intersection(here):
+                    used.update(here)
+                    found, at = found + 1, at + len(line)
+                else:
+                    at += 1
+            if found < counts[line]:
+                lost.append(' '.join(line))
+        return lost
+
+    def test_no_script_line_is_lost_in_600_made_up_recordings(self):
+        for seed in range(600):
+            lines, words, alone = self.recording(seed)
+            self.assertEqual(self.lost_lines(lines, words, alone), [],
+                             f'seed {seed}: {" ".join(text for text, _, _ in words)}')
+
+    def test_the_check_itself_finds_a_lost_line(self):
+        fast, long = 'the tool is fast'.split(), 'the tool is fast and easy'.split()
+        self.assertEqual(self.missing([fast, long], long), ['the tool is fast'])
+        self.assertEqual(self.missing([fast, long], long + fast), [])
+        self.assertEqual(self.missing([fast, fast], fast), ['the tool is fast'])
+        self.assertEqual(self.missing([fast, fast], fast + fast), [])
+
+
+class EdgeCaseTests(unittest.TestCase):
+    def test_too_little_silence_is_flagged_and_no_word_is_cut(self):
+        # The failed attempt starts 40 ms after "words.", so 100 ms of room cannot fit there.
+        words = [['Intro', 0.5, 0.8], ['words.', 0.84, 1.2], ['Start', 1.24, 1.5], ['the', 1.54, 1.7],
+                 ['show', 1.74, 2.0], ['again', 2.7, 3.0], ['Start', 3.7, 4.0], ['the', 4.04, 4.2],
+                 ['show', 4.24, 4.5], ['now.', 4.54, 4.9]]
+        result = plan_words(words)
+        self.assertEqual(removed_texts(result), ['Start the show again'])
+        self.assertIn('tight-edge', [item['code'] for item in result['paperEdit']['flags']])
+        timeline = cut_timeline.load_cutlist(result['cutlist'])
+        loaded = cut_timeline.load_words(words)
+        for run in timeline.runs:
+            for edge in (run.source_start, run.source_end):
+                self.assertEqual([w.text for w in loaded if w.start + TOLERANCE < edge < w.end - TOLERANCE], [])
+
+    def test_a_removal_that_touches_the_word_before_it_between_two_frames_goes_back_in(self):
+        # Whole-file look, 2026-11-16: "Intro." ends and the failed "Start" begins at 1.017 s. Frame 30 (1.000 s)
+        # is inside "Intro." and frame 31 (1.033 s) inside "Start", so no frame cuts between them.
+        words = [['My', 0.3, 0.5], ['Intro.', 0.54, 1.017], ['Start', 1.017, 1.3], ['the', 1.34, 1.5],
+                 ['show', 1.54, 1.8], ['again', 2.5, 2.8], ['Start', 3.5, 3.8], ['the', 3.84, 4.0],
+                 ['show', 4.04, 4.3], ['now.', 4.34, 4.7]]
+        result = plan_words(words)
+        self.assertEqual(removed_texts(result), [])
+        flag, = flags(result, 'no-clean-frame')
+        self.assertEqual((flag['start'], flag['text']), (1.017, 'Start the show again'))
+        timeline = cut_timeline.load_cutlist(result['cutlist'])
+        loaded = cut_timeline.load_words(words)
+        for run in timeline.runs:
+            for edge in (run.source_start, run.source_end):
+                self.assertEqual([w.text for w in loaded if w.start + TOLERANCE < edge < w.end - TOLERANCE], [])
+        # The same touch on a frame (1.000 s) cuts cleanly.
+        on_frame = [[text, 1.0 if start == 1.017 else start, 1.0 if end == 1.017 else end] for text, start, end in words]
+        self.assertEqual(removed_texts(plan_words(on_frame)), ['Start the show again'])
+
+    def test_a_whole_run_of_failed_tries_goes_back_in_when_its_first_word_touches_the_word_before_it(self):
+        # The safe direction, on purpose: the run goes back in whole and is listed once.
+        words = [['My', 0.3, 0.5], ['Intro.', 0.54, 1.017], ['Start', 1.017, 1.3], ['the', 1.34, 1.5],
+                 ['show.', 1.54, 1.8], ['Start', 2.6, 2.9], ['the', 2.94, 3.1], ['Start', 3.9, 4.2],
+                 ['the', 4.24, 4.4], ['show', 4.44, 4.7], ['now.', 4.74, 5.1]]
+        result = plan_words(words, 'My intro. Start the show now.')
+        self.assertEqual(removed_texts(result), [])
+        flag, = flags(result, 'no-clean-frame')
+        self.assertEqual((flag['start'], flag['text']), (1.017, 'Start the show. Start the'))
+
+    def test_a_removed_opening_or_ending_that_touches_the_kept_word_between_two_frames_goes_back_in(self):
+        opening = [['Start', 0.3, 0.6], ['the', 0.64, 0.8], ['show', 0.84, 1.1], ['again', 1.8, 2.117],
+                   ['Start', 2.117, 2.4], ['the', 2.44, 2.6], ['show', 2.64, 2.9], ['now.', 2.94, 3.3]]
+        ending = [['Start', 0.3, 0.6], ['the', 0.64, 0.8], ['show', 0.84, 1.1], ['now.', 1.14, 1.517],
+                  ['Again', 1.517, 1.8], ['again.', 2.4, 2.7]]
+        for words in (opening, ending):
+            result = plan_words(words)
+            timeline = cut_timeline.load_cutlist(result['cutlist'])
+            loaded = cut_timeline.load_words(words)
+            for run in timeline.runs:
+                for edge in (run.source_start, run.source_end):
+                    self.assertEqual([w.text for w in loaded if w.start + TOLERANCE < edge < w.end - TOLERANCE], [],
+                                     words[0])
+
+    def test_a_removal_too_short_for_whole_frames_goes_back_in(self):
+        words = [['Okay.', 0.5, 1.0], ['Go,', 1.0, 1.01], ['again,', 1.01, 1.02], ['go', 1.02, 1.3],
+                 ['now.', 1.34, 1.6]]
+        result = plan_words(words)
+        self.assertEqual(removed_texts(result), [])
+        self.assertIn('too-short-to-cut', [item['code'] for item in result['paperEdit']['flags']])
+        self.assertEqual(len(result['cutlist']['segments']), 1)
+
+    def test_a_fractional_frame_rate_still_never_cuts_inside_a_word(self):
+        result = cut_takes.plan(WORDS, 29.97, script_text=SCRIPT_TEXT, demos=DEMO)
+        timeline = cut_timeline.load_cutlist(result['cutlist'])
+        self.assertEqual(timeline.fps, 29.97)
+        for run in timeline.runs:
+            for edge in (run.source_start, run.source_end):
+                self.assertEqual([w.text for w in WORDS if w.start + TOLERANCE < edge < w.end - TOLERANCE], [])
+        self.assertEqual(kept_starts(result) & {round(w.start, 3) for w in words_between(92.78, 98.42)}, set())
+
+
+def take(at):
+    """One take of "This is the tool." that starts at this source second."""
+    return [['This', at, at + 0.2], ['is', at + 0.24, at + 0.4], ['the', at + 0.44, at + 0.6],
+            ['tool.', at + 0.64, at + 1.0]]
+
+
+def runs_of(result):
+    return [(run.source_start, run.source_end) for run in cut_timeline.load_cutlist(result['cutlist']).runs]
+
+
+class SilentDemoTests(unittest.TestCase):
+    """A marked screen demo with no speech in it is still picture Lex marked: no cut, opening or ending drops it."""
+
+    def assert_demo_kept(self, result, start, end, slack=0.0):
+        self.assertTrue(any(first <= start + slack + 1e-9 and last >= end - slack - 1e-9
+                            for first, last in runs_of(result)),
+                        f'the demo {start}-{end} is not whole in the kept ranges {runs_of(result)}')
+
+    def test_a_silent_demo_between_two_takes_of_a_line_stays(self):
+        # The fault of 2026-11-16: the earlier take went, and the opening trim took the silent demo with it.
+        words = take(1.0) + take(10.0)
+        result = plan_words(words, demos=[(5.0, 8.0)])
+        self.assertEqual(removed_texts(result), ['This is the tool.'])
+        self.assert_demo_kept(result, 5.0, 8.0)
+        kept = kept_starts(result, cut_timeline.load_words(words))
+        self.assertIn(10.0, kept)
+        self.assertNotIn(1.0, kept)
+        # The silence between the demo and the take kept beside it stays, as it does where nothing is removed.
+        self.assertEqual(len(result['cutlist']['segments']), 1)
+        self.assertEqual(result['cutlist']['segments'][0]['sourceInFrame'], 150)
+        self.assertEqual(result['paperEdit']['flags'], [])
+
+    def test_a_silent_demo_between_two_removed_takes_is_a_piece_of_its_own(self):
+        words = take(1.0) + take(6.0) + take(12.0)
+        result = plan_words(words, demos=[(3.0, 5.0)])
+        self.assert_demo_kept(result, 3.0, 5.0)
+        self.assertEqual(kept_starts(result, cut_timeline.load_words(words)), {12.0, 12.24, 12.44, 12.64})
+        segments = result['cutlist']['segments']
+        self.assertEqual([(item['sourceInFrame'], item['sourceOutFrame']) for item in segments[:1]], [(90, 150)])
+        # The two failed tries are two removals: the demo between them is not part of what went.
+        self.assertEqual([(item['start'], item['end']) for item in result['paperEdit']['removed']],
+                         [(1.0, 2.0), (6.0, 7.0)])
+        join, = result['paperEdit']['joins']
+        self.assertEqual((join['why'], join['lastWord'], join['firstWord']), ('demo', None, 'This'))
+        self.assertEqual((join['sourceOutFrame'], join['sourceInFrame']),
+                         (segments[0]['sourceOutFrame'], segments[1]['sourceInFrame']))
+        self.assertIn('marked screen demo', cut_takes.render_paper_edit(result['paperEdit']))
+
+    def test_a_demo_that_runs_on_after_kept_speech_into_a_removal_stays_whole(self):
+        words = [['Here', 1.0, 1.2], ['is', 1.24, 1.4], ['the', 1.44, 1.6], ['screen.', 1.64, 2.0]] \
+            + take(7.0) + take(12.0)
+        result = plan_words(words, demos=[(1.5, 6.0)])
+        self.assertEqual(removed_texts(result), ['This is the tool.'])
+        self.assert_demo_kept(result, 1.5, 6.0)
+        kept = kept_starts(result, cut_timeline.load_words(words))
+        self.assertTrue({1.0, 12.0} <= kept)
+        self.assertNotIn(7.0, kept)
+        self.assertEqual(result['cutlist']['segments'][0]['sourceOutFrame'], 180)
+
+    def test_a_silent_demo_before_the_first_word_is_not_trimmed_off_the_opening(self):
+        result = plan_words(take(5.0), demos=[(0.5, 3.0)])
+        self.assert_demo_kept(result, 0.5, 3.0)
+        self.assertEqual(result['cutlist']['segments'][0]['sourceInFrame'], 15)
+        self.assertEqual(result['paperEdit']['opening'], {'leadInMs': 4500, 'demo': True})
+        self.assertIn('opening 4500 ms with the marked screen demo',
+                      cut_takes.render_paper_edit(result['paperEdit']))
+
+    def test_a_silent_demo_after_the_last_word_is_not_trimmed_off_the_ending(self):
+        result = plan_words(take(1.0), demos=[(3.0, 6.0)])
+        self.assert_demo_kept(result, 3.0, 6.0)
+        self.assertEqual(result['cutlist']['segments'][-1]['sourceOutFrame'], 180)
+        self.assertEqual(result['paperEdit']['ending'], {'tailMs': 4000, 'demo': True})
+        self.assertIn('ending 4000 ms with the marked screen demo', cut_takes.render_paper_edit(result['paperEdit']))
+        # The transcript ends at the last word, so the cutter cannot see whether the recording holds the demo.
+        flag, = result['paperEdit']['flags']
+        self.assertEqual((flag['code'], flag['start'], flag['end']), ('demo-past-last-word', 3.0, 6.0))
+        self.assertIn('check the recording is that long', flag['message'])
+
+    def test_a_demo_join_with_speech_on_one_side_says_the_room_left_beside_the_word(self):
+        words = [['Here', 1.0, 1.2], ['is', 1.24, 1.4], ['the', 1.44, 1.6], ['screen.', 1.64, 2.0]] \
+            + take(4.0) + take(9.0) + take(13.0)
+        result = plan_words(words, demos=[(6.5, 8.0)])
+        self.assert_demo_kept(result, 6.5, 8.0)
+        first, second = result['paperEdit']['joins']
+        self.assertEqual((first['why'], first['lastWord'], first['firstWord'], first['gapMs']),
+                         ('demo', 'screen.', None, None))
+        # The out frame is the one the cutter chose after "screen.": the room a new thought may have.
+        self.assertTrue(ROOM_MS[0] <= first['tailMs'] <= ROOM_MAX_MS['new-thought'], first['tailMs'])
+        self.assertEqual((second['why'], second['lastWord'], second['firstWord']), ('demo', None, 'This'))
+        text = cut_takes.render_paper_edit(result['paperEdit'])
+        self.assertIn(f'"screen." + {first["tailMs"]} ms | the demo (no speech)', text)
+        self.assertIn(f'the demo (no speech) | {second["headMs"]} ms + "This"', text)
+
+    def test_two_demos_between_the_same_removals_both_stay(self):
+        words = take(1.0) + take(6.0) + take(12.0)
+        result = plan_words(words, demos=[(2.5, 3.5), (3.8, 5.0)])
+        self.assert_demo_kept(result, 2.5, 3.5)
+        self.assert_demo_kept(result, 3.8, 5.0)
+        # Nothing was removed between the two demos, so the 300 ms between them stays: one piece, no jump.
+        self.assertEqual([(item['sourceInFrame'], item['sourceOutFrame']) for item in result['cutlist']['segments'][:1]],
+                         [(75, 150)])
+        self.assertEqual(len(result['cutlist']['segments']), 2)
+        self.assertEqual(kept_starts(result, cut_timeline.load_words(words)), {12.0, 12.24, 12.44, 12.64})
+
+    def test_a_demo_that_starts_before_kept_speech_and_ends_after_it_is_one_piece_with_it(self):
+        words = [['Here', 1.0, 1.2], ['is', 1.24, 1.4], ['the', 1.44, 1.6], ['screen.', 1.64, 2.0]] \
+            + take(6.0) + take(12.0)
+        result = plan_words(words, demos=[(0.5, 4.0)])
+        segments = result['cutlist']['segments']
+        self.assertEqual((segments[0]['sourceInFrame'], segments[0]['sourceOutFrame']), (15, 120))
+        self.assertIs(result['paperEdit']['opening'].get('demo'), True)
+        self.assertEqual([(join['why'], join['lastWord'], join['firstWord']) for join in result['paperEdit']['joins']],
+                         [('demo', None, 'This')])
+
+    def test_a_demo_marked_right_after_a_removed_word_is_kept_whole_and_flagged_as_a_tight_cut(self):
+        words = take(1.0) + take(10.0)
+        result = plan_words(words, demos=[(2.03, 4.0)])
+        self.assert_demo_kept(result, 2.03, 4.0)
+        flag, = result['paperEdit']['flags']
+        self.assertEqual((flag['code'], flag['text']), ('tight-edge', 'tool.'))
+        self.assertIn('Only 0 ms between the removed "tool."', flag['message'])
+        # A demo marked with room after the removed word needs no such note.
+        self.assertEqual(plan_words(words, demos=[(2.5, 4.0)])['paperEdit']['flags'], [])
+
+    def test_a_demo_edge_never_puts_a_cut_inside_a_removed_word(self):
+        # At 29.97 fps second 2.0 is not on a frame: the frame before it lies inside the removed "tool.".
+        words = take(1.0) + take(10.0)
+        result = plan_words(words, demos=[(2.0, 4.0)], fps=29.97)
+        self.assertEqual(removed_texts(result), ['This is the tool.'])
+        self.assert_demo_kept(result, 2.0, 4.0, slack=1 / 29.97)
+        loaded = cut_timeline.load_words(words)
+        for first, last in runs_of(result):
+            for edge in (first, last):
+                self.assertEqual([word.text for word in loaded if word.start + TOLERANCE < edge < word.end - TOLERANCE],
+                                 [], f'cut at {edge:.3f} s')
+
+    def test_the_join_check_reads_a_cut_with_a_demo_piece_and_finds_no_problems(self):
+        words = take(1.0) + take(6.0) + take(12.0)
+        result = plan_words(words, demos=[(3.0, 5.0)])
+        report = join_check.check_joins(cut_timeline.load_words(words), cut_timeline.load_cutlist(result['cutlist']))
+        found = [flag for entry in report['joins'] + [report['opening'], report['ending']] for flag in entry['flags']]
+        self.assertEqual([flag for flag in found if flag['severity'] == 'problem'], [])
+        self.assertIn('no-words-beside-join', [flag['code'] for flag in found])
+
+
+class FarApartTests(unittest.TestCase):
+    def test_without_a_script_a_near_copy_more_than_a_minute_later_is_not_a_take(self):
+        # Third whole-file look, 2026-11-16: two sentences in a row with two minutes of silence between them were
+        # paired as a restart, which skipped the one-minute limit for near copies.
+        words = said('This tool is very helpful.', 1.0) + said('This tool is really helpful.', 122.0)
+        result = plan_words(words)
+        self.assertEqual(removed_texts(result), [])
+        # Within the minute it is a second take, as before.
+        words = said('This tool is very helpful.', 1.0) + said('This tool is really helpful.', 31.0)
+        self.assertEqual(removed_texts(plan_words(words)), ['This tool is very helpful.'])
+        # With a script the line is the same line however far apart.
+        words = said('This tool is very helpful.', 1.0) + said('This tool is really helpful.', 122.0)
+        self.assertEqual(removed_texts(plan_words(words, 'This tool is really helpful.')), ['This tool is very helpful.'])
+
+    def cut_out(self, result, start, end):
+        """The seconds between two source times that are in no kept range of the cut list."""
+        fps = result['cutlist']['fps']
+        kept = sum(max(0.0, min(end, item['sourceOutFrame'] / fps) - max(start, item['sourceInFrame'] / fps))
+                   for item in result['cutlist']['segments'])
+        return round(end - start - kept, 2)
+
+    def test_a_long_silence_beside_a_removed_take_is_reported(self):
+        # Third whole-file look, 2026-11-16: the cut takes the silence between a removed take and the take that
+        # stays with it; eight seconds may be a screen demo, so the paper edit must say so.
+        words = said('This is the tool.', 1.0) + said('This is the tool.', 10.0)
+        result = plan_words(words)
+        removal, = result['paperEdit']['removed']
+        self.assertEqual((removal['text'], removal['longestSilence']), ('This is the tool.', 0.04))
+        # The number is what the cut list really leaves out between the two takes (the room kept beside the take
+        # that stays is not silence taken out).
+        self.assertEqual(removal['silenceBeside'], self.cut_out(result, 2.16, 10.0))
+        self.assertTrue(7.6 <= removal['silenceBeside'] <= 7.84, removal['silenceBeside'])
+        self.assertIn(f'takes out the {removal["silenceBeside"]:.1f} s silence beside it',
+                      cut_takes.render_paper_edit(result['paperEdit']))
+        # A short pause beside a removal is not worth a word.
+        words = said('This is the tool.', 1.0) + said('This is the tool.', 3.0)
+        result = plan_words(words)
+        self.assertNotIn('silence beside', cut_takes.render_paper_edit(result['paperEdit']))
+        # The silence before a removed last take counts too.
+        words = said('This is the tool.', 1.0) + said('This is the, um, um, tool.', 12.0)
+        result = plan_words(words)
+        removal, = result['paperEdit']['removed']
+        self.assertEqual(removal['reason'], 'worse-later-take')
+        self.assertEqual(removal['silenceBeside'], self.cut_out(result, 2.16, 12.0))
+        self.assertGreater(removal['silenceBeside'], 9.5)
+
+    def test_silence_that_a_marked_demo_keeps_beside_a_removed_take_is_not_reported(self):
+        # Second look on PR #42: a marked demo stays in the cut with the silence between it and the speech kept
+        # beside it, so only the silence the cut list really leaves out is reported.
+        words = said('This is the tool.', 1.0) + said('This is the tool.', 12.0)
+        for demo, taken in (((3.0, 10.0), 0.84), ((3.0, 6.0), 0.84), ((8.0, 10.0), 5.84)):
+            result = plan_words(words, demos=[demo])
+            removal, = result['paperEdit']['removed']
+            self.assertEqual(removal['silenceBeside'], self.cut_out(result, 2.16, 12.0), demo)
+            self.assertAlmostEqual(removal['silenceBeside'], taken, delta=0.04, msg=demo)
+            text = cut_takes.render_paper_edit(result['paperEdit'])
+            if taken >= 3:
+                self.assertIn('takes out the 5.8 s silence beside it', text)
+            else:
+                self.assertNotIn('silence beside', text, demo)
+
+    def test_a_retake_far_from_its_first_take_is_matched_by_the_script(self):
+        script = 'The review page saves every comment. Other things happen. The end.'
+        words = [['The', 10.0, 10.2], ['review', 10.24, 10.6], ['page', 10.64, 10.9], ['saves', 10.94, 11.2],
+                 ['every', 11.24, 11.5], ['comment.', 11.54, 12.0],
+                 ['Other', 13.0, 13.3], ['things', 13.34, 13.7], ['happen.', 13.74, 14.2],
+                 ['The', 100.0, 100.2], ['review', 100.24, 100.6], ['page', 100.64, 100.9],
+                 ['saves', 100.94, 101.2], ['every', 101.24, 101.5], ['comment.', 101.54, 102.0],
+                 ['The', 103.0, 103.2], ['end.', 103.24, 103.6]]
+        result = plan_words(words, script)
+        removal, = result['paperEdit']['removed']
+        self.assertEqual((removal['start'], removal['reason'], removal['keeps']), (10.0, 'earlier-take', 100.0))
+
+
+class CommandTests(unittest.TestCase):
+    def test_command_writes_the_three_files_and_never_overwrites(self):
+        with tempfile.TemporaryDirectory() as folder:
+            out = Path(folder) / 'proposal'
+            command = [sys.executable, str(SCRIPT), str(FIXTURES / 'sunday-retakes.words.json'), '--fps', '30',
+                       '--script', str(FIXTURES / 'sunday-retakes.script.md'), '--demo', '410-418',
+                       '--out-dir', str(out)]
+            done = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertIn('paper-edit.md', done.stdout)
+            self.assertEqual(sorted(path.name for path in out.iterdir()),
+                             ['cutlist.json', 'paper-edit.json', 'paper-edit.md'])
+            cutlist = json.loads((out / 'cutlist.json').read_text(encoding='utf-8'))
+            self.assertEqual(cutlist['segments'], SUNDAY['cutlist']['segments'])
+            again = subprocess.run(command, capture_output=True, text=True)
+            self.assertNotEqual(again.returncode, 0)
+            self.assertIn('already exists', again.stderr)
+
+    def test_a_bad_demo_range_is_refused(self):
+        with tempfile.TemporaryDirectory() as folder:
+            done = subprocess.run([sys.executable, str(SCRIPT), str(FIXTURES / 'sunday-retakes.words.json'),
+                                   '--fps', '30', '--demo', '418-410', '--out-dir', folder],
+                                  capture_output=True, text=True)
+            self.assertNotEqual(done.returncode, 0)
+            self.assertIn('demo', done.stderr.lower())
+
+
+if __name__ == '__main__':
+    unittest.main()

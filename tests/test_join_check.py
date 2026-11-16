@@ -32,7 +32,7 @@ def cutlist(*ranges, **extra):
 
 # hello world | um (removed) | next thing, with 100 ms of room either side of the join.
 WORDS = [['hello', 1.0, 1.4], ['world', 1.5, 1.9], ['um', 2.5, 2.7], ['next', 4.0, 4.4], ['thing', 4.5, 4.9]]
-CLEAN = ((24, 60), (117, 150))
+CLEAN = ((26, 60), (117, 150))
 
 
 def check(words, *ranges):
@@ -49,7 +49,7 @@ class CleanJoinTests(unittest.TestCase):
         self.assertEqual(report['summary']['joins'], 1)
         self.assertEqual(report['summary']['problems'] + report['summary']['checks'], 0)
         join = report['joins'][0]
-        self.assertEqual(join['timelineFrame'], 36)
+        self.assertEqual(join['timelineFrame'], 34)
         self.assertEqual(join['gapMs'], 200)
         self.assertEqual(join['gapKind'], 'linked')
         self.assertEqual((join['lastWord'], join['firstWord']), ('world', 'next'))
@@ -120,10 +120,24 @@ class GapTests(unittest.TestCase):
         self.assertIn('gap-too-short', codes(self.join_with('world?', 200)))
 
     def test_range_edges_count_as_inside(self):
-        words = [['hello', 1.0, 1.4], ['world', 1.5, 1.9], ['next', 4.05, 4.4], ['thing', 4.5, 4.9]]
-        join = check(words, *CLEAN)['joins'][0]  # exactly 250 ms
-        self.assertEqual(join['gapMs'], 250)
+        words = [['hello', 1.0, 1.4], ['world', 1.5, 1.9], ['next', 4.1, 4.4], ['thing', 4.5, 4.9]]
+        join = check(words, *CLEAN)['joins'][0]  # exactly 300 ms
+        self.assertEqual(join['gapMs'], 300)
         self.assertNotIn('gap-too-long', codes(join))
+        self.assertNotIn('gap-too-short', codes(join))
+
+    def test_longer_pauses_lex_chose_for_linked_phrases(self):
+        # 200-300 ms is the range (Lex, 2026-11-11): 167 ms is now short, 267 ms fine, 333 ms long.
+        self.assertEqual(self.join_with('world', 167)['gapMs'], 167)
+        self.assertIn('gap-too-short', codes(self.join_with('world', 167)))
+        self.assertEqual(codes(self.join_with('world', 267)), [])
+        self.assertIn('gap-too-long', codes(self.join_with('world', 333)))
+
+    def test_longer_pauses_lex_chose_for_a_new_thought(self):
+        # 350-500 ms is the range (Lex, 2026-11-11): 333 ms is now short, 467 ms is fine.
+        self.assertIn('gap-too-short', codes(self.join_with('world.', 333)))
+        self.assertEqual(codes(self.join_with('world.', 467)), [])
+        self.assertIn('gap-too-long', codes(self.join_with('world.', 533)))
 
     def test_segment_without_words_is_noted_and_gap_not_judged(self):
         report = check(WORDS, (24, 60), (90, 100), (117, 150))  # 3.0-3.33 s has no transcript words
@@ -167,14 +181,19 @@ class RetakeCueTests(unittest.TestCase):
 class OpeningAndEndingTests(unittest.TestCase):
     def test_preferred_lead_in_and_ending(self):
         report = check(WORDS, *CLEAN)
-        self.assertEqual(report['opening']['leadInMs'], 200)
+        self.assertEqual(report['opening']['leadInMs'], 133)
         self.assertEqual(report['opening']['flags'], [])
+        # Lex's choice of 2026-11-10: 100-150 ms before the first word, the same room the cutter leaves.
+        for start_frame, lead_in in ((27, 100), (26, 133)):
+            opening = check(WORDS, (start_frame, 60), (117, 150))['opening']
+            self.assertEqual((opening['leadInMs'], opening['flags']), (lead_in, []))
         self.assertEqual(report['ending']['tailMs'], 100)
         self.assertEqual(report['ending']['flags'], [])
 
     def test_long_and_short_lead_in(self):
         self.assertEqual(check(WORDS, (0, 60), (117, 150))['opening']['flags'][0]['code'], 'lead-in-too-long')
-        self.assertEqual(check(WORDS, (27, 60), (117, 150))['opening']['flags'][0]['code'], 'lead-in-too-short')
+        self.assertEqual(check(WORDS, (25, 60), (117, 150))['opening']['flags'][0]['code'], 'lead-in-too-long')
+        self.assertEqual(check(WORDS, (28, 60), (117, 150))['opening']['flags'][0]['code'], 'lead-in-too-short')
 
     def test_short_ending_is_flagged(self):
         self.assertEqual(check(WORDS, (24, 60), (117, 148))['ending']['flags'][0]['code'], 'tight-speech-edge')
@@ -208,7 +227,7 @@ class ReportTests(unittest.TestCase):
         self.assertIn('approximate', text)
         self.assertIn('cut-inside-word', text)
         self.assertIn('00:00.900', text)  # timeline time of the join
-        self.assertIn('180-250', text)
+        self.assertIn('Before the first word: 100-150 ms', text)
 
     def test_count_of_splits_reads_properly(self):
         text = join_check.render_markdown(check(WORDS, (24, 50), (50, 60), (117, 150)))
@@ -216,7 +235,7 @@ class ReportTests(unittest.TestCase):
 
     def test_problems_are_listed_before_checks(self):
         words = [['hello', 1.0, 1.4], ['world', 1.5, 1.9], ['next', 4.0, 4.4], ['thing', 4.5, 4.9], ['more', 7.0, 7.4]]
-        report = check(words, (24, 60), (114, 142), (205, 240))  # first join: long gap only; second: cut in a word
+        report = check(words, (24, 60), (111, 142), (205, 240))  # first join: long gap only; second: cut in a word
         text = join_check.render_markdown(report)
         self.assertLess(text.index('cut-inside-word'), text.index('gap-too-long'))
 
@@ -235,7 +254,8 @@ class ReportTests(unittest.TestCase):
             self.assertEqual(first.returncode, 0, first.stderr)
             data = json.loads((folder / 'report/join-check.json').read_text(encoding='utf-8'))
             self.assertEqual(data['summary']['joins'], 1)
-            self.assertEqual(data['thresholds']['linkedGapMs'], [150, 250])
+            self.assertEqual(data['thresholds']['linkedGapMs'], [200, 300])
+            self.assertEqual(data['thresholds']['newThoughtGapMs'], [350, 500])
             self.assertTrue((folder / 'report/join-check.md').exists())
             second = subprocess.run(command, capture_output=True, text=True)
             self.assertNotEqual(second.returncode, 0)

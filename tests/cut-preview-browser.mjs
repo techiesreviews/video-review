@@ -292,7 +292,7 @@ try{
   assert.equal(await page.locator('.transcript-word').nth(4).evaluate(n=>n.classList.contains('removed-word')),false);
   assert.equal(await page.locator('.transcript-word.selected').first().innerText(),'word4','The words stay selected.');
   assert.equal((await page.locator('#transcriptSelection button:visible').first().innerText()).trim(),'Delete','and the button is Delete again.');
-  assert.equal(await text('#barStatus'),'Brought back.');assert.equal(await page.evaluate(()=>document.activeElement.id),'transcriptNote');
+  assert.equal(await text('#barStatus'),'Brought back. Backspace deletes it again.','Restore says the same as Undo.');assert.equal(await page.evaluate(()=>document.activeElement.id),'transcriptNote');
   await page.locator('.transcript-word').nth(5).click({modifiers:['Shift']});await page.locator('[data-transcript-action="remove"]').click();await page.waitForTimeout(250);
   assert.equal((await editsOnDisk()).length,edits,'Delete cuts them again.');
   await page.keyboard.press('Escape');

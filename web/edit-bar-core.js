@@ -67,6 +67,25 @@ export function nextWordAfterDelete(words,removedIds,a,b){
   return -1;
 }
 
+/**
+ * What the bar does once a Delete has saved. next: the word still in the cut that comes after (see nextWordAfterDelete), -1 for none;
+ * draft: letters typed while it was saving; wasWords: the selection was words, not a pause.
+ *   show 'next'     the next word is selected, with the draft in the box
+ *   show 'deleted'  the very last words went: they stay selected (button: Restore) so letters typed meanwhile are not lost
+ *   show 'none'     nothing left to select: the bar closes and the focus goes to the words, never nowhere
+ */
+export function afterDelete({next,draft='',wasWords=true}){
+  if(next>=0)return {show:'next',draft,focus:'bar'};
+  if(wasWords&&draft.trim())return {show:'deleted',draft,focus:'bar'};
+  return {show:'none',draft:'',focus:'words'};
+}
+
+/** The one line shown when deleted words are back, whether by Undo or by Restore. noteResolved: their note was closed;
+ *  selectedAgain: the bar is on the brought-back words, so Backspace would delete them again. */
+export function broughtBackLine({noteResolved=false,selectedAgain=false}={}){
+  return 'Brought back.'+(noteResolved?' Its note is under Resolved.':'')+(selectedAgain?' Backspace deletes it again.':'');
+}
+
 /** The one plain line shown after a request is saved. */
 export function sentLine(agentConnected){
   return agentConnected?'Sent to your agent. It shows in the comment list.':'No agent connected: your note is saved and waits for it.';

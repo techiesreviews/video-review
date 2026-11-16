@@ -1,11 +1,11 @@
 """Shared storage for review comments, used by the web server and the MCP server."""
 from pathlib import Path
-import hashlib, json, math, os, re, shutil, subprocess, threading, time, uuid
+import hashlib, json, math, os, re, shutil, subprocess, uuid
 from fractions import Fraction
 from datetime import datetime, timezone
+import file_store
 
 ROOT=Path(__file__).resolve().parent
-LOCK=threading.RLock()
 AUTHORS=('you','ai')
 
 def data_dir(path=None):
@@ -16,28 +16,14 @@ def data_dir(path=None):
     return directory
 
 def now():return datetime.now(timezone.utc).isoformat()
-def read(path,default):return json.loads(path.read_text(encoding='utf-8')) if path.exists() else default
-def write(path,data):
-    temp=path.with_suffix('.tmp');temp.write_text(json.dumps(data,indent=2,ensure_ascii=False),encoding='utf-8');os.replace(temp,path)
+read=file_store.read_json
+write=file_store.write_json
 
-class FileLock:
-    """Cross-process lock so the browser and the AI never overwrite each other's changes."""
-    def __init__(self,path):self.path=path
-    def __enter__(self):
-        LOCK.acquire();deadline=time.time()+10
-        while True:
-            try:self.fd=os.open(self.path,os.O_CREAT|os.O_EXCL|os.O_WRONLY);return self
-            except FileExistsError:
-                try:
-                    if time.time()-self.path.stat().st_mtime>30:self.path.unlink()
-                except FileNotFoundError:pass
-                if time.time()>deadline:LOCK.release();raise ValueError('Comments are busy; try again')
-                time.sleep(0.05)
-    def __exit__(self,*exc):
-        os.close(self.fd)
-        try:self.path.unlink()
-        except FileNotFoundError:pass
-        LOCK.release()
+def locked(path):
+    """One program or thread at a time on this data file (file_store's lock, its own per file, so the browser and the
+    AI never overwrite each other's changes). Held by another program past file_store.LOCK_WAIT_SECONDS: a ValueError
+    to show."""
+    return file_store.locked(file_store.lock_for(path),busy=f'{Path(path).name} is busy; try again in a moment.')
 
 def videos(directory):return read(directory/'manifest.json',[])
 def comments(directory):return read(directory/'comments.json',{'comments':[]})['comments']
@@ -160,7 +146,7 @@ def search_library(directory,query=''):
     return results
 
 def archive_video(directory,video_id):
-    with FileLock(directory/'manifest.lock'):
+    with locked(directory/'manifest.json'):
         manifest=videos(directory);item=next((v for v in manifest if v['id']==video_id),None)
         if item is None:raise ValueError('Unknown video version')
         archive=read(directory/'library-archive.json',[])
@@ -171,7 +157,7 @@ def archive_video(directory,video_id):
     return item
 
 def restore_video(directory,video_id):
-    with FileLock(directory/'manifest.lock'):
+    with locked(directory/'manifest.json'):
         manifest=videos(directory);archive=read(directory/'library-archive.json',[])
         item=next((v for v in archive if v['id']==video_id),None)
         if item is None:raise ValueError('No archived video found')
@@ -183,8 +169,8 @@ def add_local_video(directory,path,title=''):
     media=Path(path).expanduser().resolve()
     if not media.is_file() or media.suffix.lower() not in ['.mp4','.mov','.m4v','.webm','.mkv','.avi']:
         raise ValueError('Enter the full path to an existing video file')
-    for existing in videos(directory):
-        if Path(existing['path']).resolve()==media:return existing
+    existing=same_file(videos(directory),media)
+    if existing:return existing
     probe=shutil.which('ffprobe')
     if not probe and os.name=='nt':
         import winreg
@@ -202,8 +188,11 @@ def add_local_video(directory,path,title=''):
     except (subprocess.SubprocessError,ValueError,KeyError,StopIteration,ZeroDivisionError):
         raise ValueError('Could not read this video. Try an H.264 MP4 exported from Resolve.')
     name=title.strip()[:120] or media.stem
-    return register_video(directory,{'id':'video-'+uuid.uuid4().hex[:12],'title':name,'label':name+' · '+media.name,
-        'path':str(media),'fps':fps,'durationMs':duration})
+    item=video_item({'id':'video-'+uuid.uuid4().hex[:12],'title':name,'label':name+' · '+media.name,'path':str(media),'fps':fps,'durationMs':duration})
+    return add_to_manifest(directory,item,reuse_same_file=True)
+
+def same_file(manifest,media):
+    return next((x for x in manifest if Path(x['path']).resolve()==media),None)
 
 def save_transcript(directory,video_id,data):
     video=find_video(directory,video_id)
@@ -264,7 +253,7 @@ def save_transcript(directory,video_id,data):
         if abs(sum(b-a for a,b in ranges)/fps*1000-video['durationMs'])>1000/fps:raise ValueError('The source mapping belongs to a different cut')
         result['keepRanges']=ranges;result['fps']=fps
     path=transcript_path(directory,video_id);path.parent.mkdir(parents=True,exist_ok=True)
-    with FileLock(directory/'transcripts.lock'):write(path,result)
+    with locked(path):write(path,result)
     if result.get('keepRanges') is not None and result['keepRanges']!=video.get('keepRanges'):
         update_render(directory,video_id,None,result['keepRanges'])
     return result
@@ -272,7 +261,7 @@ def save_transcript(directory,video_id,data):
 def apply(directory,cmd):
     """Apply one change to comments.json atomically and return the saved data."""
     path=directory/'comments.json'
-    with FileLock(directory/'comments.lock'):
+    with locked(path):
         data=read(path,{'comments':[]});items=data['comments'];action=cmd.get('action')
         def get(cid):
             c=next((x for x in items if x['id']==cid),None)
@@ -363,18 +352,26 @@ def update_render(directory,video_id,duration_ms=None,keep_ranges=None):
     if duration_ms is not None and (not duration or duration<=0):raise ValueError('durationMs must be positive')
     if keep_ranges is not None and not all(isinstance(r,list) and len(r)==2 and 0<=r[0]<r[1] for r in keep_ranges):raise ValueError('keepRanges must be [[startFrame, endFrame], …]')
     path=directory/'manifest.json'
-    with FileLock(directory/'manifest.lock'):
+    # Hashing a long video can take a while; it happens before the lock, so nobody waits for it.
+    media=find_video(directory,video_id)['path'];digest=fingerprint(media) if Path(media).is_file() else None
+    # The comments stay locked until the new mapping is saved, so a comment added meanwhile is mapped with it.
+    with locked(path),locked(directory/'comments.json'):
         manifest=read(path,[]);item=next((x for x in manifest if x['id']==video_id),None)
         if not item:raise ValueError('Unknown video version')
         if keep_ranges is not None and keep_ranges!=item.get('keepRanges'):
-            rebase_comments(directory,item,keep_ranges,duration or item['durationMs'])
+            _rebase(directory,item,keep_ranges,duration or item['durationMs'])
         if duration_ms is not None:item['durationMs']=duration
         if keep_ranges is not None:item['keepRanges']=keep_ranges
-        if Path(item['path']).is_file():item['fingerprint']=fingerprint(item['path'])
+        if digest is not None and item['path']==media:item['fingerprint']=digest
         write(path,manifest)
     return item
 
 def rebase_comments(directory,video,ranges,duration):
+    """Move a video's comments to their places in a new cut, by their frames in the original recording."""
+    with locked(directory/'comments.json'):_rebase(directory,video,ranges,duration)
+
+def _rebase(directory,video,ranges,duration):
+    """rebase_comments for a caller that already holds the comments lock (locks do not nest)."""
     def mapped(frame):
         cursor=0;best=(float('inf'),0)
         for a,b in ranges:
@@ -383,20 +380,23 @@ def rebase_comments(directory,video,ranges,duration):
             if a<=frame<b:return round((cursor+frame-a)*1000/video['fps'])
             cursor+=b-a
         return min(duration,round(best[1]*1000/video['fps']))
-    with FileLock(directory/'comments.lock'):
-        data=read(directory/'comments.json',{'comments':[]})
-        for c in data['comments']:
-            if c['videoId']!=video['id']:continue
-            spans=c.get('sourceSpans') or c.get('editRequest',{}).get('sourceSpans') or source_spans(video,c['startMs'],c.get('endMs'))
-            if not spans:continue
-            c['sourceSpans']=spans;c['beforeRecut']={'startMs':c['startMs'],'endMs':c.get('endMs')}
-            start=mapped(spans[0].get('sourceStartFrame',spans[0].get('sourceFrame')))
-            end=mapped(spans[-1].get('sourceEndFrame',spans[-1].get('sourceFrame'))) if c.get('endMs') is not None else None
-            c['startMs']=start;c['endMs']=end if end is not None and end>start else None
-        write(directory/'comments.json',data)
+    data=read(directory/'comments.json',{'comments':[]})
+    for c in data['comments']:
+        if c['videoId']!=video['id']:continue
+        spans=c.get('sourceSpans') or c.get('editRequest',{}).get('sourceSpans') or source_spans(video,c['startMs'],c.get('endMs'))
+        if not spans:continue
+        c['sourceSpans']=spans;c['beforeRecut']={'startMs':c['startMs'],'endMs':c.get('endMs')}
+        start=mapped(spans[0].get('sourceStartFrame',spans[0].get('sourceFrame')))
+        end=mapped(spans[-1].get('sourceEndFrame',spans[-1].get('sourceFrame'))) if c.get('endMs') is not None else None
+        c['startMs']=start;c['endMs']=end if end is not None and end>start else None
+    write(directory/'comments.json',data)
 
 def register_video(directory,entry):
     """Add a new video version to the manifest. Existing IDs are never overwritten."""
+    return add_to_manifest(directory,video_item(entry))
+
+def video_item(entry):
+    """A checked manifest entry, with the file's fingerprint (slow for a long video, so done before any lock)."""
     for key in ['id','title','label','path','fps','durationMs']:
         if entry.get(key) in (None,''):raise ValueError(f'Missing {key}')
     if not re.fullmatch(r'[A-Za-z0-9._-]{1,100}',entry['id']):raise ValueError('Use letters, digits, dot, dash or underscore for the id')
@@ -407,10 +407,16 @@ def register_video(directory,entry):
     if not duration or duration<=0:raise ValueError('durationMs must be positive')
     total=round(duration*fps/1000);keep=entry.get('keepRanges') or [[0,total]]
     if not all(isinstance(r,list) and len(r)==2 and 0<=r[0]<r[1] for r in keep):raise ValueError('keepRanges must be [[startFrame, endFrame], …]')
-    item={'id':entry['id'],'title':entry['title'],'label':entry['label'],'path':str(media.resolve()),'fps':fps,'durationMs':duration,'fingerprint':entry.get('fingerprint') or fingerprint(media),'keepRanges':keep}
+    return {'id':entry['id'],'title':entry['title'],'label':entry['label'],'path':str(media.resolve()),'fps':fps,'durationMs':duration,'fingerprint':entry.get('fingerprint') or fingerprint(media),'keepRanges':keep}
+
+def add_to_manifest(directory,item,reuse_same_file=False):
+    """Append item under the manifest's lock. With reuse_same_file, a video already listed for the same file is
+    returned instead; the check runs under the lock, so two quick adds of one file make one entry."""
     path=directory/'manifest.json'
-    with FileLock(directory/'manifest.lock'):
+    with locked(path):
         manifest=read(path,[])
+        existing=same_file(manifest,Path(item['path'])) if reuse_same_file else None
+        if existing:return existing
         if any(x['id']==item['id'] for x in manifest):raise ValueError('That id already exists; use a new id for a new cut')
         manifest.append(item);write(path,manifest)
     return item

@@ -2,7 +2,7 @@
 
 Review a video through its words: seek from the transcript, select a phrase, remove it from a reversible
 preview cut, or leave a timestamped request for an editing agent. The final editable cut can stay in
-DaVinci Resolve. [Reviewing and applying changes](docs/REVIEWING.md) explains the workflow, and [Cut checks and captions](docs/video-workflow/CUT-CHECKS.md) covers the join check and caption files.
+DaVinci Resolve. [Reviewing and applying changes](docs/REVIEWING.md) explains the workflow, and [Take cutter, cut checks and captions](docs/video-workflow/CUT-CHECKS.md) covers the take cutter, the join check and caption files.
 
 The library searches video titles and transcript phrases. Removing an entry archives it without deleting
 the recording. Comments, transcripts and recordings stay private; this repository contains the app code.
@@ -126,7 +126,7 @@ The agent gets these tools:
 | `register_video` | Add a different video under a new id so you can review it. Renders of review fixes replace the reviewed file instead (the old file is renamed), so the comments stay on one video. |
 | `open_video` | Switch the open review page to a version, optionally at a time or on a comment (within a few seconds). After re-rendering a file in place, the agent passes the new `durationMs` and `keepRanges`. |
 
-Writes from the browser and the MCP server go through a shared lock, so neither overwrites the other.
+Writes from the browser and the MCP server go through a shared lock, so neither overwrites the other. After updating Video Review, restart the AI editor (or its MCP server) as well as the app: an MCP server still running the older code uses the older lock files and would not wait for the app.
 
 **Export** downloads JSON with the exact video version, timestamps, frame numbers and original-source ranges. A range that crosses a cut maps to multiple source spans. `python export_saved_comments.py` prints the open comments with source mappings without the MCP server.
 
@@ -134,7 +134,7 @@ Original-version comments keep their timebase when a newer cut is added.
 
 ## Repository contents
 
-`web/` is the interface used by both versions; `web/review-core.js` holds the comment rules they share. `cloud/worker.js` is the online version's Worker and MCP endpoint. `server.py` serves the offline app, configured video files and comment API. `mcp_server.py` exposes the same comments to an AI editor, and `review_store.py` holds the storage both share. `examples/` contains sanitized starter configuration. The Windows launcher is optional.
+`web/` is the interface used by both versions; `web/review-core.js` holds the comment rules they share. `cloud/worker.js` is the online version's Worker and MCP endpoint. `server.py` serves the offline app, configured video files and comment API. `mcp_server.py` exposes the same comments to an AI editor, and `review_store.py` holds the storage both share. `file_store.py` is the one way any file in the data folder or a video folder is locked and saved (an operating-system lock per file, never broken by a timeout, and safe saves that retry on Windows). The offline server answers only requests addressed to `127.0.0.1` or `localhost` on its own port, and a saved overview page opened by double click talks to it only with the hidden page code it was written with. `examples/` contains sanitized starter configuration. The Windows launcher is optional.
 
 Local manifests, comments, logs, media and generated exports are excluded by `.gitignore`. Before pushing, review `git status` to check that only application source is staged.
 
@@ -148,6 +148,7 @@ These need Bash and Node as well as Python, but no `npm install`:
 bash scripts/agents/run-tests.sh
 node tests/listening-browser.mjs
 node tests/cut-preview-browser.mjs
+node tests/overview-browser.mjs
 ```
 
-The tests cover local video range requests, comment persistence, timestamp validation, origin checks, the MCP tools, and the transcript, cut and waveform logic, using temporary data directories. The two browser checks need ffmpeg and Playwright, make their own small test video, and outside Windows need `VIDEO_REVIEW_PYTHON=python3`; what each suite checks is in the comments and assertion messages in its file.
+The tests cover local video range requests, comment persistence, timestamp validation, origin checks, the MCP tools, and the transcript, cut and waveform logic, using temporary data directories. The first two browser checks need ffmpeg and Playwright, make their own small test video, and outside Windows need `VIDEO_REVIEW_PYTHON=python3`; the third opens the overview page on a phone-sized screen and needs Playwright and Python, but no ffmpeg. What each suite checks is in the comments and assertion messages in its file.
