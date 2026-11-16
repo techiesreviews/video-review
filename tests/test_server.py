@@ -5,6 +5,7 @@ import sys
 import tempfile
 import threading
 from unittest import mock
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
@@ -535,6 +536,21 @@ class ReviewServerTests:
         assert 'data-server=""' in page
         with self.request(f'/scenes/{self.key}/scenes/01-intro/take-02.jpg') as r:assert r.read()==b'jpeg'
         assert not (self.raw/overview_page.FILE_NAME).exists()
+
+    def test_a_video_folder_named_in_another_script_or_with_a_space_is_served(self):
+        for name in ('Видео','My video 3'):
+            folder=self.data/name
+            (folder/'scenes'/'01-intro').mkdir(parents=True)
+            (folder/'scenes'/'01-intro'/'take-02.jpg').write_bytes(b'jpeg')
+            (folder/'prompter.md').write_text(CUE,encoding='utf-8')
+            scene_store.save(folder,fresh_scene_store())
+            key=overview_page.register(self.data,folder)
+            with self.request('/scenes/'+quote(key)) as r:
+                assert r.status==200,(name,r.status)
+                page=r.read().decode('utf-8')
+            assert 'Picture this.' in page,name
+            assert f'<img src="/scenes/{quote(key)}/scenes/01-intro/take-02.jpg"' in page,name
+            with self.request('/scenes/'+quote(key)+'/scenes/01-intro/take-02.jpg') as r:assert r.read()==b'jpeg',name
 
     def test_the_served_page_follows_a_star_change(self):
         self.reset_scenes()

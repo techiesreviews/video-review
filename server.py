@@ -46,6 +46,7 @@ class Handler(BaseHTTPRequestHandler):
         thumbnail to send, or None after a 404. Only files directly under the video's scenes/ folder, of a take or
         thumbnail type, and really inside it (not through .. or a link), are served."""
         key,_,relative=rest.partition('/')
+        key=unquote(key)  # a folder named in another script (Видео) has a key with letters the link percent-encodes
         found=self.scene_video(key)
         if not found:return self.send_error(404)
         folder,cue=found
