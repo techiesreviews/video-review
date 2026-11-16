@@ -356,6 +356,22 @@ class ReviewServerTests:
             assert f'data-code="{code}"' in page.read_text(encoding='utf-8')
         finally:self.reset_scenes()
 
+    def test_starting_the_server_on_another_port_points_the_saved_page_at_it(self):
+        # R1-1: port 8879 was taken, so this copy started on the next one, while the page saved earlier still asks 8879.
+        page=self.raw/overview_page.FILE_NAME
+        old=self.httpd.server_port+1
+        try:
+            overview_page.remember_port(self.data,old)
+            overview_page.publish(self.raw,data_dir=self.data)
+            assert f'data-server="http://127.0.0.1:{old}"' in page.read_text(encoding='utf-8')
+            overview_page.remember_port(self.data,self.httpd.server_port)  # what create_server does on the new port
+            server.start_background_jobs().join(30)
+            text=page.read_text(encoding='utf-8')
+            assert f'<body data-server="{self.origin}"' in text,'the saved page still asks the old port'
+            assert f'data-code="{self.code()}"' in text
+        finally:
+            overview_page.remember_port(self.data,self.httpd.server_port);self.reset_scenes()
+
     def test_from_the_origin_null_an_unknown_video_looks_like_a_wrong_code(self):
         # Otherwise a website could test guessed folder names: a readable 404 would mean "no such video".
         for video in (self.key,'nope-12345678'):
