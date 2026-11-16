@@ -860,6 +860,13 @@ class OneScriptLineTests(unittest.TestCase):
         self.assertEqual(removed_texts(plan_words(words, 'The camera is easy to carry.')),
                          ['The camera is easy to move.'])
 
+    def test_an_ad_lib_start_before_a_restart_outside_the_script_loses_only_the_restarted_words(self):
+        # Review round 1 on TOOLS-307: a take that is not in the script does not make the whole sentence go.
+        words = said('So I think the demo is great.', 1.0) + said('The demo is great.', 5.0)
+        script = 'So I shipped the new demo to all of our customers last week.'
+        kept = kept_starts(plan_words(words, script), cut_timeline.load_words(words))
+        self.assertTrue({1.0, 1.3, 1.6} <= kept)
+
     def test_a_take_said_in_another_word_order_keeps_a_script_word_the_kept_take_leaves_out(self):
         # Release checks, 2026-11-16 (TOOLS-307): lined up in order, "To use the camera is easy." matches only
         # "the camera is easy", so the later take seemed to say all of it and the only "use" was cut.
@@ -1016,6 +1023,7 @@ class OneScriptLineTests(unittest.TestCase):
         self.assertEqual(lines('[Face full\nOne.\n[Show the camera]\nTwo.'), [['one'], ['two']])
 
     def test_a_bold_link_alone_on_its_line_is_not_speech(self):
+        # Release checks, 2026-11-16 (TOOLS-307).
         lines = cut_takes.script_sentences
         self.assertEqual(lines('Say hello.\n**[Source](docs/source.md)**\nYes.'), [['say', 'hello'], ['yes']])
         self.assertEqual(lines('Say hello.\n- _[Source](docs/source.md)_\nYes.'), [['say', 'hello'], ['yes']])
@@ -1023,6 +1031,7 @@ class OneScriptLineTests(unittest.TestCase):
         self.assertEqual(lines('Read **[the guide](docs/guide.md)** first.'), [['read', 'the', 'guide', 'first']])
 
     def test_escaped_brackets_in_link_text_keep_their_words(self):
+        # Release checks, 2026-11-16 (TOOLS-307): the direction filter removed the words the link reader kept.
         lines = cut_takes.script_sentences
         self.assertEqual(lines('Read [the \\[important\\] guide](docs/guide.md) first.'),
                          [['read', 'the', 'important', 'guide', 'first']])
@@ -1165,6 +1174,13 @@ class OneScriptLineTests(unittest.TestCase):
         result = plan_words(words, 'Yes. The tool is fast.')
         self.assertIn(1.0, kept_starts(result, cut_timeline.load_words(words)))
         self.assertIn(1.0, [item['start'] for item in flags(result, 'script-line-kept')])
+        # A line of two words in the same way (review round 1): "Thanks again for coming." is no take of
+        # "Thanks again.", so the last check puts the line back.
+        words = said('Thanks again.', 1.0) + said('Thanks again for coming.', 3.0)
+        cutter = cut_takes.Cutter(cut_timeline.load_words(words), FPS, 'Thanks again. The end.')
+        remove(cutter, 0, 1)
+        cutter.keep_script_lines()
+        self.assertEqual(cutter.keep, [True] * 6)
 
 
 class EveryScriptLineStaysTests(unittest.TestCase):
@@ -1309,6 +1325,11 @@ class EdgeCaseTests(unittest.TestCase):
             self.assertLess(room, ROOM_MS[0] + 67, end)
             if room > 150:
                 self.assertEqual([item['code'] for item in result['paperEdit']['flags']], ['tight-edge'], end)
+        # The opening edge in the same way: frame 15 leaves 90 ms before 1.09 s and frame 14 157 ms; not frame 0.
+        result = plan_words([['Hello.', 1.09, 1.5]], fps=15)
+        self.assertEqual(cut_timeline.load_cutlist(result['cutlist']).runs[0].source_start, 14 / 15)
+        flag, = flags(result, 'tight-edge')
+        self.assertIn('no whole frame at 15 fps', flag['message'])
 
     def test_too_little_silence_is_flagged_and_no_word_is_cut(self):
         # The failed attempt starts 40 ms after "words.", so 100 ms of room cannot fit there.
