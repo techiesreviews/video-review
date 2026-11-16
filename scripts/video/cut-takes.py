@@ -84,12 +84,8 @@ TRAILING_MARK = re.compile(r'[,;:.!?–—-]["\')\]]*$')
 SCRIPT_STOP = re.compile(r'(?<=[.!?])["\'”’»)\]*_`]*\s+')
 # A [direction] may run over several lines, but never past a heading: a missing "]" must not swallow later scenes.
 DIRECTION = re.compile(r'\[(?:[^\]\n]|\n(?![ \t]*#))*\]')
-# A markdown link, [text](address "title"): its text follows the direction rule, and the address may hold one pair
-# of brackets of its own. On a line of its own (also as a list item) it is a direction with an address.
-LINK = r'\[((?:[^\[\]\n]|\n(?![ \t]*#))*)\]\((?:[^()\n]|\([^()\n]*\))*\)'
-IMAGE = re.compile('!' + LINK)
-LINK_LINE = re.compile(r'^[ \t]*(?:(?:[-*+]|\d+[.)])[ \t]+)?' + LINK + r'[ \t]*$', re.MULTILINE)
-INLINE_LINK = re.compile(LINK)
+# The start of a markdown link or image, [text](address "title"): its text follows the direction rule.
+LINK_START = re.compile(r'(!?)\[((?:[^\[\]\n]|\n(?![ \t]*#))*)\]\(')
 # A bare address, without the full stop, comma or closing mark that follows it.
 ADDRESS = re.compile(r'https?://[^\s<>]*[^\s<>.,;:!?"\'”’»)\]*_`]')
 LIST_ITEM = re.compile(r'^\s*(?:[-*+]|\d+[.)])\s+')
@@ -133,14 +129,34 @@ def in_order(first, second):
     return sum(block.size for block in SequenceMatcher(None, first, second, autojunk=False).get_matching_blocks())
 
 
+def without_links(text):
+    """The script with each link read as its text. An image is left out, and so is a link that has a line to
+    itself (also as a list item): that is a direction with an address. The address ends at its own closing
+    bracket on the same line, however many pairs of brackets it holds; one that is never closed is no link."""
+    parts, done = [], 0
+    for match in LINK_START.finditer(text):
+        end, depth = match.end(), 1
+        while depth and end < len(text) and text[end] != '\n':
+            depth += {'(': 1, ')': -1}.get(text[end], 0)
+            end += 1
+        if depth or match.start() < done:
+            continue
+        line_end = text.find('\n', end)
+        before = text[text.rfind('\n', 0, match.start()) + 1:match.start()]
+        after = text[end:line_end if line_end >= 0 else len(text)]
+        alone = not LIST_ITEM.sub('', before).strip() and not after.strip()
+        parts += [text[done:match.start()], ' ' if match.group(1) else '' if alone else match.group(2)]
+        done = end
+    return ''.join(parts) + text[done:]
+
+
 def script_sentences(text):
     """The script as one list of words per sentence. A sentence ends at . ! or ? (also in front of a closing quote,
     bracket or bold mark), and at a heading, a blank line or a list item, so a line without a full stop does not
     run into the next one. Headings and [directions] are left out; a direction never runs past a heading. A link
     is read as its text, or left out when it has a line to itself, as a direction is; an image and a bare address
     (https://…) are left out, so no address is ever taken for a spoken word."""
-    text = INLINE_LINK.sub(r'\1', LINK_LINE.sub('', IMAGE.sub(' ', text)))
-    text = ADDRESS.sub(' ', DIRECTION.sub(' ', text))
+    text = ADDRESS.sub(' ', DIRECTION.sub(' ', without_links(text)))
     blocks = [[]]
     for line in text.splitlines():
         heading, item = line.lstrip().startswith('#'), LIST_ITEM.match(line)
