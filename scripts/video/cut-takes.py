@@ -128,9 +128,11 @@ def in_order(first, second):
 def script_sentences(text):
     """The script as one list of words per sentence. A sentence ends at . ! or ? (also in front of a closing quote,
     bracket or bold mark), and at a heading, a blank line or a list item, so a line without a full stop does not
-    run into the next one. Headings and [directions] are left out; a direction never runs past a heading. A link
-    is read as its text, or left out when it has a line to itself, as a direction is; an image and a bare address
-    (http:// or https://…) are left out, so no address is ever taken for a spoken word."""
+    run into the next one. Headings and [directions] are left out as the overview page leaves them out
+    (script_text.without_directions): with the brackets inside them, never past a heading, and a line that opens a
+    bracket it never closes goes on its own. A link is read as its text, or left out when it has a line to itself,
+    as a direction is; an image and a bare address (http:// or https://…) are left out, so no address is ever taken
+    for a spoken word."""
     text = ADDRESS.sub(' ', script_text.without_directions(text))
     blocks = [[]]
     for line in text.splitlines():
@@ -200,7 +202,8 @@ class Cutter:
         indices = [index for index in indices if self.keep[index]]
         if not indices:
             return False
-        if self.says_more(indices, keeps):
+        # A retake cue's own "again" is no word of the take, also when the script says "again" elsewhere.
+        if self.says_more(indices[:-1] if reason == 'retake-cue' else indices, keeps):
             # Whatever found this removal, it goes only when the take that stays says what it says.
             asked = ('possible-restart', 'take-says-more')
             start, end = self.words[indices[0]].start, self.words[indices[-1]].end
@@ -439,8 +442,12 @@ class Cutter:
         """True when a take says every word of a script line that another sentence says: only then does the take
         make the other one a failed try. A take that says another part of the line, picks the line up half way or
         leaves out a script word the other one has ("easy to use" before "easy to carry", when the script says
-        "easy to use and carry") does not."""
-        return self.part_of_line(other, line) <= self.part_of_line(take, line)
+        "easy to use and carry") does not, also when the other one says it in another word order ("To use the
+        camera is easy.")."""
+        words = Counter(self.script[line])
+        said = Counter(self.norms[index] for index in other) & words
+        return self.part_of_line(other, line) <= self.part_of_line(take, line) \
+            and not said - Counter(self.norms[index] for index in take)
 
     def same_part(self, first, second, line):
         """True when two sentences say the same part of a script line, as two takes of it do. The script may join
@@ -736,7 +743,7 @@ class Cutter:
                 score, line = self.best_line(take)
                 if score >= SETTINGS['scriptMatch'] and tuple(self.script[line]) in self.repeated:
                     continue  # The script says this line twice on purpose.
-            start, passed, unsure = None, [], False
+            start, passed, unsure, whole = None, [], False, None
             for piece in reversed(pieces[:number]):
                 kept = [index for index in piece if self.keep[index]]
                 if not kept:
@@ -766,6 +773,13 @@ class Cutter:
                         break
                 # One word before the opening ("So next, the ...") belongs to the attempt.
                 start = kept[0] if at <= 1 else kept[at]
+                # A finished sentence that says a script word the take does not ("To use the camera is easy." before
+                # "The camera is easy to carry.") is asked about whole: drop() leaves it in and Lex is told. Only for
+                # a take in the script: for any other take, the words before the opening stay and drop() checks the
+                # rest against its own line.
+                take_score, take_line = self.best_line(take) if self.script else (0.0, None)
+                whole = kept[0] if at > 1 and finished and take_score >= SETTINGS['scriptMatch'] \
+                    and not self.says(take, kept, take_line) else None
             if start is None:
                 continue
             attempt = [index for index in range(start, take[0]) if self.keep[index]]
@@ -783,7 +797,7 @@ class Cutter:
                 # Everything removed must belong to the take's own script line, not to the talk around it (and
                 # drop() leaves in what the take does not say).
                 if self.best_line(attempt)[1] == self.best_line(take)[1]:
-                    self.drop(attempt, 'abandoned-start', take[0])
+                    self.drop(attempt if whole is None else range(whole, take[0]), 'abandoned-start', take[0])
             elif unsure or any(len(other) >= 3 and other[0] > start for other in passed):
                 # Without a script, more than a stray word between the attempts may be real talk: ask, do not cut.
                 asks.append((attempt, take[0]))
@@ -839,12 +853,16 @@ class Cutter:
         starts = {}
         for at, name in enumerate(names):
             starts.setdefault(name, []).append(at)
-        # A kept sentence counts as a take of its line when it says the line in order through to its last word.
+        # A kept sentence counts as a take of its line when it says the line in order through to its last word. A
+        # line of one or two words is only taken by a sentence that is that line ("Yes, we can." is no take of
+        # "Yes."), as its word-for-word readings below are.
         takes = {}
         for sentence in self.sentences():
             score, line = self.best_line(sentence)
             said = self.part_of_line(sentence, line) if score >= SETTINGS['scriptMatch'] else ()
-            if len(said) >= SETTINGS['completeCoverage'] * len(self.script[line]) and len(self.script[line]) - 1 in said:
+            line_words = self.script[line]
+            if len(said) >= SETTINGS['completeCoverage'] * len(line_words) and len(line_words) - 1 in said \
+                    and (len(line_words) >= 3 or [self.norms[index] for index in sentence] == line_words):
                 takes.setdefault(tuple(self.script[line]), []).append(sentence)
         used = set()
         counts = Counter(map(tuple, self.script))
@@ -951,16 +969,27 @@ class Cutter:
         return frame if (frame / fps - at) * direction >= -TOLERANCE else None
 
     def fallback(self, at, direction, limit, word_index, side):
-        """No frame leaves the preferred room: take the roomiest one that stays off both words, and flag it. None
-        when there is no such frame (clean_frame)."""
-        fps = self.fps
-        frame = self.clean_frame(at, direction, limit)
-        if frame is None:
-            return None
+        """No frame leaves the preferred room: take the one closest to it that stays off both words, and flag it.
+        That is the first frame with at least the least preferred room, or the roomiest one before the next sound
+        when that is closer (clean_frame). With no sound after the last word (an infinite limit), only the first
+        counts. None when no frame stays off both words."""
+        fps, low, high = self.fps, *SETTINGS['roomMs']
+        # The first frame with at least the least preferred room: at a low frame rate no frame may fall inside the
+        # range (at 15 fps a frame is 67 ms, the range 50 ms).
+        roomy = math.ceil((at + low / 1000) * fps - 1e-6) if direction > 0 \
+            else math.floor((at - low / 1000) * fps + 1e-6)
+        if math.isinf(limit):
+            frame = max(roomy, 0)
+        else:
+            frame = self.clean_frame(at, direction, limit)
+            if frame is None:
+                return None
+            frame = min(frame, roomy) if direction > 0 else max(frame, roomy)
         room = round((frame / fps - at) * 1000) * direction
+        why = f'no whole frame at {fps:g} fps leaves {low}-{high} ms' if room > high else 'the next sound is too close'
         self.flag('tight-edge', word_index, word_index,
-                  f'Only {room} ms of room {side} "{self.words[word_index].text}" (preferred '
-                  f'{SETTINGS["roomMs"][0]}-{SETTINGS["roomMs"][1]} ms): the next sound is too close. Listen.')
+                  f'{"Only " if room < low else ""}{room} ms of room {side} "{self.words[word_index].text}" '
+                  f'(preferred {low}-{high} ms): {why}. Listen.')
         return frame
 
     def edge(self, index, direction, limit, target):
