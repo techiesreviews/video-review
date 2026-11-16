@@ -473,7 +473,7 @@ PAGE_HEAD = """<!doctype html>
   .sub { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
   .sub b { color: var(--text); }
   .off { color: var(--warn); font-size: 13px; margin: 0 0 14px; }
-  .cut { display: flex; gap: 3px; height: 34px; margin: 0 0 4px; }
+  .cut { display: flex; gap: 3px; height: 34px; margin: 0 0 4px; overflow: hidden; }
   .cut div { display: grid; place-items: center; background: var(--chip); border-radius: 6px; font: 700 12px/1 system-ui; color: var(--text); min-width: 6px; overflow: hidden; }
   .cut div.none { background: transparent; box-shadow: inset 0 0 0 1px var(--border); color: var(--dim); }
   .cutlabel { color: var(--dim); font-size: 12px; margin: 0 0 16px; }
@@ -510,7 +510,7 @@ PAGE_HEAD = """<!doctype html>
   .player .d { color: var(--muted); font-size: 13px; }
   .legend { color: var(--dim); font-size: 12px; margin: 10px 2px 0; }
   .legend b { color: var(--star); }
-  button:focus-visible, summary:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  button:focus-visible, summary:focus-visible, .stext:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 </style>
 </head>
 """
@@ -569,7 +569,7 @@ PAGE_SCRIPT = """<script>
     if (text) text.setAttribute('aria-expanded', text.classList.toggle('open'));
   });
   document.addEventListener('keydown', e => {
-    if ((e.key === 'Enter' || e.key === ' ') && e.target.classList?.contains('stext')) { e.preventDefault(); e.target.click(); }
+    if (!e.repeat && (e.key === 'Enter' || e.key === ' ') && e.target.classList?.contains('stext')) { e.preventDefault(); e.target.click(); }
   });
   clip.addEventListener('error', () => { detail.textContent = 'This browser cannot play this file.'; });
 })();
