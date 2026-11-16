@@ -826,24 +826,27 @@ class CommandLine(unittest.TestCase):
 
 class SavedPageScript(unittest.TestCase):
     """The saved page's own script, run in Node with a fake page (skipped without Node)."""
-    def run_page_script(self, answer, click=False, later=(200, '{}'), carried=None, starred=False, storage=True):
+    def run_page_script(self, answer, click=False, later=(200, '{}'), carried=None, starred=False, storage=True,
+                        hold=False):
         """Run the saved page's script in Node with a fake page and a fake fetch; return what the stars line (the
         page's live region, empty when there is nothing to say) says, whether the stars are on, how often the page
         loaded itself again and what it kept for after that. answer: what fetch does ('network', or [status, body
         text]): for the take list when the page opens, or with click=True for the star click (the take list then
         answers 200 first and `later` when it is asked again). carried: what an earlier load of the page kept.
         starred: the one star on the fake page (scene 01-intro, take 2) shows as starred and in the rough cut.
-        storage=False: the browser gives the page nothing to keep things in."""
+        storage=False: the browser gives the page nothing to keep things in. hold=True: the star click gets no
+        answer yet, and the other star on the page (take 1) is clicked while it waits."""
         node = shutil.which('node')
         if not node:
             self.skipTest('node is not installed')
         harness = textwrap.dedent('''
-            const { answer, later, click, carried, starred, storage, usual, stale } = JSON.parse(process.argv[1]);
+            const { answer, later, click, carried, starred, storage, usual, stale, hold } = JSON.parse(process.argv[1]);
             const off = { textContent: '', dataset: { text: usual, stale } };
             const star = { disabled: true, dataset: { scene: '01-intro', take: '2', starred: String(starred), on: String(starred) } };
+            const other = { disabled: true, dataset: { scene: '01-intro', take: '1', starred: 'false', on: 'false' } };
             globalThis.document = {
               body: { dataset: { server: 'http://127.0.0.1:8879', video: 'v-1', code: 'the-code' } },
-              querySelectorAll: () => [star],
+              querySelectorAll: () => [star, other],
               getElementById: () => off,
               addEventListener: (type, handler) => { if (type === 'click') globalThis.onClick = handler; },
             };
@@ -864,17 +867,21 @@ class SavedPageScript(unittest.TestCase):
               return Promise.resolve({ ok: status < 300, json: () => Promise.resolve().then(() => JSON.parse(text)) });
             };
             globalThis.fetch = (url, options) => {
-              if (options) { sends.push(JSON.parse(options.body)); return reply(answer); }
+              if (options) { sends.push(JSON.parse(options.body)); return hold ? new Promise(() => {}) : reply(answer); }
               asked = url; lists += 1;
               return reply(!click ? answer : lists === 1 ? [200, '{}'] : later);
             };
             ''') + overview_page.PAGE_SCRIPT.split('<script>')[1].split('</script>')[0] + textwrap.dedent('''
-            if (click) setTimeout(() => globalThis.onClick({ target: { closest: s => s === '.st' ? star : null } }), 20);
-            setTimeout(() => console.log(JSON.stringify({ said: off.textContent, on: !star.disabled, asked, reloads,
-              sent: sends.at(-1) ?? null, kept: kept.get('overview-said:v-1') ?? null })), 90);
+            const tap = which => globalThis.onClick({ target: { closest: s => s === '.st' ? which : null } });
+            if (click) setTimeout(() => tap(star), 20);
+            if (hold) setTimeout(() => tap(other), 40);
+            setTimeout(() => { console.log(JSON.stringify({ said: off.textContent, on: !star.disabled, asked, reloads,
+              sent: sends.at(-1) ?? null, sends, off: [star, other].filter(s => s.disabled).length,
+              kept: kept.get('overview-said:v-1') ?? null })); process.exit(0); }, 90);
             ''')
         setup = {'answer': answer, 'later': later, 'click': click, 'carried': carried, 'starred': starred,
-                 'storage': storage, 'usual': overview_page.STARS_OFF_TEXT, 'stale': overview_page.STALE_PAGE_TEXT}
+                 'storage': storage, 'usual': overview_page.STARS_OFF_TEXT, 'stale': overview_page.STALE_PAGE_TEXT,
+                 'hold': hold}
         done = subprocess.run([node, '-e', harness, json.dumps(setup)], capture_output=True, text=True, timeout=30,
                               encoding='utf-8')
         self.assertEqual(done.returncode, 0, done.stderr)
@@ -900,6 +907,10 @@ class SavedPageScript(unittest.TestCase):
         click = script[script.index("const star = e.target.closest('.st');"):script.index("fetch(server + '/api/scenes/star'")]
         self.assertIn('stars.forEach(s => { s.disabled = true; });', click)
         self.assertNotIn('star.disabled = true;', click)
+        # Run for real: the first save gets no answer yet and the other star is clicked. Nothing more is sent.
+        seen = self.run_page_script([200, '{}'], click=True, hold=True)
+        self.assertEqual(seen['sends'], [{'video': 'v-1', 'code': 'the-code', 'scene': '01-intro', 'take': 2}])
+        self.assertEqual((seen['off'], seen['reloads']), (2, 0))
 
     def test_a_failed_star_click_with_an_odd_answer_shows_the_usual_line_and_keeps_the_stars(self):
         for answer in ([500, json.dumps({'error': {'x': 1}})], [500, '{"error": 7}'], [500, 'null'], [500, 'not json']):
