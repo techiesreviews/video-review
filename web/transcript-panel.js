@@ -263,8 +263,9 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
       const done=await editing.undo({keep:stay});if(!done)return;
       if(stay){barStatus(broughtBackLine({noteResolved:!!done.note}));return;}
       const draft=draftAfter(done);clearView();refreshCuts();seek(done.edit.startMs);
-      // The words that came back are selected again, so a mistaken undo is one Backspace from being redone.
-      if(done.first>=0&&done.last>=done.first){editing.anchor=done.first;choose(done.first,done.last,{focus:false});keepDraft([done.note,draft].filter(Boolean).join(' '));barStatus(broughtBackLine({selectedAgain:!noteBox.value}));if(fromBar)focusBar();}
+      // The words that came back are selected again, so a mistaken undo is one Backspace from being redone. A note waiting
+      // from a refused edit is in the box once they are selected, and stays next to the cut's own note.
+      if(done.first>=0&&done.last>=done.first){editing.anchor=done.first;choose(done.first,done.last,{focus:false});keepDraft([done.note,draft,noteBox.value].filter(Boolean).join(' '));barStatus(broughtBackLine({selectedAgain:!noteBox.value}));if(fromBar)focusBar();}
     }
     catch(error){failed(error);}finally{refreshCuts();}
   }
