@@ -744,21 +744,26 @@ class UploadFailures(Base):
         self.assertEqual(record['steps'], [])
         self.assertNotIn('complete', record)
 
-    def test_after_a_lost_answer_a_page_that_cannot_list_its_videos_is_left_alone(self):
+    def test_after_a_lost_answer_a_page_that_cannot_show_whose_the_id_is_is_left_alone(self):
+        # The page has nothing shared, so it gives no list; or it is older than this tool and lists the video
+        # without the hash of its file. Either way nothing can be said, and the same command may be run again.
         self.lose_the_registration_answer()
 
-        def nothing_shared(url, message, token):
-            self.sent.append(message)
-            name = message.get('params', {}).get('name')
-            if name == 'register_video':
+        def answering(listed):
+            def page(url, message, token):
+                self.sent.append(message)
+                name = message.get('params', {}).get('name')
+                if name == 'register_video':
+                    return {'jsonrpc': '2.0', 'id': message['id'],
+                            'result': {'content': [{'text': 'That id already exists'}], 'isError': True}}
                 return {'jsonrpc': '2.0', 'id': message['id'],
-                        'result': {'content': [{'text': 'That id already exists'}], 'isError': True}}
-            text = '{"available": false}' if name == 'list_videos' else '{}'
-            return {'jsonrpc': '2.0', 'id': message['id'], 'result': {'content': [{'text': text}]}}
-        for _ in range(2):
-            with self.assertRaisesRegex(cut_to_review.Stop, 'could not list its videos .*Nothing was changed there. '
-                                                            'Open the Video Review page, then run the same'):
-                self.upload(nothing_shared)
+                        'result': {'content': [{'text': listed if name == 'list_videos' else '{}'}]}}
+            return page
+        older = json.dumps({'videos': [{'id': 'test-video-v1', 'fileName': 'test-video-v1.mp4', 'fingerprint': None}]})
+        for listed in ('{"available": false}', older):
+            with self.assertRaisesRegex(cut_to_review.Stop, 'could not show whether it is this file. Nothing was '
+                                                            'changed there. Open the Video Review page .*run the same'):
+                self.upload(answering(listed))
         names = [message['params']['name'] for message in self.sent if message['method'] == 'tools/call']
         self.assertEqual(names, ['register_video', 'register_video', 'list_videos', 'register_video', 'list_videos'])
         # Once the page lists it as this file, the same command finishes the upload.

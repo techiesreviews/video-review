@@ -145,5 +145,6 @@ export function checkVideo(entry,videos){
   if(!(durationMs>0))throw Error('durationMs must be positive');
   const keep=entry.keepRanges||[[0,Math.round(durationMs*fps/1000)]];
   if(!Array.isArray(keep)||!keep.every(r=>Array.isArray(r)&&r.length===2&&r[0]>=0&&r[0]<r[1]))throw Error('keepRanges must be [[startFrame, endFrame], …]');
-  return {id:entry.id,title:String(entry.title),label:String(entry.label),fps,durationMs,keepRanges:keep,fileName:entry.fileName?String(entry.fileName):null,fileSize:entry.fileSize??null,fingerprint:entry.fingerprint??null,sha256:entry.sha256?String(entry.sha256):null,addedBy:entry.addedBy||'you',createdAt:entry.createdAt||new Date().toISOString()};
+  if(entry.sha256!=null&&!/^[0-9a-f]{64}$/i.test(entry.sha256))throw Error('sha256 must be 64 hex digits');
+  return {id:entry.id,title:String(entry.title),label:String(entry.label),fps,durationMs,keepRanges:keep,fileName:entry.fileName?String(entry.fileName):null,fileSize:entry.fileSize??null,fingerprint:entry.fingerprint??null,sha256:entry.sha256?.toLowerCase()??null,addedBy:entry.addedBy||'you',createdAt:entry.createdAt||new Date().toISOString()};
 }

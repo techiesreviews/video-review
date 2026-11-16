@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {registerHooks} from 'node:module';
 import {keptRanges,cutLength,fileToCut,cutToFile,jumpPlan,JOIN_FADE_MS,removedRanges,playbackRemovals,skipRemoved} from '../web/cut-core.js';
 import {wordsInSpan,normalizeTranscript} from '../web/transcript-core.js';
-import {applyChange,describe} from '../web/review-core.js';
+import {applyChange,checkVideo,describe} from '../web/review-core.js';
 import {createCutPlayback} from '../web/cut-playback.js';
 
 const edits=[{startMs:2000,endMs:3000},{startMs:5000,endMs:6000}],duration=8000;
@@ -196,6 +196,29 @@ test('both agent connections tell the agent about change requests and preview re
   const tools=(await session.mcp({jsonrpc:'2.0',id:2,method:'tools/list'},'s','https://example.test')).response.result.tools;
   assert.match(tools.find(t=>t.name==='get_transcript').description,/draftEdits/);
   assert.match(tools.find(t=>t.name==='list_comments').description,/agentRequest/);
+});
+test('the hash a video is registered with goes through the reviewer\'s tab and comes back from list_videos',async()=>{
+  // An interrupted upload (cut-to-review.py) knows its own registration by this hash. The tab here does what
+  // the page does with a registration (web/backend.js): check it, keep it, share its videos again, answer.
+  const state=reviewed(),stored=new Map(),hash='ab'.repeat(32);
+  const tab={deserializeAttachment:()=>({authed:true}),send(text){
+    const {type,op}=JSON.parse(text);if(type!=='op')return;
+    queueMicrotask(async()=>{
+      const video=checkVideo(op.cmd.video,state.videos);state.videos.push(video);
+      await session.webSocketMessage(tab,JSON.stringify({type:'context',state:{videos:state.videos.map(v=>({...v,fileOpen:false})),comments:[],view:null}}));
+      await session.webSocketMessage(tab,JSON.stringify({type:'op-result',id:op.id,ok:true,result:{video}}));
+    });
+  }};
+  const session=new ReviewSession({storage:{get:async key=>stored.get(key),put:async(key,value)=>{stored.set(key,value);}},getWebSockets:()=>[tab]},{});
+  stored.set('tokens',[{hash:await sha('s'),usedAt:1,lastSeen:Date.now()}]);
+  stored.set('context',{videos:state.videos,comments:[],view:null,at:0});
+  const entry={id:'talk-v1',title:'talk',label:'talk · v1',fileName:'talk-v1.mp4',fps:30,durationMs:2000};
+  const done=await session.callTool('register_video',{...entry,sha256:hash},'https://example.test');
+  assert.equal(done.status,'applied');assert.equal(done.video.sha256,hash);
+  const listed=await session.callTool('list_videos',{},'https://example.test');
+  assert.deepEqual(listed.videos.map(v=>[v.id,v.sha256]),[['v',null],['talk-v1',hash]]);
+  await assert.rejects(session.callTool('register_video',{...entry,sha256:hash},'https://example.test'),/already exists/);
+  await assert.rejects(session.callTool('register_video',{...entry,id:'talk-v2',sha256:'not a hash'},'https://example.test'),/sha256 must be 64 hex digits/);
 });
 async function sha(text){const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text));return [...new Uint8Array(digest)].map(b=>b.toString(16).padStart(2,'0')).join('');}
 
