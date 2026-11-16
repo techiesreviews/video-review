@@ -496,8 +496,13 @@ class Cutter:
             parent[root(second)] = root(first)
 
         for earlier, later in pairs:
-            if earlier in owner and later in owner \
-                    and self.same_line(sentences[owner[earlier]], sentences[owner[later]]):
+            if earlier not in owner or later not in owner:
+                continue
+            first, second = sentences[owner[earlier]], sentences[owner[later]]
+            # Only the script makes two sentences one line however far apart: a near copy has a minute.
+            near = self.words[second[0]].start - self.words[first[-1]].end <= SETTINGS['nearTakeSeconds']
+            scripted = bool(self.script) and self.best_line(first)[0] >= SETTINGS['scriptMatch']
+            if (near or scripted) and self.same_line(first, second):
                 join(owner[earlier], owner[later])
         lines = {}
         if self.script:
@@ -1136,11 +1141,15 @@ def plan(words, fps, script_text=None, demos=(), name='Take cut proposal', sourc
         first, last = words[item['first']], words[item['last']]
         reason = next(iter(item['reasons'])) if len(item['reasons']) == 1 else 'retake-run'
         gaps = [words[index + 1].start - words[index].end for index in range(item['first'], item['last'])]
+        # The cut also takes the silence between the passage and the words on either side of it.
+        beside = [words[index + 1].start - words[index].end for index in (item['first'] - 1, item['last'])
+                  if 0 <= index < len(words) - 1]
         removed.append({'start': round(first.start, 3), 'end': round(last.end, 3),
                         'seconds': round(last.end - first.start, 2), 'reason': reason, 'why': REASONS[reason],
                         'text': cutter.text(range(item['first'], item['last'] + 1)),
                         'keeps': round(words[item['keeps']].start, 3) if item['keeps'] is not None else None,
-                        'longestSilence': round(max(gaps, default=0.0), 2)})
+                        'longestSilence': round(max(gaps, default=0.0), 2),
+                        'silenceBeside': round(max(beside, default=0.0), 2)})
     join_entries = []
     for number, join in enumerate(joins, 1):
         # Beside a demo piece there is no word on that side, so no room to measure.
@@ -1210,6 +1219,8 @@ def render_paper_edit(paper):
         keeps = f'; the take at {seconds(item["keeps"])} stays' if item['keeps'] is not None else ''
         silence = f', includes a {item["longestSilence"]:.1f} s silence' \
             if item['longestSilence'] * 1000 >= limits['longSilenceMs'] else ''
+        if item['silenceBeside'] * 1000 >= limits['longSilenceMs']:
+            silence += f', takes out the {item["silenceBeside"]:.1f} s silence beside it'
         lines.append(f'- **{seconds(item["start"])}-{seconds(item["end"])}** ({item["seconds"]} s{silence}), '
                      f'{item["why"]}{keeps}: "{item["text"]}"')
     if not paper['removed']:
