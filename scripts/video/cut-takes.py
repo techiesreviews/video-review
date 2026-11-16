@@ -851,8 +851,9 @@ class Cutter:
                 if at < free or tuple(names[at:at + len(line)]) != line:
                     continue
                 # A line of one or two words is only itself as a sentence of its own ("Thanks again."), not as
-                # the same words inside another sentence. One word at the start of a sentence with a pause after
-                # it is said on its own too ("Yes | The— The tool is fast."), whatever follows the pause.
+                # the same words inside another sentence. One word at the start of a sentence, with no comma or
+                # dash on it and a pause after it, is said on its own too ("Yes | The— The tool is fast."),
+                # whatever follows the pause.
                 end = spoken[at + len(line) - 1]
                 alone = len(line) == 1 and self.paused(end) and not TRAILING_MARK.search(self.words[end].text)
                 own = (at == 0 or self.ends(spoken[at - 1])) and (self.ends(end) or alone)

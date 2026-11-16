@@ -986,6 +986,16 @@ class OneScriptLineTests(unittest.TestCase):
         result = plan_words(words + said('So the tool is cheap.', 7.0), script)
         self.assertEqual([(item['start'], item['text']) for item in result['paperEdit']['removed']],
                          [(3.0, 'So the tool is cheap.')])
+        # Only two words are looked at, so "So | The tool is fast." is held back the same way although another
+        # line follows the pause: the last check keeps that "So" and Lex is told.
+        words = said('So', 1.0) + said('The tool is fast.', 2.0) + said('The tool is fast.', 5.0)
+        self.assertEqual(stops(words, script), set())
+        result = plan_words(words, script)
+        self.assertEqual([(item['start'], item['text']) for item in result['paperEdit']['removed']],
+                         [(2.0, 'The tool is fast.')])
+        self.assertEqual([(item['code'], item['start'], item['text']) for item in result['paperEdit']['flags']],
+                         [('script-line-kept', 1.0, 'So')])
+        self.assertIn(1.0, kept_starts(result, cut_timeline.load_words(words)))
 
     def test_a_one_word_line_that_no_script_line_follows_goes_back_in_and_is_listed(self):
         # The last check: after the pause comes a start of one word, or a take that changes a word, so no script
