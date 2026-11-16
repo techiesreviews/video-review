@@ -180,6 +180,19 @@ test('an Undo or Restore the store refuses because the words changed elsewhere i
   assert.deepEqual(calls.cancels,[],'the cut was not brought back, so its note stays open');
 });
 
+test('a refusal that lands after a new transcript came in is not marked for a reload, since the new words are loaded',async()=>{
+  const {editing,state,hold}=setup();
+  editing.selectWords(1);
+  hold.save=held();const wait=hold.save;
+  const cut=editing.remove();
+  await new Promise(r=>setTimeout(r));
+  editing.load(replacedElsewhere(state),state.videos[0]);
+  wait.resolve();
+  const error=await cut.catch(e=>e);
+  assert.match(error.message,/transcript changed/);
+  assert.equal(error.refused,undefined,'the panel already shows the new words');
+});
+
 test('a save that fails for another reason is not marked for a reload',async()=>{
   const {editing,fail}=setup();
   editing.selectWords(1);

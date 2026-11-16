@@ -11,6 +11,7 @@ const stamp=ms=>clock(ms,{places:3,hours:false});
 const NOTE_PAUSE_MS=450;
 export const RELOADED_TEXT='The transcript changed while this was saving. The edit was saved, and the transcript is loaded again.';
 export const REFUSED_TEXT='Not saved: the words changed elsewhere. They are loaded again; try again.';
+export const REMOVED_TEXT='Not saved: the transcript was removed elsewhere.';
 
 function afterTimer(run,ms){const timer=setTimeout(run,ms);return ()=>clearTimeout(timer);}
 
@@ -112,7 +113,8 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
     const target=video;let saved;
     // Both stores refuse with this rules message (the local server passes it through as the error text).
     try{saved=await saveTranscript(target,{...transcript,draftEdits},{editsOnly:true});}
-    catch(error){if(error?.message===RULES.messages.transcriptChanged)Object.assign(error,{refused:true,videoId:target.id});throw error;}
+    // A new transcript that came in meanwhile is loaded already, so only a refusal on the words still open asks for a reload.
+    catch(error){if(error?.message===RULES.messages.transcriptChanged&&!stale(at))Object.assign(error,{refused:true,videoId:target.id});throw error;}
     if(stale(at))throw Object.assign(Error(RELOADED_TEXT),{saved:true,videoId:target.id});
     transcript=saved;
     // Whether the note box was editing a comment when the save landed: then its text is that comment's, not a draft.
