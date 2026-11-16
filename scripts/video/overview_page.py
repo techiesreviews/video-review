@@ -6,7 +6,8 @@
 It writes `overview.html` into the video folder: one self-contained file (styles and script inside) with relative
 links to the take files and their thumbnails, so a double click opens it. It shows the scenes in script order,
 each with its script text, the take in the rough cut in front (gold star), older takes under "Archived (n)", the
-computer's favorite as a hollow star ("pick") and a strip of the rough cut on top.
+computer's favorite as a hollow star ("pick") and a strip of the rough cut on top. The rough cut (which take is in
+front, the flags, the total) is worked out by rough_cut.py; this page draws the list it gives.
 
 The page is rewritten after every take registration (take_intake.py) and every star change (server.py). The stars
 work only while video-review's server runs on this computer: the page asks it for the take list, and without an
@@ -30,7 +31,6 @@ the page is built with plain placeholders. Nothing here reads or writes scenes.j
 changes go through scene_store.update() in the server.
 """
 import argparse
-import copy
 import hashlib
 import hmac
 import html
@@ -48,6 +48,7 @@ sys.path.insert(0, str(HERE.parents[1]))
 import file_store  # noqa: E402
 import media_tools  # noqa: E402
 import review_store  # noqa: E402
+import rough_cut  # noqa: E402
 import scene_store  # noqa: E402
 import script_text  # noqa: E402
 
@@ -333,7 +334,8 @@ def _take_card(scene, take, best, thumbs, prefix):
     label = f'Scene {scene["number"]} · {scene["title"]} · take {number}'
     thumb = thumb_path(scene['id'], take)
     picture = f'<img src="{esc(_url(prefix, thumb))}" alt="" loading="lazy">' if thumb in thumbs else ''
-    length = f' ({_clock(take["duration"])})' if isinstance(take.get('duration'), (int, float)) else ''
+    duration = rough_cut.take_length(take.get('duration'))
+    length = f' ({_clock(duration)})' if duration is not None else ''
     media = _url(prefix, f'scenes/{scene["id"]}/{take["file"]}')
     starred = scene.get('star') == number
     pick = ''
@@ -356,23 +358,16 @@ def _take_card(scene, take, best, thumbs, prefix):
         f'<div class="note">{esc(_take_note(take))}</div></div>')
 
 
-def changed_in_script(store, cue_text):
-    """Ids of the saved scenes whose heading no longer matches the script, found by comparing the scene list with
-    the cue text now (scene_store.check_script on a copy, so nothing is saved). Empty when the cue text has no
-    numbered sections at all: that is not a script, so it says nothing about the scenes."""
-    if not scene_store.parse_cue_file(cue_text):
-        return set()
-    return set(scene_store.check_script(copy.deepcopy(store), cue_text)['changed'])
-
-
-def _scene_section(scene, text, thumbs, prefix, changed):
+def _scene_section(scene, cut, text, thumbs, prefix):
+    """One scene's part of the page. cut: the scene's entry in the rough cut list (rough_cut.build_cut), which says
+    the take in front, whether an older take is in front and whether the script changed."""
     esc = html.escape
-    best, older_in_front = scene_store.choose_best(scene)
+    best = cut['take']
     takes = sorted(scene['takes'], key=lambda t: t['number'])
     chips = ''
-    if scene.get('script_changed') or scene['id'] in changed:
+    if cut['script_changed']:
         chips += '<span class="chip warn">Script changed since recording</span>'
-    if older_in_front:
+    if cut['flagged']:
         chips += f'<span class="chip warn">{esc(OLDER_TAKE_TEXT)}</span>'
     body = f'<p class="stext" tabindex="0" role="button" aria-expanded="false">{esc(text)}</p>' if text else ''
     cards = ''.join(_take_card(scene, take, best, thumbs, prefix) for take in takes if take['number'] == best)
@@ -395,28 +390,20 @@ def _number_room(number):
     return f';min-width:calc({digits}ch + 6px)' if digits > 2 else ''
 
 
-def _cut_strip(store):
-    """(strip markup, scenes recorded, takes, total seconds, whether every length is known)."""
-    segments, recorded, takes, total, complete = [], 0, 0, 0.0, True
-    for scene in store['scenes']:
-        takes += len(scene['takes'])
-        best = scene_store.choose_best(scene)[0]
-        take = next((t for t in scene['takes'] if t['number'] == best), None)
-        if take is None:
-            segments.append(f'<div class="none" style="flex:{UNKNOWN_SEGMENT}{_number_room(scene["number"])}"'
-                            f' title="Scene {scene["number"]}: not recorded yet">{scene["number"]}</div>')
+def _cut_strip(cut):
+    """The strip markup for a rough cut list (rough_cut.build_cut): one segment per scene, as wide as its take."""
+    segments = []
+    for item in cut['scenes']:
+        if not item['recorded']:
+            segments.append(f'<div class="none" style="flex:{UNKNOWN_SEGMENT}{_number_room(item["number"])}"'
+                            f' title="Scene {item["number"]}: not recorded yet">{item["number"]}</div>')
             continue
-        recorded += 1
-        duration = take.get('duration') if isinstance(take.get('duration'), (int, float)) else None
-        if duration is None:
-            complete = False
-        else:
-            total += duration
+        duration = item['duration']
         flex = max(1, round(duration)) if duration is not None else UNKNOWN_SEGMENT
-        segments.append(f'<div style="flex:{flex}{_number_room(scene["number"])}"'
-                        f' title="Scene {scene["number"]}, take {best}">'
-                        f'{scene["number"]}</div>')
-    return ''.join(segments), recorded, takes, total, complete
+        segments.append(f'<div style="flex:{flex}{_number_room(item["number"])}"'
+                        f' title="Scene {item["number"]}, take {item["take"]}">'
+                        f'{item["number"]}</div>')
+    return ''.join(segments)
 
 
 def render(store, name, cue_text=None, thumbs=(), server='', video='', link_prefix='', code=''):
@@ -428,15 +415,19 @@ def render(store, name, cue_text=None, thumbs=(), server='', video='', link_pref
     video's page code, which the saved page needs (the page the server serves does not)."""
     esc = html.escape
     texts = scene_texts(cue_text or '')
-    changed = changed_in_script(store, cue_text or '')
-    strip, recorded, takes, total, complete = _cut_strip(store)
-    scenes = ''.join(_scene_section(scene, texts.get(scene['id']), thumbs, link_prefix, changed)
-                     for scene in store['scenes'])
+    # The rough cut is worked out once, by its own module; the strip, the total and each scene's take in front are
+    # drawn from that one list (it has an entry for every scene, in script order like the scene file).
+    cut = rough_cut.cut_for(store, cue_text or '')
+    scenes = ''.join(_scene_section(scene, item, texts.get(scene['id']), thumbs, link_prefix)
+                     for scene, item in zip(store['scenes'], cut['scenes']))
+    recorded = sum(1 for item in cut['scenes'] if item['recorded'])
+    takes = sum(len(scene['takes']) for scene in store['scenes'])
+    length = _clock(rough_cut.length_total(cut['scenes'])) + ('' if cut['lengths_known'] else '+')
     summary = (f'<b>{recorded} of {len(store["scenes"])} scenes</b> recorded · {takes} take{"" if takes == 1 else "s"}'
-               f' · rough cut <b>{_clock(total)}{"" if complete else "+"}</b>')
+               f' · rough cut <b>{length}</b>')
     return (PAGE_HEAD.replace('{title}', esc(name)) + PAGE_BODY.format(
         server=esc(server, quote=True), video=esc(video, quote=True), code=esc(code, quote=True), name=esc(name),
-        summary=summary, strip=strip,
+        summary=summary, strip=_cut_strip(cut),
         off=esc(STARS_OFF_TEXT), stale=esc(STALE_PAGE_TEXT), scenes=scenes) + PAGE_SCRIPT)
 
 
