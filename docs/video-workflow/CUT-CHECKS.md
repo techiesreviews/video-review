@@ -84,7 +84,8 @@ What it does:
     line through to its last word. If not, the last word-for-word reading goes back in and is listed. Longer
     lines are counted first, so "The tool is fast." inside "The tool is fast and easy to use." is not counted
     twice; a line of one or two words ("Thanks again.") counts only as a sentence of its own, and one word at the
-    start of a sentence with a pause after it is said on its own too, whatever follows the pause.
+    start of a sentence, with no comma or dash on it and a pause after it, is said on its own too, whatever
+    follows the pause.
     `tests/test_cut_takes.py` runs this rule over 600 made-up recordings, one-word lines among them.
 - **Timing (Lex, 2026-11-10 and 2026-11-11).** 100-150 ms of room before and after speech at every cut, the start
   of the clip too; a whole silence of 200-300 ms between linked phrases (it aims for 250) and 350-500 ms before a
