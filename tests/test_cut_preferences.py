@@ -123,11 +123,14 @@ class EveryScriptReadsTheFile(unittest.TestCase):
         self.assertEqual(copy.load('join_check_room', 'join-check.py').THRESHOLDS['newThoughtRoomMaxMs'], 222)
 
     def test_a_cut_follows_the_changed_numbers(self):
-        """The cutter's cut moves with the file: the room before the first word and the pause it aims for."""
+        """The cutter's cut moves with the file: the room before the first word and the pause it aims for. The
+        numbers are ones today's values cannot give: today's room leaves 133 ms before "Intro", and an aim of
+        310 ms in the same changed range gives a 334 ms pause."""
         def change(data):
             change_numbers(data)
-            data['lex']['linkedGapMs']['value'] = [270, 320]
-            data['cutter']['linkedTargetMs'] = 300
+            data['lex']['roomMs']['value'] = [160, 200]
+            data['lex']['linkedGapMs']['value'] = [300, 400]
+            data['cutter']['linkedTargetMs'] = 370
         copy = ChangedCopy(change)
         self.addCleanup(copy.close)
         cut_takes = copy.load('cut_takes_cut', 'cut-takes.py')
@@ -135,9 +138,8 @@ class EveryScriptReadsTheFile(unittest.TestCase):
         result = cut_takes.plan(words, 30)
         join = result['paperEdit']['joins'][0]
         self.assertEqual(join['fadeMs'], 17)
-        self.assertTrue(270 <= join['gapMs'] <= 320, join)
-        lead_in = round((0.5 - result['cutlist']['segments'][0]['sourceInFrame'] / 30) * 1000)
-        self.assertTrue(111 <= lead_in <= 161, lead_in)
+        self.assertEqual(join['gapMs'], 367, join)
+        self.assertEqual(round((0.5 - result['cutlist']['segments'][0]['sourceInFrame'] / 30) * 1000), 200)
 
 
 class TheValuesOfToday(unittest.TestCase):
