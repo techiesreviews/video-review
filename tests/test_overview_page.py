@@ -397,6 +397,19 @@ class ScriptText(unittest.TestCase):
         cue = '### 1 · A\nOne.\n- [The survey](https://example.com/survey)\nTwo.\n'
         self.assertEqual(overview_page.scene_texts(cue), {'01-a': 'One. Two.'})
 
+    def test_links_are_read_as_the_cutter_reads_them(self):
+        # Second look on PR #46: the page's own simpler link reader got these wrong, so it now uses the cutter's.
+        texts = overview_page.scene_texts
+        self.assertEqual(texts('### 1 · A\nOne.\n[The page](https://example.com/Guide_(2026))\nTwo.\n'), {'01-a': 'One. Two.'})
+        self.assertEqual(texts('### 1 · A\nRead [the page](https://example.com/Guide_(2026)) first.\n'),
+                         {'01-a': 'Read the page first.'})
+        self.assertEqual(texts('### 1 · A\nRead [the [new] guide](docs/guide.md) first.\n'), {'01-a': 'Read the guide first.'})
+        self.assertEqual(texts('### 1 · A\n[The [new] guide](docs/guide.md) is out.\n'), {'01-a': 'The guide is out.'})
+
+    def test_an_image_is_left_out(self):
+        cue = '### 1 · A\nOne.\n![chart](chart.png)\nSee ![chart](c.png) here.\n'
+        self.assertEqual(overview_page.scene_texts(cue), {'01-a': 'One. See here.'})
+
     def test_a_line_that_opens_a_bracket_it_never_closes_stays_out(self):
         cue = '### 1 · A\n[Face full\nOne.\n'
         self.assertEqual(overview_page.scene_texts(cue), {'01-a': 'One.'})
