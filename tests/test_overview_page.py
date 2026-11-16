@@ -657,6 +657,55 @@ class CommandLine(unittest.TestCase):
         self.assertEqual(overview_page.give_old_pages_a_code(self.data), [])  # once is enough
         self.assertEqual(overview_page.page_code(self.data, key), code)
 
+    def test_a_page_that_asks_another_port_is_written_again_when_the_server_starts(self):
+        overview_page.remember_port(self.data, 8879)
+        page = overview_page.publish(self.raw, data_dir=self.data)
+        key = overview_page.video_key(self.raw)
+        code = overview_page.page_code(self.data, key)
+        self.assertEqual(overview_page.point_saved_pages_at_the_server(self.data), [])  # same port: left alone
+        overview_page.remember_port(self.data, 8880)  # 8879 was taken, the server moved on
+        self.assertEqual(overview_page.point_saved_pages_at_the_server(self.data), [key])
+        text = page.read_text(encoding='utf-8')
+        self.assertIn('<body data-server="http://127.0.0.1:8880"', text)
+        self.assertIn(f'data-code="{code}"', text)  # the page keeps its code
+        self.assertEqual(overview_page.point_saved_pages_at_the_server(self.data), [])  # once is enough
+
+    def test_a_page_that_asks_the_right_port_is_not_touched(self):
+        overview_page.remember_port(self.data, 8880)
+        page = overview_page.publish(self.raw, data_dir=self.data)
+        with mock.patch.object(overview_page, 'build', side_effect=AssertionError('rewritten')):
+            self.assertEqual(overview_page.point_saved_pages_at_the_server(self.data), [])
+        self.assertIn('<body data-server="http://127.0.0.1:8880"', page.read_text(encoding='utf-8'))
+
+    def test_pointing_pages_at_the_server_skips_what_it_cannot_fix(self):
+        overview_page.remember_port(self.data, 8879)
+        overview_page.publish(self.raw, data_dir=self.data)
+        key = overview_page.video_key(self.raw)
+        other = Path(self.temp.name) / 'No page yet'
+        other.mkdir()
+        scene_store.save(other, sample_store())
+        overview_page.register(self.data, other)
+        registry_path = self.data / overview_page.REGISTRY_NAME
+        registry = json.loads(registry_path.read_text(encoding='utf-8'))
+        gone = Path(self.temp.name) / 'Gone'
+        registry['gone-12345678'] = {'folder': str(gone), 'cue': None, 'code': 'x' * 32}
+        registry['broken-12345678'] = 'not an entry'
+        registry_path.write_text(json.dumps(registry), encoding='utf-8')
+        overview_page.remember_port(self.data, 8880)
+        self.assertEqual(overview_page.point_saved_pages_at_the_server(self.data), [key])
+        self.assertFalse((other / 'overview.html').exists())  # a video without a saved page does not get one
+        self.assertFalse(gone.exists())
+
+    def test_a_scene_title_cannot_pass_for_the_page_address(self):
+        store = sample_store()
+        store['scenes'][0]['title'] = '<body data-server="http://127.0.0.1:8880"'
+        scene_store.save(self.raw, store)
+        overview_page.remember_port(self.data, 8879)
+        page = overview_page.publish(self.raw, data_dir=self.data)
+        overview_page.remember_port(self.data, 8880)
+        self.assertEqual(overview_page.point_saved_pages_at_the_server(self.data), [overview_page.video_key(self.raw)])
+        self.assertIn('<body data-server="http://127.0.0.1:8880"', page.read_text(encoding='utf-8'))
+
 
 class SavedPageScript(unittest.TestCase):
     """The saved page's own script, run in Node with a fake page (skipped without Node)."""

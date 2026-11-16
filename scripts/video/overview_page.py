@@ -10,7 +10,8 @@ computer's favorite as a hollow star ("pick") and a strip of the rough cut on to
 
 The page is rewritten after every take registration (take_intake.py) and every star change (server.py). The stars
 work only while video-review's server runs on this computer: the page asks it for the take list, and without an
-answer the stars are greyed out with one line saying why. The server also serves the same page at
+answer the stars are greyed out with one line saying why. The page holds the server's address, so a server that
+starts on another port writes the saved pages again (point_saved_pages_at_the_server). The server also serves the same page at
 `/scenes/<video>`, where <video> is the key from video_key(); the server finds the folder in a small registry in
 its data folder, which this command (and the take intake) fills.
 
@@ -145,6 +146,33 @@ def give_old_pages_a_code(data_dir):
             build(found[0], cue=found[1], server=server_address(data_dir), code=page_code(data_dir, key))
         except (OSError, scene_store.SceneFileError):
             continue
+        rewritten.append(key)
+    return rewritten
+
+
+def point_saved_pages_at_the_server(data_dir):
+    """Saved pages that ask another address than the server's are written again, so their stars work after the
+    server moved to another port (the launcher takes the next free one when 8879 is in use). The server runs this
+    once when it starts. It reads what each saved page really asks, so a page whose folder was away during an earlier
+    start is fixed at the next one. Returns the keys of the pages written again; a video without a saved page gets
+    none, and a folder that is gone or unreadable is left for the next start or take to fix."""
+    registry = review_store.read(Path(data_dir) / REGISTRY_NAME, {})
+    if not isinstance(registry, dict):
+        return []
+    address = server_address(data_dir)
+    # Everything a video names is escaped in the page, so only the page's own first tag can read like this.
+    asks_the_server = f'<body data-server="{html.escape(address, quote=True)}"'
+    rewritten = []
+    for key in registry:
+        found = lookup(data_dir, key)
+        if not found:
+            continue
+        try:
+            if asks_the_server in (found[0] / FILE_NAME).read_text(encoding='utf-8', errors='replace'):
+                continue
+            build(found[0], cue=found[1], server=address, code=page_code(data_dir, key))
+        except (OSError, scene_store.SceneFileError):
+            continue  # no saved page, or one that cannot be read or written now
         rewritten.append(key)
     return rewritten
 

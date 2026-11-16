@@ -174,10 +174,11 @@ class Handler(BaseHTTPRequestHandler):
         except OSError as e:self.send_json({'error':f'The change could not be saved: {e}'},500,extra=self.cors())
 
 def start_background_jobs():
-    """Pages saved before page codes get theirs, in the background so the server answers at once. Returns the thread."""
+    """Pages saved before page codes get theirs, and pages saved while the server had another port get this one, in
+    the background so the server answers at once. Returns the thread."""
     def job():
-        try:overview_page.give_old_pages_a_code(DATA)
-        except (ValueError,OSError) as error:print(f'Saved overview pages were not given their codes yet ({error}); the next take does it.',file=sys.stderr,flush=True)
+        try:overview_page.give_old_pages_a_code(DATA);overview_page.point_saved_pages_at_the_server(DATA)
+        except (ValueError,OSError) as error:print(f'Saved overview pages were not brought up to date yet ({error}); the next take does it.',file=sys.stderr,flush=True)
     thread=threading.Thread(target=job,daemon=True);thread.start()
     return thread
 
