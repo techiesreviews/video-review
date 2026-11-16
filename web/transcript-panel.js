@@ -42,7 +42,8 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   body.addEventListener('scroll',placeSoon,{passive:true});addEventListener('resize',placeSoon);window.visualViewport?.addEventListener('resize',placeSoon);window.visualViewport?.addEventListener('scroll',placeSoon);
   new ResizeObserver(placeSoon).observe(bar);
   function showBar(target=null){barTarget=target;bar.hidden=false;notice();primaryState();placeBar();}
-  // A short line on the panel for a refused edit with no selection to show it on; it hides itself while empty.
+  // A short line on the panel for a refused edit with no selection to show it on; empty, it takes no room but stays in
+  // the page, so screen readers announce it.
   function notice(text=''){$('#transcriptNotice').textContent=text;}
   // The first button deletes; on words that are all deleted already it brings them back instead.
   const DELETE_TITLE='Remove the selected words from the cut. Backspace or Delete does the same when the box is empty. Ctrl+Z undoes.';
@@ -222,12 +223,11 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     const words=editing.transcript.words,at=id=>words.findIndex(w=>w.id===id);
     if(chosen.cutId){
       const cut=editing.transcript.cuts.find(c=>c.id===chosen.cutId);if(!cut)return false;
-      chooseCut(cut,[...body.querySelectorAll('.transcript-join')].find(n=>n.dataset.cutId===cut.id)||null,{play:false,focus});return true;
-    }
-    if(chosen.kind==='pause'){
+      chooseCut(cut,[...body.querySelectorAll('.transcript-join')].find(n=>n.dataset.cutId===cut.id)||null,{play:false,focus});
+    }else if(chosen.kind==='pause'){
       const i=at(chosen.firstWordId),node=i>=0&&words[i+1]?.id===chosen.lastWordId?pauseNodes.find(n=>Number(n.dataset.startMs)===words[i].endMs):null;
       if(!node)return false;choosePause(words[i],words[i+1],node,{play:false,focus});
-    }else if(chosen.kind==null&&chosen.a!=null){const {first,last}=editing.target(chosen.startMs,chosen);choose(first,last,{focus});}
+    }else if(chosen.kind==null&&chosen.a!=null){const {first,last}=editing.target(chosen.startMs,chosen);editing.anchor=first;choose(first,last,{focus});}
     else return false;
     if(chosen.precise&&editing.adjust({startMs:chosen.startMs,endMs:chosen.endMs}))selectionState();
     return true;

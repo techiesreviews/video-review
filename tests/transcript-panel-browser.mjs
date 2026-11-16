@@ -159,6 +159,17 @@ try{
     assert.ok(stored.draftEdits[0].startMs<=3000&&stored.draftEdits[0].endMs>=3000);
     assert.equal(stored.words[14].text,'fourteen-new');
 
+    // A refused Delete whose transcript was removed elsewhere meanwhile says so on the panel, not "try again".
+    await replace('W15','fifteen-new');
+    await page.route('**/api/transcript/words',route=>route.request().method()==='GET'?route.fulfill({status:200,contentType:'application/json',body:'null'}):route.continue());
+    await word(9).click();await page.locator('.bar-delete').click();
+    await page.waitForFunction(()=>document.querySelector('#transcriptNotice').textContent);
+    assert.equal(await page.locator('#transcriptNotice').innerText(),'Not saved: the transcript was removed elsewhere.');
+    assert.match(await page.locator('#transcriptText').innerText(),/No transcript attached/);
+    assert.equal(await page.locator('#toast.show.error').count(),0,`${name}: no toast.`);
+    await page.unroute('**/api/transcript/words');
+    await page.reload();await page.waitForSelector('.transcript-word');
+
     // A note on a join goes to the agent with the join's id.
     await page.locator('.transcript-join',{hasText:'J1'}).click();
     await page.locator('#transcriptNote').fill('Check this join');await page.keyboard.press('Enter');
