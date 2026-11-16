@@ -179,7 +179,7 @@ try{
     await page.waitForFunction(()=>!document.querySelector('#cutPreviewBar').hidden);
     await replace('W15','fifteen-new');
     await page.route('**/api/transcript/words',route=>route.request().method()==='GET'?route.fulfill({status:200,contentType:'application/json',body:'null'}):route.continue());
-    await word(9).click();await page.locator('.bar-delete').click();
+    await word(9).click();await page.locator('#transcriptNote').fill('keep me');await page.locator('.bar-delete').click();
     await page.waitForFunction(()=>document.querySelector('#transcriptNotice').textContent);
     assert.equal(await page.locator('#transcriptNotice').innerText(),'Not saved: the transcript was removed elsewhere.');
     assert.match(await page.locator('#transcriptText').innerText(),/No transcript attached/);
@@ -187,7 +187,13 @@ try{
     assert.equal(await page.locator('#transcriptSelection').isHidden(),true);
     assert.equal(await page.locator('#toast.show.error').count(),0,`${name}: no toast.`);
     await page.unroute('**/api/transcript/words');
-    await page.reload();await page.waitForSelector('.transcript-word');
+    // Attached again (here with Import transcript): the note typed before waits for the next selection.
+    const [chooser]=await Promise.all([page.waitForEvent('filechooser'),page.locator('#importTranscript').click()]);
+    await chooser.setFiles({name:'words.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify({words,cuts:[{id:'J1',atMs:3000}],revision:'attached-again'}))});
+    await page.waitForSelector('.transcript-word');
+    await word(9).click();
+    assert.equal(await page.locator('#transcriptNote').inputValue(),'keep me',`${name}: the typed note survives the transcript being away.`);
+    await page.locator('#transcriptNote').fill('');
 
     // A note on a join goes to the agent with the join's id.
     await page.locator('.transcript-join',{hasText:'J1'}).click();

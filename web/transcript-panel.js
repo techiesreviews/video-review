@@ -14,7 +14,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   const body=$('#transcriptText');
   let backendRef=null,videoRef=null,barTarget=null,dragPoint=null,scrollFrame=null;
   let pauseNodes=[],currentNode=null,auditionRange=null,pauseThreshold=450;
-  // A note typed on a selection a reload could not bring back: the next selection gets it.
+  // A note typed on a selection a reload could not bring back: the next selection on the same video gets it.
   let carriedNote='';
   // What is selected and what an edit does live in transcript-editing.js; this file draws it and passes clicks in.
   const editing=createTranscriptEditing({saveTranscript:(v,data,options)=>backendRef.saveTranscript(v,data,options),request,updateRequest,cancelRequest,onError:error=>showError(error.message)});
@@ -215,9 +215,8 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     const chosen=editing.selection,draft=editing.noteId?'':noteBox.value,scroll=body.scrollTop;
     const active=document.activeElement,focus=!active||active===document.body||bar.contains(active)||body.contains(active);
     show(transcript,v);body.scrollTop=scroll;
-    if(!transcript){notice(REMOVED_TEXT);return;}
-    if(chosen&&reselect(chosen,{focus})){keepDraft(draft);barStatus(REFUSED_TEXT);}
-    else{carriedNote=draft;notice(REFUSED_TEXT);}
+    if(transcript&&chosen&&reselect(chosen,{focus})){keepDraft(draft);barStatus(REFUSED_TEXT);}
+    else{carriedNote=draft;notice(transcript?REFUSED_TEXT:REMOVED_TEXT);}
   }
   /** Selects the same thing on the newer words: words by id (else at their time), the same pause, the same join, and a
    *  span set with the waveform handles exactly. False when it is gone, or is not something an edit is made on. */
@@ -340,7 +339,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   function show(transcript,v){$('#cutPreviewBar').hidden=true;waveform.setCuts([]);editing.load(transcript,v);$('#transcriptSummary').textContent=transcript?`${transcript.words.length} words · ${transcript.label} · timings approximate`:'Use your existing HappyScribe word timings';render();}
   const panel={
     async load(v,backend){
-      const token=++loadToken;backendRef=backend;videoRef=v;videoId=v?.id;notice();carriedNote='';editing.load(null,v);pendingFocus=null;waveform.load(v);$('#cutPreviewBar').hidden=true;$('#transcriptSummary').textContent=v?'Loading transcript…':'Open a video to read its transcript.';render();
+      const token=++loadToken;if(v?.id!==videoId)carriedNote='';backendRef=backend;videoRef=v;videoId=v?.id;notice();editing.load(null,v);pendingFocus=null;waveform.load(v);$('#cutPreviewBar').hidden=true;$('#transcriptSummary').textContent=v?'Loading transcript…':'Open a video to read its transcript.';render();
       if(!v)return;
       try{const data=await backend.transcript(v);if(token!==loadToken)return;show(data?normalizeTranscript(data,v.durationMs):null,v);if(pendingFocus){const focus=pendingFocus;pendingFocus=null;focusAt(focus.ms,focus.editRequest,focus.comment);}}
       catch(error){if(token===loadToken){$('#transcriptSummary').textContent='Could not load transcript';showError(error.message);}}
