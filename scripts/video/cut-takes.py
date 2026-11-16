@@ -18,7 +18,8 @@ What it does, in order:
    is only listed, as the paper edit's "inspect" restarts are. An "again" the script itself says is speech.
 5. Joins keep room around speech and a whole silence in Lex's ranges; long pauses are shortened, a breath inside a
    linked phrase stays, and a cut never lands inside a word.
-A marked screen demo is never cut: what would have been removed there is listed for Lex instead.
+A marked screen demo is never cut: what would have been removed there is listed for Lex instead, and a demo with
+no speech in it stays in the kept ranges, with the silence between it and the speech kept beside it.
 """
 import argparse
 from collections import Counter
@@ -76,6 +77,7 @@ REASONS = {
     'worse-later-take': 'a later take that is worse than the one kept',
     'retake-run': 'failed tries before the take that stays',
 }
+JOIN_WHY = {'removed': 'after a removal', 'pause': 'shortened pause', 'demo': 'beside the marked screen demo'}
 TOLERANCE = cut_timeline.WORD_EDGE_TOLERANCE
 
 
@@ -121,6 +123,8 @@ class Cutter:
         self.script_words = [word for line in self.script or () for word in line]
         self.removed = []
         self.flags = []
+        # Set when the cut opens or ends on a marked demo that has no speech.
+        self.demo_opens = self.demo_ends = False
 
     # Small helpers.
 
@@ -766,7 +770,72 @@ class Cutter:
         close = self.edge(last, 1, self.words[last + 1].start if last + 1 < len(self.words) else math.inf,
                           SETTINGS['roomMs'][1])
         runs.append((open_in, close))
-        return runs, joins
+        return self.keep_demos(runs, joins, kept)
+
+    def demo_frames(self, demo):
+        """The whole frames that hold a marked demo. An edge frame that would land inside a word moves one frame
+        into the demo (under a frame of picture), so no cut lands inside a word; a demo shorter than that keeps
+        its outer frames."""
+        fps = self.fps
+        start, end = max(math.floor(demo[0] * fps + 1e-6), 0), math.ceil(demo[1] * fps - 1e-6)
+
+        def in_word(frame):
+            return any(word.start + TOLERANCE < frame / fps < word.end - TOLERANCE for word in self.words)
+
+        inner = start + in_word(start), end - in_word(end)
+        return inner if inner[0] < inner[1] else (start, end)
+
+    def removed_between(self, start, end):
+        """True when a removed word lies between these two frames."""
+        return any(not kept and word.start < end / self.fps - TOLERANCE and word.end > start / self.fps + TOLERANCE
+                   for word, kept in zip(self.words, self.keep))
+
+    def keep_demos(self, runs, joins, kept):
+        """Put back the frames of a marked demo that a removal, the opening or the ending left out: a demo with no
+        speech in it is still picture Lex marked. The silence between the demo and the speech kept beside it stays
+        too, as it does where nothing is removed; a removed take beside the demo is still cut away, so a demo
+        between two removals becomes a piece of its own. Returns the runs and joins with every demo in."""
+        # Each piece knows its first and last kept word; a demo piece has none.
+        pieces = [{'in': start, 'out': end, 'first': joins[number - 1]['after'] if number else kept[0],
+                   'last': joins[number]['before'] if number < len(joins) else kept[-1]}
+                  for number, (start, end) in enumerate(runs)]
+        for demo in self.demos:
+            start, end = self.demo_frames(demo)
+            for run_in, run_out in runs + [(math.inf, math.inf)]:
+                if start < min(run_in, end):
+                    low, high = start, min(run_in, end)
+                    before = max((run[1] for run in runs if run[1] <= low), default=None)
+                    if before is not None and not self.removed_between(before, low):
+                        low = before
+                    if run_in != math.inf and not self.removed_between(high, run_in):
+                        high = run_in
+                    pieces.append({'in': low, 'out': high, 'first': None, 'last': None})
+                    if run_in == math.inf and demo[1] > self.words[-1].end:
+                        # The cut now ends later than the speech does, and the transcript cannot say what is there.
+                        self.flags.append({
+                            'code': 'demo-past-last-word', 'start': round(max(demo[0], self.words[-1].end), 3),
+                            'end': round(demo[1], 3), 'text': '',
+                            'message': f'The marked screen demo ({demo[0]:.2f}-{demo[1]:.2f}) runs past the last '
+                                       f'word of the transcript. Kept to {demo[1]:.2f}; check the recording is '
+                                       'that long.'})
+                start = max(start, run_out)
+        if len(pieces) == len(runs):
+            return runs, joins
+        merged = []
+        for piece in sorted(pieces, key=lambda piece: piece['in']):
+            if merged and piece['in'] <= merged[-1]['out']:
+                if piece['out'] > merged[-1]['out']:
+                    merged[-1].update(out=piece['out'], last=piece['last'])
+            else:
+                merged.append(piece)
+        self.demo_opens, self.demo_ends = merged[0]['first'] is None, merged[-1]['last'] is None
+        by_word = {join['before']: join for join in joins}
+        # A join with speech on both sides is one the cutter made; beside a demo piece there is no word to measure.
+        joins = [by_word[before['last']] if before['last'] is not None and after['first'] is not None
+                 else {'before': before['last'], 'after': after['first'], 'out': before['out'], 'in': after['in'],
+                       'kind': None, 'note': None, 'why': 'demo'}
+                 for before, after in zip(merged, merged[1:])]
+        return [(piece['in'], piece['out']) for piece in merged], joins
 
     def plan(self):
         self.retake_cues()
@@ -807,7 +876,8 @@ def plan(words, fps, script_text=None, demos=(), name='Take cut proposal', sourc
     for item in sorted(cutter.removed, key=lambda item: item['first']):
         keeps = next((index for index in range(item['keeps'], len(words)) if keep[index]), None)
         previous = passages[-1] if passages else None
-        if previous and previous['keeps'] == keeps and not any(keep[previous['last'] + 1:item['first']]):
+        if previous and previous['keeps'] == keeps and not any(keep[previous['last'] + 1:item['first']]) \
+                and not cutter.demo_at(previous['last'], item['first']):
             previous['last'] = item['last']
             previous['reasons'].add(item['reason'])
         else:
@@ -825,18 +895,33 @@ def plan(words, fps, script_text=None, demos=(), name='Take cut proposal', sourc
                         'longestSilence': round(max(gaps, default=0.0), 2)})
     join_entries = []
     for number, join in enumerate(joins, 1):
-        before, after = words[join['before']], words[join['after']]
-        tail = room(join['out'], fps, before.end, 1)
-        head = room(join['in'], fps, after.start, -1)
+        # Beside a demo piece there is no word on that side, so no room to measure.
+        before = words[join['before']] if join['before'] is not None else None
+        after = words[join['after']] if join['after'] is not None else None
+        tail = room(join['out'], fps, before.end, 1) if before else None
+        head = room(join['in'], fps, after.start, -1) if after else None
         join_entries.append({
             'index': number, 'outgoing': segments[number - 1]['id'], 'incoming': segments[number]['id'],
             'sourceOutFrame': join['out'], 'sourceInFrame': join['in'],
             'sourceOutSeconds': round(join['out'] / fps, 3), 'sourceInSeconds': round(join['in'] / fps, 3),
-            'why': join['why'], 'kind': join['kind'], 'lastWord': before.text, 'firstWord': after.text,
-            'tailMs': tail, 'headMs': head, 'gapMs': tail + head, 'fadeMs': SETTINGS['audioFadeMs'],
+            'why': join['why'], 'kind': join['kind'], 'lastWord': before.text if before else None,
+            'firstWord': after.text if after else None, 'tailMs': tail, 'headMs': head,
+            'gapMs': tail + head if before and after else None, 'fadeMs': SETTINGS['audioFadeMs'],
             'note': join['note']})
     kept_words = [index for index, value in enumerate(keep) if value]
     source_seconds = sum(source_out - source_in for source_in, source_out in runs) / fps
+    # Counted on the cut's own clock, so a demo kept before the first word or after the last one is in it.
+    first_word, last_word = words[kept_words[0]], words[kept_words[-1]]
+    opens = next(item for item in segments if item['sourceOutFrame'] / fps > first_word.start)
+    ends = next(item for item in reversed(segments) if item['sourceInFrame'] / fps < last_word.end)
+    opening = {'leadInMs': round((first_word.start - (opens['sourceInFrame'] - opens['timelineStartFrame']) / fps)
+                                 * 1000)}
+    ending = {'tailMs': round(((start - ends['timelineStartFrame'] + ends['sourceInFrame']) / fps - last_word.end)
+                              * 1000)}
+    if cutter.demo_opens:
+        opening['demo'] = True
+    if cutter.demo_ends:
+        ending['demo'] = True
     paper = {
         'schemaVersion': 1, 'kind': 'paper-edit', 'name': name,
         'status': 'proposal', 'approvedByLex': False, 'rendered': False,
@@ -847,8 +932,8 @@ def plan(words, fps, script_text=None, demos=(), name='Take cut proposal', sourc
                     'removedPassages': len(removed),
                     'removedSeconds': round(sum(item['seconds'] for item in removed), 2),
                     'joins': len(join_entries), 'flags': len(cutter.flags), 'adLibs': len(ad_libs)},
-        'opening': {'leadInMs': room(runs[0][0], fps, words[kept_words[0]].start, -1)},
-        'ending': {'tailMs': room(runs[-1][1], fps, words[kept_words[-1]].end, 1)},
+        'opening': opening,
+        'ending': ending,
         'removed': removed,
         'flags': sorted(cutter.flags, key=lambda item: item['start']),
         'adLibs': ad_libs,
@@ -893,10 +978,12 @@ def render_paper_edit(paper):
         lines.append(f'- **{seconds(item["start"])}-{seconds(item["end"])}** "{item["text"]}"')
     if paper['hasScript'] and not paper['adLibs']:
         lines.append('- None.')
+    demo = ' with the marked screen demo'
     lines += [
         '', '## Timing used', '',
         f'- Room before and after speech at every cut: {limits["roomMs"][0]}-{limits["roomMs"][1]} ms '
-        f'(opening {paper["opening"]["leadInMs"]} ms, ending {paper["ending"]["tailMs"]} ms); before a new thought '
+        f'(opening {paper["opening"]["leadInMs"]} ms{demo if paper["opening"].get("demo") else ""}, '
+        f'ending {paper["ending"]["tailMs"]} ms{demo if paper["ending"].get("demo") else ""}); before a new thought '
         f'up to {limits["newThoughtRoomMaxMs"]} ms on a side, so the silence can reach its range.',
         f'- Whole silence at a join: about {limits["linkedTargetMs"]} ms between linked phrases (range '
         f'{limits["linkedGapMs"][0]}-{limits["linkedGapMs"][1]} ms), about {limits["newThoughtTargetMs"]} ms before a '
@@ -922,10 +1009,15 @@ def render_paper_edit(paper):
     ]
     for join in paper['joins']:
         note = f' ({join["note"]})' if join['note'] else ''
-        why = 'after a removal' if join['why'] == 'removed' else 'shortened pause'
-        lines.append(f'- Join {join["index"]} ({join["outgoing"]} to {join["incoming"]}), {why}, '
-                     f'{seconds(join["sourceOutSeconds"])} to {seconds(join["sourceInSeconds"])}: '
-                     f'"{join["lastWord"]}" | "{join["firstWord"]}", {join["kind"]} gap {join["gapMs"]} ms '
+        where = (f'- Join {join["index"]} ({join["outgoing"]} to {join["incoming"]}), {JOIN_WHY[join["why"]]}, '
+                 f'{seconds(join["sourceOutSeconds"])} to {seconds(join["sourceInSeconds"])}: ')
+        if join['why'] == 'demo':
+            # A demo piece has no speech: say which side it is on and the room left beside the word, if any.
+            last = f'"{join["lastWord"]}" + {join["tailMs"]} ms' if join['lastWord'] else 'the demo (no speech)'
+            first = f'{join["headMs"]} ms + "{join["firstWord"]}"' if join['firstWord'] else 'the demo (no speech)'
+            lines.append(f'{where}{last} | {first}, {join["fadeMs"]} ms fade{note}.')
+            continue
+        lines.append(f'{where}"{join["lastWord"]}" | "{join["firstWord"]}", {join["kind"]} gap {join["gapMs"]} ms '
                      f'({join["tailMs"]} + {join["headMs"]}), {join["fadeMs"]} ms fade{note}.')
     if not paper['joins']:
         lines.append('- None.')

@@ -764,7 +764,7 @@ class SilentDemoTests(unittest.TestCase):
         self.assertEqual(result['paperEdit']['ending'], {'tailMs': 4000, 'demo': True})
         # The transcript ends at the last word, so the cutter cannot see whether the recording holds the demo.
         flag, = result['paperEdit']['flags']
-        self.assertEqual((flag['code'], flag['start'], flag['end']), ('demo-past-last-word', 2.0, 6.0))
+        self.assertEqual((flag['code'], flag['start'], flag['end']), ('demo-past-last-word', 3.0, 6.0))
         self.assertIn('check the recording is that long', flag['message'])
 
     def test_a_demo_edge_never_puts_a_cut_inside_a_removed_word(self):
