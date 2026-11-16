@@ -40,6 +40,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import cut_timeline  # noqa: E402
+import script_text  # noqa: E402
 
 SETTINGS = {
     # Lex's answers of 2026-11-10 (room on both sides of speech) and 2026-11-11 (the whole silence at a join:
@@ -80,20 +81,10 @@ SETTINGS = {
 }
 SENTENCE_END = re.compile(r'[.!?]["\')\]]*$')
 TRAILING_MARK = re.compile(r'[,;:.!?–—-]["\')\]]*$')
-# In a script: the end of a sentence with the quotes, brackets and bold marks that close after it, and a list item.
+# In a script: the end of a sentence with the quotes, brackets and bold marks that close after it.
 SCRIPT_STOP = re.compile(r'(?<=[.!?])["\'”’»)\]*_`]*\s+')
-# A [direction] may run over several lines, but never past a heading: a missing "]" must not swallow later scenes.
-DIRECTION = re.compile(r'\[(?:[^\]\n]|\n(?![ \t]*#))*\]')
-# A markdown link or image, [text](address "title"). A mark with a backslash in front of it is text everywhere.
-LINK_START = re.compile(r'((?<!\\)!)?\[')
-# The square brackets of a script, and a heading: no pair of brackets runs past one, as no direction does.
-BRACKET = re.compile(r'\\[^\n]|[\[\]]|\n[ \t]*#')
-# What counts in an address: its round brackets and the end of its line; the brackets in its "title" are text.
-ADDRESS_MARK = re.compile(r'\\[^\n]|(?<=[ \t])(?:"(?:[^"\n\\]|\\.)*"|\'(?:[^\'\n\\]|\\.)*\')|[()\n]')
-ANGLE_ADDRESS = re.compile(r'<[^<>\n]*>')
 # A bare address, without the full stop, comma or closing mark that follows it.
 ADDRESS = re.compile(r'https?://[^\s<>]*[^\s<>.,;:!?"\'”’»)\]*_`]')
-LIST_ITEM = re.compile(r'^\s*(?:[-*+]|\d+[.)])\s+')
 BROKEN_OFF = re.compile(r'[–—-]["\')\]]*$')
 FILLERS = {'um', 'uh', 'uhm', 'er', 'erm', 'ah', 'hmm', 'mm'}
 REASONS = {
@@ -134,73 +125,20 @@ def in_order(first, second):
     return sum(block.size for block in SequenceMatcher(None, first, second, autojunk=False).get_matching_blocks())
 
 
-def bracket_pairs(text):
-    """{just after a square bracket that opens: just after the one that closes it}, with the pairs inside a pair
-    counted. A bracket that is not closed before the next heading has no entry."""
-    pairs, opened = {}, []
-    for mark in BRACKET.finditer(text):
-        if mark.group() == '[':
-            opened.append(mark.end())
-        elif mark.group() == ']' and opened:
-            pairs[opened.pop()] = mark.end()
-        elif mark.group().startswith('\n'):
-            opened.clear()
-    return pairs
-
-
-def address_end(text, start):
-    """The place just after the round bracket that closes the link address opened just before `start`: on the same
-    line, with the pairs of brackets inside the address counted; an address in <angle brackets> is text. None when
-    the address is never closed."""
-    angle = ANGLE_ADDRESS.match(text, start)
-    depth = 1
-    for mark in ADDRESS_MARK.finditer(text, angle.end() if angle else start):
-        if mark.group() == '\n':
-            break
-        depth += {'(': 1, ')': -1}.get(mark.group(), 0)
-        if not depth:
-            return mark.end()
-    return None
-
-
-def without_links(text, images):
-    """The script with its images left out (images=True), or with each link read as its text (images=False). A
-    link that has a line to itself (also as a list item) is left out: that is a direction with an address. A
-    bracket that is never closed, in the text or in the address, makes no link."""
-    pairs = bracket_pairs(text)
-    parts, done = [], 0
-    for match in LINK_START.finditer(text):
-        text_end = pairs.get(match.end(), len(text))
-        if match.start() < done or bool(match.group(1)) != images or not text.startswith('(', text_end):
-            continue
-        end = address_end(text, text_end + 1)
-        if end is None:
-            continue
-        line_end = text.find('\n', end)
-        before = text[text.rfind('\n', 0, match.start()) + 1:match.start()]
-        after = text[end:line_end if line_end >= 0 else len(text)]
-        alone = not LIST_ITEM.sub('', before).strip() and not after.strip()
-        parts += [text[done:match.start()], ' ' if images else '' if alone else text[match.end():text_end - 1]]
-        done = end
-    return ''.join(parts) + text[done:]
-
-
 def script_sentences(text):
     """The script as one list of words per sentence. A sentence ends at . ! or ? (also in front of a closing quote,
     bracket or bold mark), and at a heading, a blank line or a list item, so a line without a full stop does not
     run into the next one. Headings and [directions] are left out; a direction never runs past a heading. A link
     is read as its text, or left out when it has a line to itself, as a direction is; an image and a bare address
     (http:// or https://…) are left out, so no address is ever taken for a spoken word."""
-    # Images go first: one that is itself a link, [![image](file)](address), then goes with its link.
-    text = without_links(without_links(text, images=True), images=False)
-    text = ADDRESS.sub(' ', DIRECTION.sub(' ', text))
+    text = ADDRESS.sub(' ', script_text.without_directions(text))
     blocks = [[]]
     for line in text.splitlines():
-        heading, item = line.lstrip().startswith('#'), LIST_ITEM.match(line)
+        heading, item = line.lstrip().startswith('#'), script_text.LIST_ITEM.match(line)
         if not line.strip() or heading or item:
             blocks.append([])
         if line.strip() and not heading:
-            blocks[-1].append(LIST_ITEM.sub('', line))
+            blocks[-1].append(script_text.LIST_ITEM.sub('', line))
     sentences = []
     for block in blocks:
         for sentence in SCRIPT_STOP.split(' '.join(block)):
