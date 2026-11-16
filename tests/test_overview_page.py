@@ -101,6 +101,13 @@ class SceneCards(unittest.TestCase):
         costs = scene_html(render(store), COSTS)
         self.assertIn('data-take="3" data-on="true" data-starred="false"', costs)
         self.assertIn('data-take="2" data-on="false"', costs)
+        # The gold take is already in the rough cut: its button keeps it there rather than putting it in.
+        self.assertIn('data-take="3" data-on="true" data-starred="false" aria-label="Keep in rough cut (star it)"', costs)
+        self.assertIn('data-take="2" data-on="false" data-starred="false" aria-label="Put in rough cut"', costs)
+
+    def test_the_script_text_opens_from_the_keyboard_too(self):
+        text = re.search(r'<p class="stext"[^>]*>', scene_html(render(), COSTS)).group(0)
+        self.assertEqual(text, '<p class="stext" tabindex="0" role="button" aria-expanded="false">')
 
     def test_the_computers_favorite_shows_as_a_pick_when_it_differs(self):
         costs = scene_html(render(), COSTS)
@@ -698,6 +705,12 @@ class SavedPageScript(unittest.TestCase):
         self.assertEqual((seen['said'], seen['hidden'], seen['on']), (overview_page.STALE_PAGE_TEXT, False, True))
         seen = self.run_page_script('network', click=True)
         self.assertEqual((seen['said'], seen['on']), (overview_page.STARS_OFF_TEXT, False))
+
+    def test_a_failed_star_click_with_an_odd_answer_shows_the_usual_line_and_keeps_the_stars(self):
+        for answer in ([500, json.dumps({'error': {'x': 1}})], [500, '{"error": 7}'], [500, 'null'], [500, 'not json']):
+            seen = self.run_page_script(answer, click=True)
+            self.assertEqual((seen['said'], seen['hidden'], seen['on']), (overview_page.STARS_OFF_TEXT, False, True),
+                             answer)
 
     def test_the_saved_page_shows_the_server_s_reason_or_the_usual_line(self):
         seen = self.run_page_script([200, '{"scenes": []}'])

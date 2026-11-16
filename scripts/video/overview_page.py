@@ -287,7 +287,7 @@ def _take_card(scene, take, best, thumbs, prefix):
     pick = ''
     if scene.get('favorite') == number and best != number:
         pick = '<span class="pick" title="Computer\'s favorite">☆ pick</span>'
-    star_label = 'Take the star off' if starred else 'Put in rough cut'
+    star_label = 'Take the star off' if starred else 'Keep in rough cut (star it)' if best == number else 'Put in rough cut'
     return (
         f'<div class="take" data-scene="{esc(scene["id"])}" data-take="{number}">'
         f'<button class="thumb" type="button" data-play="{esc(media)}" data-label="{esc(label)}"'
@@ -318,7 +318,7 @@ def _scene_section(scene, text, thumbs, prefix, changed):
         chips += '<span class="chip warn">Script changed since recording</span>'
     if older_in_front:
         chips += f'<span class="chip warn">{esc(OLDER_TAKE_TEXT)}</span>'
-    body = f'<p class="stext">{esc(text)}</p>' if text else ''
+    body = f'<p class="stext" tabindex="0" role="button" aria-expanded="false">{esc(text)}</p>' if text else ''
     cards = ''.join(_take_card(scene, take, best, thumbs, prefix) for take in takes if take['number'] == best)
     others = ''.join(_take_card(scene, take, best, thumbs, prefix) for take in takes if take['number'] != best)
     record = (f'<button class="rec" type="button" disabled>+ Record<small>{esc(RECORD_TILE_TEXT)}</small></button>')
@@ -474,7 +474,7 @@ PAGE_HEAD = """<!doctype html>
   .sub b { color: var(--text); }
   .off { color: var(--warn); font-size: 13px; margin: 0 0 14px; }
   .cut { display: flex; gap: 3px; height: 34px; margin: 0 0 4px; }
-  .cut div { display: grid; place-items: center; background: var(--chip); border-radius: 6px; font: 700 12px/1 system-ui; color: var(--text); min-width: 0; overflow: hidden; }
+  .cut div { display: grid; place-items: center; background: var(--chip); border-radius: 6px; font: 700 12px/1 system-ui; color: var(--text); min-width: 6px; overflow: hidden; }
   .cut div.none { background: transparent; box-shadow: inset 0 0 0 1px var(--border); color: var(--dim); }
   .cutlabel { color: var(--dim); font-size: 12px; margin: 0 0 16px; }
   .scene { background: var(--panel); border-radius: 12px; padding: 12px; margin: 0 0 10px; }
@@ -550,8 +550,8 @@ PAGE_SCRIPT = """<script>
       }).then(async r => {
         if (r.ok) return location.reload();
         // The server answered but could not do it: say what it said and keep the stars usable.
-        const said = await r.json().then(j => j.error, () => '');
-        off.textContent = said || offText; off.hidden = false; stars.forEach(s => { s.disabled = false; });
+        const said = await r.json().then(j => j && j.error, () => '');
+        off.textContent = typeof said === 'string' && said ? said : offText; off.hidden = false; stars.forEach(s => { s.disabled = false; });
       }, () => { off.textContent = offText; setStars(false); });
       return;
     }
@@ -566,7 +566,10 @@ PAGE_SCRIPT = """<script>
       return;
     }
     const text = e.target.closest('.stext');
-    if (text) text.classList.toggle('open');
+    if (text) text.setAttribute('aria-expanded', text.classList.toggle('open'));
+  });
+  document.addEventListener('keydown', e => {
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.classList?.contains('stext')) { e.preventDefault(); e.target.click(); }
   });
   clip.addEventListener('error', () => { detail.textContent = 'This browser cannot play this file.'; });
 })();
