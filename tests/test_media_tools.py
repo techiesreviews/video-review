@@ -4,7 +4,9 @@ Windows is tested on any computer with fakes: a made-up PATH, user PATH and inst
 holding empty files named like the real tools. Nothing here needs ffmpeg installed.
 """
 import ast
+import contextlib
 import importlib.util
+import io
 import os
 from pathlib import Path
 import stat
@@ -32,7 +34,7 @@ class NoDirectCalls(unittest.TestCase):
     """Every script goes through media_tools; none starts ffmpeg or ffprobe itself."""
 
     def python_files(self):
-        skip = {'tests', 'node_modules', '.git', '.scratch'}
+        skip = {'tests', 'node_modules', '.git', '.scratch', '.venv', 'venv', '__pycache__'}
         for path in ROOT.rglob('*.py'):
             relative = path.relative_to(ROOT)
             if not skip & set(relative.parts) and relative != Path('media_tools.py'):
@@ -104,6 +106,12 @@ class LinuxLookup(Folder):
         own = self.tool('video-review-bin', 'ffmpeg')
         self.assertEqual(self.find('ffmpeg', str(self.dir / 'empty')), str(own))
 
+    def test_the_usual_install_folders_are_looked_in_before_the_own_bin_folder(self):
+        brew = self.tool('brew', 'ffmpeg')
+        self.tool('video-review-bin', 'ffmpeg')
+        with mock.patch.object(media_tools, 'POSIX_FOLDERS', (str(brew.parent),)):
+            self.assertEqual(self.find('ffmpeg', str(self.dir / 'empty')), str(brew))
+
     def test_a_tool_that_is_nowhere_is_missing(self):
         with self.assertRaises(media_tools.ToolMissing) as caught:
             self.find('ffprobe', str(self.dir))
@@ -154,6 +162,12 @@ class WindowsLookup(Folder):
         packages = ('Local', 'Microsoft', 'WinGet', 'Packages', 'Gyan.FFmpeg_x')
         self.tool(*packages, 'ffmpeg-6.1-full_build', 'bin', 'ffmpeg.exe')
         newest = self.tool(*packages, 'ffmpeg-7.1-full_build', 'bin', 'ffmpeg.exe')
+        self.assertEqual(self.find('ffmpeg', LOCALAPPDATA=str(self.dir / 'Local')), str(newest))
+
+    def test_versions_are_compared_by_number_not_by_text(self):
+        packages = ('Local', 'Microsoft', 'WinGet', 'Packages', 'Gyan.FFmpeg_x')
+        self.tool(*packages, 'ffmpeg-9.1-full_build', 'bin', 'ffmpeg.exe')
+        newest = self.tool(*packages, 'ffmpeg-10.0-full_build', 'bin', 'ffmpeg.exe')
         self.assertEqual(self.find('ffmpeg', LOCALAPPDATA=str(self.dir / 'Local')), str(newest))
 
     def test_common_install_folders_are_found_without_the_path(self):
@@ -224,6 +238,11 @@ class Running(unittest.TestCase):
             media_tools.run('ffmpeg', [], timeout=1)
         self.assertEqual(caught.exception.tool, 'ffmpeg')
 
+    def test_a_tool_that_is_there_but_cannot_start_is_named_with_its_path(self):
+        with mock.patch.object(media_tools.subprocess, 'run', side_effect=OSError(193, 'not a valid application')), \
+                self.assertRaisesRegex(media_tools.ToolMissing, 'ffprobe at /tools/ffprobe could not be started'):
+            media_tools.run('ffprobe', [], timeout=1)
+
     def test_a_tool_that_runs_too_long_is_stopped_with_a_clear_error(self):
         with mock.patch.object(media_tools.subprocess, 'run', side_effect=subprocess.TimeoutExpired('x', 5)), \
                 self.assertRaisesRegex(media_tools.ToolTimedOut, 'ffprobe.*5'):
@@ -249,6 +268,42 @@ class Finding(unittest.TestCase):
             self.assertEqual(media_tools.find('ffmpeg'), '/x/ffmpeg')
 
 
+    def test_a_remembered_tool_that_has_gone_is_looked_for_again(self):
+        media_tools.forget()
+        self.addCleanup(media_tools.forget)
+        media_tools._found['ffmpeg'] = '/gone/ffmpeg'
+        with mock.patch.object(media_tools.subprocess, 'run', side_effect=FileNotFoundError), \
+                self.assertRaises(media_tools.ToolMissing):
+            media_tools.run('ffmpeg', [], timeout=1)
+        self.assertNotIn('ffmpeg', media_tools._found)
+
+
+class CommandLine(unittest.TestCase):
+    """python media_tools.py ffprobe, which the Windows launcher runs before it opens the page."""
+
+    def answer(self, argv):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = media_tools.main(argv)
+        return code, out.getvalue().strip()
+
+    def test_a_found_tool_prints_its_path(self):
+        with mock.patch.object(media_tools, 'find', return_value='/tools/ffprobe') as find:
+            self.assertEqual(self.answer(['ffprobe']), (0, '/tools/ffprobe'))
+        find.assert_called_once_with('ffprobe')
+
+    def test_a_missing_tool_prints_how_to_install_it_and_fails(self):
+        with mock.patch.object(media_tools, 'find', side_effect=media_tools.ToolMissing('ffprobe', windows=True)):
+            code, text = self.answer([])
+        self.assertEqual(code, 1)
+        self.assertIn('winget install Gyan.FFmpeg', text)
+
+    def test_the_launcher_asks_the_module(self):
+        launcher = (ROOT / 'start-review.ps1').read_text(encoding='utf-8')
+        self.assertIn("'media_tools.py'), 'ffprobe'", launcher)
+        self.assertNotIn('ffprobe.exe', launcher)
+
+
 class Callers(unittest.TestCase):
     """What each script says when the tool is missing or hangs."""
 
@@ -266,6 +321,17 @@ class Callers(unittest.TestCase):
         with self.missing, self.assertRaisesRegex(ValueError, 'ffprobe.*winget install Gyan.FFmpeg'):
             review_store.add_local_video(self.dir, str(video))
 
+    def test_a_video_ffprobe_fails_on_or_hangs_on_is_refused_plainly(self):
+        import review_store
+        video = self.dir / 'clip.mp4'
+        video.write_bytes(b'x')
+        for outcome in (subprocess.CompletedProcess([], 1, b'', b'bad'), media_tools.ToolTimedOut('ffprobe', 30)):
+            with self.subTest(type(outcome).__name__):
+                patch = mock.patch.object(media_tools, 'run', **(
+                    {'side_effect': outcome} if isinstance(outcome, Exception) else {'return_value': outcome}))
+                with patch, self.assertRaisesRegex(ValueError, 'Could not read this video'):
+                    review_store.add_local_video(self.dir, str(video))
+
     def test_the_take_intake_without_a_tool_says_how_to_install_it(self):
         import take_intake
         with self.missing, self.assertRaisesRegex(take_intake.ToolMissing, 'ffprobe.*winget install Gyan.FFmpeg'):
@@ -282,10 +348,17 @@ class Callers(unittest.TestCase):
         with self.missing, self.assertRaisesRegex(cut.Stop, 'ffprobe.*winget install Gyan.FFmpeg'):
             cut.ffprobe_json(self.dir / 'render.mp4', '-show_entries', 'format=duration')
 
-    def test_cut_to_review_names_a_hanging_ffprobe(self):
+    def test_cut_to_review_says_what_ffprobe_could_not_read(self):
+        cut = _load('cut_to_review_media', 'scripts/video/cut-to-review.py')
+        failed = subprocess.CompletedProcess([], 1, '', 'moov atom not found\n')
+        with mock.patch.object(media_tools, 'run', return_value=failed), \
+                self.assertRaisesRegex(cut.Stop, r'ffprobe could not read .*render.mp4: moov atom not found$'):
+            cut.ffprobe_json(self.dir / 'render.mp4', '-show_entries', 'format=duration')
+
+    def test_cut_to_review_names_a_hanging_ffprobe_and_its_file(self):
         cut = _load('cut_to_review_media', 'scripts/video/cut-to-review.py')
         with mock.patch.object(media_tools, 'run', side_effect=media_tools.ToolTimedOut('ffprobe', 120)), \
-                self.assertRaisesRegex(cut.Stop, 'ffprobe'):
+                self.assertRaisesRegex(cut.Stop, 'ffprobe did not finish within 120 seconds.*render.mp4'):
             cut.ffprobe_json(self.dir / 'render.mp4', '-show_entries', 'format=duration')
 
 

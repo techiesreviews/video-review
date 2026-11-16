@@ -6,6 +6,9 @@ Windows a tool counts with one of the PATHEXT endings (.exe in practice); elsewh
 tool is remembered for the rest of the run; a missing one is looked for again next time, so installing ffmpeg
 while the server runs is enough.
 
+From a shell, `python media_tools.py ffprobe` prints the tool's path, or the missing-tool message with exit code 1
+(the Windows launcher asks this way).
+
 Running a tool: run() takes the tool's name, its arguments and a time limit, captures what it prints and never
 opens a console window on Windows. A missing tool raises ToolMissing, whose message names the tool and the command
 that installs it; a tool that runs past its limit raises ToolTimedOut. A tool that runs and fails is not an error
@@ -40,9 +43,11 @@ class MediaToolError(Exception):
 class ToolMissing(MediaToolError):
     """The tool is not installed, or this computer cannot find it."""
 
-    def __init__(self, tool, windows=None):
+    def __init__(self, tool, windows=None, found=None):
         self.tool = tool
-        super().__init__(f'{tool} is not installed (or this computer cannot find it). {install_hint(windows)}')
+        problem = f'{tool} at {found} could not be started' if found else \
+            f'{tool} is not installed (or this computer cannot find it)'
+        super().__init__(f'{problem}. {install_hint(windows)}')
 
 
 class ToolTimedOut(MediaToolError):
@@ -53,9 +58,10 @@ class ToolTimedOut(MediaToolError):
 
 def install_hint(windows=None):
     """How to install ffmpeg (which brings ffprobe) on this kind of computer."""
-    if os.name == 'nt' if windows is None else windows:
+    windows = os.name == 'nt' if windows is None else windows
+    if windows:
         return ('Install FFmpeg, which includes ffmpeg and ffprobe: open PowerShell, run "winget install Gyan.FFmpeg", '
-                'then close and reopen video-review.')
+                'then try again.')
     if sys.platform == 'darwin':
         return 'Install FFmpeg, which includes ffmpeg and ffprobe: run "brew install ffmpeg" in Terminal.'
     return 'Install FFmpeg, which includes ffmpeg and ffprobe: run "sudo apt install ffmpeg" (or your system\'s installer).'
@@ -84,8 +90,13 @@ def _windows_folders(environ, user_path):
         if '%' in filled:
             continue  # the variable is not set on this computer
         filled = filled.replace('\\', os.sep)
-        folders += sorted(glob.glob(filled), reverse=True) if '*' in filled else [filled]
+        folders += sorted(glob.glob(filled), key=_newest_first) if '*' in filled else [filled]
     return folders
+
+
+def _newest_first(folder):
+    """Sort key that puts the highest version first: ffmpeg-10.0 before ffmpeg-9.1, by number, not by text."""
+    return [-int(n) for n in re.findall(r'\d+', folder)] + [0]
 
 
 def _lookup(tool, environ, windows, user_path):
@@ -95,7 +106,7 @@ def _lookup(tool, environ, windows, user_path):
         # Windows ignores case; the lower-case ending is also tried so a copy on a case-sensitive disk is found too.
         names = list(dict.fromkeys(tool + spelling for ending in endings for spelling in (ending, ending.lower())))
     else:
-        folders = environ.get('PATH', '').split(os.pathsep) + [str(OWN_BIN), *POSIX_FOLDERS]
+        folders = environ.get('PATH', '').split(os.pathsep) + [*POSIX_FOLDERS, str(OWN_BIN)]
         names = [tool]
     for folder in folders:
         folder = folder.strip().strip('"')
@@ -141,3 +152,21 @@ def run(tool, arguments, timeout, text=False):
         raise ToolMissing(tool) from None
     except subprocess.TimeoutExpired:
         raise ToolTimedOut(tool, timeout) from None
+    except OSError:
+        # There, but it cannot start (a damaged download, or a file Windows will not run).
+        forget()
+        raise ToolMissing(tool, found=command[0]) from None
+
+
+def main(argv):
+    """Print the path of the tool named first in argv (ffprobe when none is), or why it cannot be found."""
+    try:
+        print(find(argv[0] if argv else 'ffprobe'))
+    except ToolMissing as error:
+        print(error)
+        return 1
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))
