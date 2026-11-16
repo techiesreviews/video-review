@@ -62,7 +62,7 @@ export function applyRender(state,videoId,render){
 }
 
 /** Replies, with a legacy single `resolution` shown as an AI reply. */
-export function thread(c){const replies=[...(c.replies||[])];if(c.resolution&&!replies.some(r=>r.legacy))replies.unshift({id:'resolution',author:'ai',text:c.resolution,createdAt:c.updatedAt||c.createdAt,legacy:true});return replies;}
+export function thread(c){const replies=[...(c.replies||[])];if(c.resolution&&!replies.some(r=>r.legacy))replies.unshift({id:'resolution',author:RULES.agentAuthor,text:c.resolution,createdAt:c.updatedAt||c.createdAt,legacy:true});return replies;}
 
 /** When the reviewer last said something on this comment: writing it, editing it or replying. */
 export function reviewerStamp(c){let stamp=(c.author||RULES.pageAuthor)===RULES.pageAuthor?c.createdAt||'':'';if(c.editedAt>stamp)stamp=c.editedAt;for(const r of c.replies||[])if(r.author===RULES.pageAuthor&&r.createdAt>stamp)stamp=r.createdAt;return stamp;}

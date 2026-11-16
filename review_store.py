@@ -90,7 +90,7 @@ def thread(comment):
     """Replies, with a legacy single `resolution` shown as an AI reply."""
     replies=list(comment.get('replies') or [])
     if comment.get('resolution') and not any(r.get('legacy') for r in replies):
-        replies.insert(0,{'id':'resolution','author':'ai','text':comment['resolution'],'createdAt':comment.get('updatedAt') or comment.get('createdAt'),'legacy':True})
+        replies.insert(0,{'id':'resolution','author':RULES['agentAuthor'],'text':comment['resolution'],'createdAt':comment.get('updatedAt') or comment.get('createdAt'),'legacy':True})
     return replies
 
 def frame_at(ms,fps):
