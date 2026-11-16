@@ -84,6 +84,14 @@ TRAILING_MARK = re.compile(r'[,;:.!?–—-]["\')\]]*$')
 SCRIPT_STOP = re.compile(r'(?<=[.!?])["\'”’»)\]*_`]*\s+')
 # A [direction] may run over several lines, but never past a heading: a missing "]" must not swallow later scenes.
 DIRECTION = re.compile(r'\[(?:[^\]\n]|\n(?![ \t]*#))*\]')
+# A markdown link, [text](address "title"): its text follows the direction rule, and the address may hold one pair
+# of brackets of its own. On a line of its own (also as a list item) it is a direction with an address.
+LINK = r'\[((?:[^\[\]\n]|\n(?![ \t]*#))*)\]\((?:[^()\n]|\([^()\n]*\))*\)'
+IMAGE = re.compile('!' + LINK)
+LINK_LINE = re.compile(r'^[ \t]*(?:(?:[-*+]|\d+[.)])[ \t]+)?' + LINK + r'[ \t]*$', re.MULTILINE)
+INLINE_LINK = re.compile(LINK)
+# A bare address, without the full stop, comma or closing mark that follows it.
+ADDRESS = re.compile(r'https?://[^\s<>]*[^\s<>.,;:!?"\'”’»)\]*_`]')
 LIST_ITEM = re.compile(r'^\s*(?:[-*+]|\d+[.)])\s+')
 BROKEN_OFF = re.compile(r'[–—-]["\')\]]*$')
 FILLERS = {'um', 'uh', 'uhm', 'er', 'erm', 'ah', 'hmm', 'mm'}
@@ -128,9 +136,13 @@ def in_order(first, second):
 def script_sentences(text):
     """The script as one list of words per sentence. A sentence ends at . ! or ? (also in front of a closing quote,
     bracket or bold mark), and at a heading, a blank line or a list item, so a line without a full stop does not
-    run into the next one. Headings and [directions] are left out; a direction never runs past a heading."""
+    run into the next one. Headings and [directions] are left out; a direction never runs past a heading. A link
+    is read as its text, or left out when it has a line to itself, as a direction is; an image and a bare address
+    (https://…) are left out, so no address is ever taken for a spoken word."""
+    text = INLINE_LINK.sub(r'\1', LINK_LINE.sub('', IMAGE.sub(' ', text)))
+    text = ADDRESS.sub(' ', DIRECTION.sub(' ', text))
     blocks = [[]]
-    for line in DIRECTION.sub(' ', text).splitlines():
+    for line in text.splitlines():
         heading, item = line.lstrip().startswith('#'), LIST_ITEM.match(line)
         if not line.strip() or heading or item:
             blocks.append([])
