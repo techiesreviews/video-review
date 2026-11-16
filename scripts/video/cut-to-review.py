@@ -36,6 +36,7 @@ ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(ROOT))
 import cut_timeline  # noqa: E402
+import file_store  # noqa: E402
 import resolve_build  # noqa: E402
 
 
@@ -575,12 +576,13 @@ def upload(args, environ=os.environ, post=post_json, log=print):
              ('set_transcript', {'videoId': payload['videoId'], 'transcript': payload['transcript']}),
              ('open_video', {'videoId': payload['videoId']}))
     # Each step is recorded as started and as finished, so a rerun after a failure carries on where it stopped.
+    # Every save replaces the whole record (file_store), so a save that dies halfway leaves the last whole one.
     for name, arguments in steps:
         if name in progress['steps']:
             continue
         started = progress.get('started') == name
         progress['started'] = name
-        done_file.write_text(json.dumps(progress, indent=2), encoding='utf-8')
+        file_store.write_json(done_file, progress)
         try:
             call(name, arguments)
         except Stop as error:
@@ -590,13 +592,13 @@ def upload(args, environ=os.environ, post=post_json, log=print):
                 if refused:
                     # A clear answer: nothing is in flight, so a later "already exists" is not ours.
                     progress.pop('started')
-                    done_file.write_text(json.dumps(progress, indent=2), encoding='utf-8')
+                    file_store.write_json(done_file, progress)
                 raise
         progress['steps'].append(name)
         progress.pop('started')
-        done_file.write_text(json.dumps(progress, indent=2), encoding='utf-8')
+        file_store.write_json(done_file, progress)
     progress['complete'] = True
-    done_file.write_text(json.dumps(progress, indent=2), encoding='utf-8')
+    file_store.write_json(done_file, progress)
     log(f'Uploaded {payload["videoId"]} to the review page {page}. The file stays at {video}.')
     return 0
 
