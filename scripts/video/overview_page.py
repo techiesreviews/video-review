@@ -141,13 +141,13 @@ def give_old_pages_a_code(data_dir):
             review_store.write(path, registry)
     rewritten = []
     for key in missing:
-        found = lookup(data_dir, key)
-        if not found or not (found[0] / FILE_NAME).is_file():
-            continue
         try:
+            found = lookup(data_dir, key)
+            if not found or not (found[0] / FILE_NAME).is_file():
+                continue
             build(found[0], cue=found[1], server=server_address(data_dir), code=page_code(data_dir, key))
         except (OSError, scene_store.SceneFileError):
-            continue
+            continue  # a folder that is gone or may not be read now: the pages after it still get their code
         rewritten.append(key)
     return rewritten
 
