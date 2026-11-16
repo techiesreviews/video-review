@@ -924,6 +924,46 @@ class OneScriptLineTests(unittest.TestCase):
         self.assertEqual(cut_takes.script_sentences('Say hello. [B-roll\n## Two\nThen go on. [music] The end.'),
                          [['say', 'hello'], ['broll'], ['then', 'go', 'on'], ['the', 'end']])
 
+    def test_a_link_in_the_script_never_leaves_its_address_behind_as_a_word(self):
+        # Release review of 2026-11-16 (R1-1): the prompter cue file is what --script gets. Its link line
+        # "[The survey: 300 valid responses.](https://example.com/survey)" left the address behind, glued onto the
+        # next line as "httpsexamplecomsurvey two out of three had a problem".
+        lines = cut_takes.script_sentences
+        cue_file = lines((FIXTURES / 'scene-cue-file.md').read_text(encoding='utf-8'))
+        self.assertEqual([word for line in cue_file for word in line if word.startswith('http')], [])
+        self.assertIn(['two', 'out', 'of', 'three', 'had', 'a', 'problem'], cue_file)
+        # A link on a line of its own is a direction with an address: not spoken, like any other direction.
+        self.assertEqual(lines('Say hello.\n[The survey: 300 responses.](https://example.com/survey)\nYes.'),
+                         [['say', 'hello'], ['yes']])
+        self.assertEqual(lines('Sources\n- [The survey](https://example.com/survey "300 responses")\n- Thanks for watching.'),
+                         [['sources'], ['thanks', 'for', 'watching']])
+        # A link inside a spoken line is read as its text, also when the address has brackets of its own.
+        self.assertEqual(lines('Open [the practice site](https://example.com/practice-site) now. Then wait.'),
+                         [['open', 'the', 'practice', 'site', 'now'], ['then', 'wait']])
+        self.assertEqual(lines('Read [the page](https://example.com/wiki/Site_(web)) first.'),
+                         [['read', 'the', 'page', 'first']])
+        # A link inside a direction goes with the direction.
+        self.assertEqual(lines('Say hello. [Show [the site](https://example.com) on screen] Then go on.'),
+                         [['say', 'hello'], ['then', 'go', 'on']])
+
+    def test_an_image_or_a_bare_address_in_the_script_is_not_a_word(self):
+        lines = cut_takes.script_sentences
+        self.assertEqual(lines('Say hello.\n![The chart](https://example.com/chart.png)\nYes.'), [['say', 'hello'], ['yes']])
+        self.assertEqual(lines('Look at this ![chart](charts/one.png) first.'), [['look', 'at', 'this', 'first']])
+        # The full stop after an address still ends the sentence.
+        self.assertEqual(lines('The survey is at https://example.com/survey. Two out of three had a problem.'),
+                         [['the', 'survey', 'is', 'at'], ['two', 'out', 'of', 'three', 'had', 'a', 'problem']])
+        self.assertEqual(lines('Say hello.\nhttps://example.com/survey?id=3&x=1\nYes.'), [['say', 'hello'], ['yes']])
+        self.assertEqual(lines('Write to <https://example.com/contact> today.'), [['write', 'to', 'today']])
+        # A name with a dot that is said aloud is no address.
+        self.assertEqual(lines('Go to example.com today.'), [['go', 'to', 'examplecom', 'today']])
+
+    def test_a_one_word_line_after_a_link_line_still_counts_when_said_on_its_own(self):
+        # R1-1: with the address glued on, "Yes." was no longer a script line of one word.
+        cutter = cut_takes.Cutter(cut_timeline.load_words(said('Yes.', 1.0)), FPS,
+                                  '[The survey.](https://example.com/survey)\nYes.')
+        self.assertEqual(cutter.script, [['yes']])
+
     def test_a_short_line_is_not_counted_inside_a_take_of_a_longer_line(self):
         # Second look on PR #42: after a quiet "again" the longer line follows, which opens with the short line's
         # words. Those words belong to the longer line, also when its take leaves a word out ("very").
