@@ -77,14 +77,24 @@ try{
   assert.equal(stars.length,41);
   check(stars.every(star=>star.width===26&&star.height===26),'the visible star is no longer 26 x 26 px');
   check(stars.every(star=>star.hits),`${stars.filter(star=>!star.hits).length} of ${stars.length} stars miss a touch inside their 44 x 44 px target`);
-  // The larger target leaves the take itself playable.
-  const thumb=await page.evaluate(()=>{const at=document.querySelector('.thumb').getBoundingClientRect();return document.elementFromPoint(at.left+30,at.top+35)?.closest('[data-play]')!==null;});
-  check(thumb,'a touch on the picture no longer plays the take');
-  // While the stars are off (no server), a touch beside a star plays the take: a star that cannot be used takes
-  // no more room than it shows.
+  // A real touch at a point of the second scene's take: true only when the point is on the picture and the take
+  // then starts playing. The point is given from the star's corner, so it works with the star on or off.
+  const plays=async(where,dx,dy)=>{
+    const take=where.locator('.scene').nth(1).locator('.take').first();
+    await take.scrollIntoViewIfNeeded();
+    const at=await take.locator('.st').boundingBox(),x=at.x+dx,y=at.y+at.height+dy;
+    if(!await where.evaluate(([x,y])=>!!document.elementFromPoint(x,y)?.closest('[data-play]'),[x,y]))return false;
+    await where.touchscreen.tap(x,y);
+    return take.evaluate(node=>node.getAttribute('aria-current')==='true');
+  };
+  // The larger target leaves the take itself playable: a touch well clear of the star plays it.
+  check(await plays(page,-60,20),'a touch on the picture no longer plays the take');
+  // While the stars are off (no server), a touch just beside a star plays the take: a star that cannot be used
+  // takes no more room than it shows.
   const offline=await open(false);
-  const beside=await offline.evaluate(()=>{const at=document.querySelector('.st').getBoundingClientRect();return document.elementFromPoint(at.left-6,at.bottom+6)?.closest('[data-play]')!==null;});
-  check(beside,'with the stars off, a touch beside a star does not play the take');
+  check(await plays(offline,-6,6),'with the stars off, a touch beside a star does not play the take');
+  // With the stars on, that same point belongs to the star's 44 px target, so it must not play the take.
+  check(!await plays(await open(true),-6,6),'with the stars on, a touch inside the star target plays the take instead');
   assert.deepEqual(faults,[]);
   console.log(`overview page at 320 px: ${strip.count} scenes reachable in the strip, long title wraps, ${stars.length} stars with a 44 px touch target`);
 }finally{await browser.close();}
