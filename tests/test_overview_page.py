@@ -494,6 +494,28 @@ class WritingThePage(unittest.TestCase):
         thread.join()
         self.assertGreaterEqual(time.monotonic() - begun, 0.3)
 
+    def test_an_older_rewrite_that_finishes_last_keeps_the_newest_takes_picture(self):
+        folder = self.raw / 'scenes' / COSTS
+        folder.mkdir(parents=True)
+        (folder / 'take-01.mkv').write_bytes(b'x')
+        newest = f'<img src="scenes/{COSTS}/take-04.jpg"'
+        newer_pages = []
+
+        def ffmpeg(command, **kwargs):
+            if not newer_pages:
+                # The older rewrite is still at its first picture: a take comes in and its own rewrite finishes first.
+                newer_pages.append('')
+                (folder / 'take-04.mkv').write_bytes(b'x')
+                scene_store.update(self.raw, lambda store: scene_store.add_take(store, COSTS, 4, duration=70.0))
+                newer_pages[0] = overview_page.build(self.raw).read_text(encoding='utf-8')
+            Path(command[-1]).write_bytes(b'jpeg')
+            return subprocess.CompletedProcess(command, 0, '', '')
+
+        with mock.patch.object(overview_page.subprocess, 'run', side_effect=ffmpeg):
+            page = overview_page.build(self.raw).read_text(encoding='utf-8')
+        self.assertTrue(newest in newer_pages[0], "the newer rewrite shows the new take's picture")
+        self.assertTrue(newest in page, "the older rewrite, written last, still shows the new take's picture")
+
     def test_the_page_and_thumbnail_temporary_names_differ_between_programs_and_threads(self):
         names = set()
         real_replace = os.replace
