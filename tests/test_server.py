@@ -177,6 +177,7 @@ class ReviewServerTests:
             with self.request('/'+name) as r:
                 kind=r.headers['Content-Type'].split(';')[0]
                 assert kind==('application/json' if name.endswith('.json') else 'text/javascript'),(name,kind)
+                assert r.read()==(web/name).read_bytes(),name
 
     def star(self,body,origin=None):
         headers={'Content-Type':'application/json','Origin':origin or self.origin}

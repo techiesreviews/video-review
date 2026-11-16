@@ -5,16 +5,14 @@ import { createLibraryPanel } from './library-panel.js';
 import { cutToFile, cutLength } from './cut-core.js';
 import { createJoinFade } from './join-fade.js';
 import { createCutPlayback } from './cut-playback.js';
+import { clock, frame, timecode } from './time-format.js';
 
 const $=s=>document.querySelector(s), video=$('#video');
 let backend=null, videos=[], notes=[], active=null, filter='open', presented=0, explicitTime=null, saving=false, pinnedStart=null, pinnedEnd=null, editing=null, lastSnapshot='', toastTimer=null, pendingAdd=null, pendingSeek=null, reloadTimer=null, announceReload=false, pendingEditRequest=null;
 const PLAY='M8 5v14l11-7z', PAUSE='M7 5h4v14H7zM13 5h4v14h-4z', SPEEDS=[0.5,0.75,1,1.25,1.5,2], FPS=[23.976,24,25,29.97,30,48,50,59.94,60];
 
-// Time formats: full for exports, precise while composing, short in the list.
-const format=ms=>{ms=Math.max(0,Math.round(ms));const h=Math.floor(ms/3600000),m=Math.floor(ms/60000)%60,s=Math.floor(ms/1000)%60;return [h,m,s].map(x=>String(x).padStart(2,'0')).join(':')+'.'+String(ms%1000).padStart(3,'0');};
-const short=ms=>{ms=Math.max(0,Math.round(ms));const h=Math.floor(ms/3600000),m=Math.floor(ms/60000)%60,s=String(Math.floor(ms/1000)%60).padStart(2,'0');return h?`${h}:${String(m).padStart(2,'0')}:${s}`:`${m}:${s}`;};
-const precise=ms=>short(ms)+'.'+String(Math.round(Math.max(0,ms))%1000).padStart(3,'0');
-const frameOf=ms=>Math.round(ms*active.fps/1000);
+// Time formats (web/time-format.js): full for exports, precise while composing, short in the list.
+const short=ms=>clock(ms), precise=ms=>clock(ms,{places:3}), frameOf=ms=>frame(ms,active.fps);
 function parse(s){s=s.trim();if(!s)return null;if(/^\d+(\.\d+)?$/.test(s))return Math.round(Number(s)*1000);const m=s.match(/^(?:(\d+):)?(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?$/);if(!m||Number(m[3])>59||(m[1]&&Number(m[2])>59))throw Error('Use h:mm:ss.mmm, m:ss.mmm or seconds.');return (Number(m[1]||0)*3600+Number(m[2])*60+Number(m[3]))*1000+Number((m[4]||'0').padEnd(3,'0'));}
 function ago(iso){const s=(Date.now()-new Date(iso))/1000;if(!(s>=0))return '';if(s<60)return 'Just now';if(s<3600)return Math.floor(s/60)+'m';if(s<86400)return Math.floor(s/3600)+'h';if(s<604800)return Math.floor(s/86400)+'d';return new Date(iso).toLocaleDateString();}
 function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e;}
@@ -64,7 +62,7 @@ function renderDuration(){$('#duration').textContent=short(active.durationMs);$(
 // An older local file must never overwrite the new render's declared cut/map.
 function syncDuration(){const ms=Math.round(video.duration*1000);if(!active||!isFinite(ms))return false;if(Math.abs(ms-active.durationMs)<=Math.max(60,1000/active.fps))return true;
   video.pause();video.removeAttribute('src');video.load();gate('Choose the updated video',`This file is ${short(ms)}, while this review is ${short(active.durationMs)}. Choose the updated render; your transcript and comments are kept.`,'Choose updated '+active.fileName+'…',()=>attachFile(active));return false;}
-function seek(ms,snap=false){if(!active)return;previewStop=null;video.pause();$('#bigPlay').hidden=true;ms=clamp(ms);if(snap)ms=Math.round(ms*active.fps/1000)*1000/active.fps;explicitTime=Math.round(ms);video.currentTime=ms/1000;renderTime();}
+function seek(ms,snap=false){if(!active)return;previewStop=null;video.pause();$('#bigPlay').hidden=true;ms=clamp(ms);if(snap)ms=frame(ms,active.fps)*1000/active.fps;explicitTime=Math.round(ms);video.currentTime=ms/1000;renderTime();}
 function step(direction){seek((frameOf(currentMs())+direction)*1000/active.fps);}
 function jumpBy(ms){seek(currentMs()+ms);}
 async function togglePlay(){if(!video.getAttribute('src'))return;previewStop=null;try{if(video.paused){const ms=video.currentTime*1000,next=transcriptPanel.skip(ms);if(next!==ms)video.currentTime=next/1000;await video.play();}else video.pause();}catch(e){showError(e.message);}}
@@ -98,7 +96,7 @@ const WHO={you:['Y','You',''],ai:['AI','AI editor',' ai']};
 function person(author){const [initials,name,cls]=WHO[author]||WHO.you;return [el('span','avatar'+cls,initials),name];}
 function inlineBox(value,placeholder,label,onSave){const box=el('textarea','edit-box');box.value=value;box.rows=value?3:2;box.placeholder=placeholder;const save=el('button','primary small',label),cancel=el('button','link','Cancel');const done=()=>{editing=null;drawNotes();};save.onclick=async()=>{const text=box.value.trim();if(text){editing=null;await onSave(text);}};cancel.onclick=done;box.onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();save.click();}if(e.key==='Escape')done();};const row=el('div','edit-row');row.append(cancel,save);setTimeout(()=>{box.focus();box.setSelectionRange(box.value.length,box.value.length);});return [box,row];}
 function card(n){const c=el('article','comment'+(n.status==='done'?' done':''));c.dataset.id=n.id;c.dataset.start=n.startMs;c.dataset.end=n.endMs??n.startMs;const author=n.author||'you',[avatar,name]=person(author);
-  const main=el('div','comment-main'),meta=el('div','comment-meta');const time=el('button','ts',n.endMs!==null?`${short(n.startMs)} – ${short(n.endMs)}`:short(n.startMs));time.title=`${format(n.startMs)}${n.endMs!==null?' → '+format(n.endMs):''} · frame ${frameOf(n.startMs)}`;time.onclick=()=>focusNote(n);meta.append(el('b',null,name),time);if(n.editRequest?.type==='change')meta.append(el('span','ask-badge','For agent'));meta.append(el('span','ago',ago(n.createdAt)));
+  const main=el('div','comment-main'),meta=el('div','comment-meta');const time=el('button','ts',n.endMs!==null?`${short(n.startMs)} – ${short(n.endMs)}`:short(n.startMs));time.title=`${timecode(n.startMs)}${n.endMs!==null?' → '+timecode(n.endMs):''} · frame ${frameOf(n.startMs)}`;time.onclick=()=>focusNote(n);meta.append(el('b',null,name),time);if(n.editRequest?.type==='change')meta.append(el('span','ask-badge','For agent'));meta.append(el('span','ago',ago(n.createdAt)));
   const resolve=el('button','resolve');resolve.title=n.status==='done'?'Reopen':'Resolve';resolve.setAttribute('aria-label',resolve.title);resolve.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.5 2.5L16 9.5"/></svg>';resolve.onclick=()=>update(n,{status:n.status==='done'?'open':'done'});meta.append(resolve);main.append(meta);
   if(editing?.id===n.id&&editing.mode==='edit')main.append(...inlineBox(n.text,'','Save',text=>update(n,{text})));else main.append(el('p','text',n.text));
   if(n.editRequest?.type==='change'){const r=n.editRequest,frames=r.endFrame!=null?`frames ${r.startFrame}–${r.endFrame}`:`frame ${r.startFrame}`;main.append(el('p','ask-where',r.quote?`On “${r.quote}” · ${frames}`:`On ${frames}`));}
@@ -219,7 +217,7 @@ $('#mute').onclick=()=>{video.muted=!video.muted;$('#mute').textContent=video.mu
 $('#fullscreen').onclick=()=>document.fullscreenElement?document.exitFullscreen():$('#player').requestFullscreen();
 $('#videoSelect').onchange=e=>selectVideo(e.target.value);
 document.querySelectorAll('[data-filter]').forEach(b=>b.onclick=()=>setFilter(b.dataset.filter));
-$('#exportBtn').onclick=()=>{toggleMenu(null,false);if(!active)return;const items=mine().map(n=>({...n,timecode:format(n.startMs),startFrame:frameOf(n.startMs),endFrame:n.endMs===null?null:frameOf(n.endMs),sourceSpans:sourceSpans(active,n.startMs,n.endMs)}));download(active.id+'-review-comments.json',{schemaVersion:1,exportedAt:new Date().toISOString(),video:{id:active.id,title:active.title,label:active.label,fps:active.fps,fingerprint:active.fingerprint,durationMs:active.durationMs},comments:items});};
+$('#exportBtn').onclick=()=>{toggleMenu(null,false);if(!active)return;const items=mine().map(n=>({...n,timecode:timecode(n.startMs),startFrame:frameOf(n.startMs),endFrame:n.endMs===null?null:frameOf(n.endMs),sourceSpans:sourceSpans(active,n.startMs,n.endMs)}));download(active.id+'-review-comments.json',{schemaVersion:1,exportedAt:new Date().toISOString(),video:{id:active.id,title:active.title,label:active.label,fps:active.fps,fingerprint:active.fingerprint,durationMs:active.durationMs},comments:items});};
 $('#backupBtn').onclick=()=>{toggleMenu(null,false);download(`video-review-backup-${new Date().toISOString().slice(0,10)}.json`,backend.backup());};
 $('#importBtn').onclick=()=>{toggleMenu(null,false);const input=Object.assign(el('input'),{type:'file',accept:'application/json,.json'});input.onchange=async()=>{try{await backend.importState(JSON.parse(await input.files[0].text()));syncVideos();await loadNotes();toast('Backup imported.');if(!active&&videos.length)selectVideo(videos[0].id);}catch(e){showToastError(e.message);}};input.click();};
 $('#removeVideo').onclick=async()=>{toggleMenu(null,false);if(!active||!confirm(`Remove "${active.label}" and its comments from this browser? The video file itself is not touched.`))return;await backend.removeVideo(active.id);syncVideos();await loadNotes();};

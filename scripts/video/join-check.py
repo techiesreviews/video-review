@@ -11,8 +11,10 @@ import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import cut_preferences  # noqa: E402
 import cut_timeline  # noqa: E402
+import time_format  # noqa: E402
 
 # Lex's preferences and this check's working limits, from web/cut-preferences.json (the cutter reads the same file).
 THRESHOLDS = {
@@ -223,10 +225,7 @@ def check_joins(words, timeline):
 
 
 def clock(seconds):
-    total = ms(seconds)
-    hours, minutes = total // 3600000, total // 60000 % 60
-    text = f'{minutes:02}:{total // 1000 % 60:02}.{total % 1000:03}'
-    return f'{hours}:{text}' if hours else text
+    return time_format.clock(ms(seconds), places=3, pad_minutes=True)
 
 
 def flag_lines(flags):

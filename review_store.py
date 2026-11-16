@@ -8,16 +8,13 @@ from fractions import Fraction
 from datetime import datetime, timezone
 import file_store
 import media_tools
+from time_format import frame as frame_at, round_half_up, timecode
 
 ROOT=Path(__file__).resolve().parent
 RULES=json.loads((ROOT/'web'/'review-rules.json').read_text(encoding='utf-8'))
 MESSAGES=RULES['messages'];LIMITS=RULES['limits']
 AUTHORS=tuple(RULES['authors'])
 SECONDS,TIMECODE,VIDEO_ID=(re.compile(RULES['patterns'][name]) for name in ('seconds','timecode','videoId'))
-
-def round_half_up(value):
-    """Nearest whole number, halves up, as JavaScript's Math.round does (Python's round() sends halves to even)."""
-    whole=math.floor(value);return whole+1 if value-whole>=.5 else whole
 
 def round3(value):
     """Three decimals, halves up, as the browser rounds source frames."""
@@ -72,9 +69,6 @@ def parse_time(value):
     if not m or int(m[3])>59 or (m[1] and int(m[2])>59):raise ValueError(MESSAGES['timeFormat'])
     return (int(m[1] or 0)*3600+int(m[2])*60+int(m[3]))*1000+int((m[4] or '0').ljust(3,'0'))
 
-def timecode(ms):
-    ms=max(0,round_half_up(ms));return f'{ms//3600000:02}:{ms//60000%60:02}:{ms//1000%60:02}.{ms%1000:03}'
-
 def source_spans(video,start_ms,end_ms):
     fps=video['fps'];start=start_ms*fps/1000;end=(end_ms if end_ms is not None else start_ms)*fps/1000;cursor=0;spans=[]
     for a,b in video.get('keepRanges') or []:
@@ -93,10 +87,6 @@ def thread(comment):
     if comment.get('resolution') and not any(r.get('legacy') for r in replies):
         replies.insert(0,{'id':'resolution','author':RULES['agentAuthor'],'text':comment['resolution'],'createdAt':comment.get('updatedAt') or comment.get('createdAt'),'legacy':True})
     return replies
-
-def frame_at(ms,fps):
-    """The frame at a time, rounding half up as the browser and the hosted worker do."""
-    return round_half_up(ms*fps/1000)
 
 def agent_request(video,c):
     """What the reviewer asked an agent to do, in one field: the comment's current text is the instruction."""
@@ -445,7 +435,7 @@ def video_item(entry):
     fps=entry['fps'];duration=parse_time(entry['durationMs'])
     if not finite_number(fps) or fps<=0:raise ValueError(MESSAGES['fps'])
     if not duration or duration<=0:raise ValueError(MESSAGES['duration'])
-    keep=check_keep_ranges(entry.get('keepRanges') or [[0,round_half_up(duration*fps/1000)]])
+    keep=check_keep_ranges(entry.get('keepRanges') or [[0,frame_at(duration,fps)]])
     return {'id':entry['id'],'title':entry['title'],'label':entry['label'],'path':str(media.resolve()),'fps':fps,'durationMs':duration,'fingerprint':entry.get('fingerprint') or fingerprint(media),'keepRanges':keep}
 
 def add_to_manifest(directory,item,reuse_same_file=False):

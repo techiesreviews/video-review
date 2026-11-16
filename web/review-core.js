@@ -2,8 +2,9 @@
 // The rules themselves (fields, limits, who may write and edit, messages) are in review-rules.json, which
 // review_store.py reads for the local Python app; tests/fixtures/review-rule-cases.json is run against both.
 import RULES from './review-rules.json' with {type:'json'};
+import {frame,timecode} from './time-format.js';
 
-export {RULES};
+export {RULES,timecode};
 export const AUTHORS=RULES.authors;
 const M=RULES.messages,LIMITS=RULES.limits,TRIM=new Set(RULES.trimCharacters);
 const SECONDS=new RegExp(RULES.patterns.seconds),TIMECODE=new RegExp(RULES.patterns.timecode),VIDEO_ID=new RegExp(RULES.patterns.videoId);
@@ -11,7 +12,6 @@ const SECONDS=new RegExp(RULES.patterns.seconds),TIMECODE=new RegExp(RULES.patte
 const length=text=>[...text].length;
 function trim(text){let a=0,b=text.length;while(a<b&&TRIM.has(text[a]))a++;while(b>a&&TRIM.has(text[b-1]))b--;return text.slice(a,b);}
 
-export function timecode(ms){ms=Math.max(0,Math.round(ms));const h=Math.floor(ms/3600000),m=Math.floor(ms/60000)%60,s=Math.floor(ms/1000)%60;return [h,m,s].map(x=>String(x).padStart(2,'0')).join(':')+'.'+String(ms%1000).padStart(3,'0');}
 
 /** Milliseconds from a number, or from h:mm:ss.mmm, m:ss.mmm or seconds. */
 export function parseTime(value){
@@ -71,7 +71,7 @@ export function reviewerStamp(c){let stamp=(c.author||RULES.pageAuthor)===RULES.
 function agentRequest(video,c){
   const e=c.editRequest,hasEnd=c.endMs!==null&&c.endMs!==undefined;
   return {type:'change',instruction:c.text,quote:e.quote??null,wordIds:e.wordIds||[],firstWordId:e.firstWordId??null,lastWordId:e.lastWordId??null,
-    startFrame:Math.round(c.startMs*video.fps/1000),endFrame:hasEnd?Math.round(c.endMs*video.fps/1000):null,
+    startFrame:frame(c.startMs,video.fps),endFrame:hasEnd?frame(c.endMs,video.fps):null,
     sourceSpans:c.sourceSpans??e.sourceSpans??sourceSpans(video,c.startMs,hasEnd?c.endMs:null),transcriptRevision:e.transcriptRevision??null,...(e.cutId?{cutId:e.cutId}:{})};
 }
 
@@ -79,7 +79,7 @@ export function describe(video,c){
   const fps=video.fps,hasEnd=c.endMs!==null&&c.endMs!==undefined;
   return {id:c.id,videoId:c.videoId,status:c.status,author:c.author||RULES.pageAuthor,text:c.text,
     start:timecode(c.startMs),end:hasEnd?timecode(c.endMs):null,startMs:c.startMs,endMs:hasEnd?c.endMs:null,
-    startFrame:Math.round(c.startMs*fps/1000),endFrame:hasEnd?Math.round(c.endMs*fps/1000):null,
+    startFrame:frame(c.startMs,fps),endFrame:hasEnd?frame(c.endMs,fps):null,
     sourceSpans:c.sourceSpans??c.editRequest?.sourceSpans??sourceSpans(video,c.startMs,hasEnd?c.endMs:null),
     ...(c.editRequest?{editRequest:c.editRequest}:{}),
     ...(c.editRequest?.type==='change'?{agentRequest:agentRequest(video,c)}:{}),
@@ -106,7 +106,7 @@ export function checkEditRequest(request,video,startMs,endMs){
   if(request.type==='change'){
     const ids=request.wordIds??[];
     if(!Array.isArray(ids)||ids.length>LIMITS.wordIds||ids.some(id=>typeof id!=='string'||length(id)>LIMITS.idLength))throw Error(M.wordIds);
-    result.wordIds=[...ids];result.startFrame=Math.round(startMs*video.fps/1000);result.endFrame=endMs==null?null:Math.round(endMs*video.fps/1000);
+    result.wordIds=[...ids];result.startFrame=frame(startMs,video.fps);result.endFrame=endMs==null?null:frame(endMs,video.fps);
   }
   if(request.type==='restore'){
     const {sourceStartMs:a,sourceEndMs:b,sourceDurationMs:d}=request;
@@ -171,7 +171,7 @@ export function checkVideo(entry,videos){
   const fps=Number(entry.fps),durationMs=parseTime(entry.durationMs);
   if(!(fps>0))throw Error(M.fps);
   if(!(durationMs>0))throw Error(M.duration);
-  const keep=checkKeepRanges(entry.keepRanges||[[0,Math.round(durationMs*fps/1000)]]);
+  const keep=checkKeepRanges(entry.keepRanges||[[0,frame(durationMs,fps)]]);
   if(entry.sha256!=null&&!/^[0-9a-f]{64}$/i.test(entry.sha256))throw Error('sha256 must be 64 hex digits');
   return {id:entry.id,title:String(entry.title),label:String(entry.label),fps,durationMs,keepRanges:keep,fileName:entry.fileName?String(entry.fileName):null,fileSize:entry.fileSize??null,fingerprint:entry.fingerprint??null,sha256:entry.sha256?.toLowerCase()??null,addedBy:entry.addedBy||RULES.pageAuthor,createdAt:entry.createdAt||new Date().toISOString()};
 }
