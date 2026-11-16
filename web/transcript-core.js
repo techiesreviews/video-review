@@ -47,11 +47,17 @@ export function normalizeTranscript(data, durationMs=Infinity, videoFps=null) {
 
 /** Saves a transcript in the browser's review state. A new source mapping in it moves the video's comments to their
  * places in the new mapping, as saving a transcript in the local app does. editsOnly: a save of its preview cuts only,
- * refused when the saved transcript is no longer the one they were made on (a new render or an import came in). */
+ * written onto the saved transcript, and refused when the saved words are no longer the ones they were made on (a new
+ * render or an import came in). */
 export function storeTranscript(state,videoId,data,{editsOnly=false}={}){
   const video=state.videos.find(v=>v.id===videoId);if(!video)throw Error(RULES.messages.unknownVideo);
   const transcript=normalizeTranscript(data,video.durationMs,video.fps);
-  if(editsOnly&&!sameWords(state.transcripts?.[video.id],transcript))throw Error(RULES.messages.transcriptChanged);
+  if(editsOnly){
+    // Only the cut list is written, onto the saved transcript, so newer joins or labels stay as they are.
+    const saved=state.transcripts?.[video.id];
+    if(!sameWords(saved,transcript))throw Error(RULES.messages.transcriptChanged);
+    return state.transcripts[video.id]={...saved,draftEdits:transcript.draftEdits};
+  }
   if(transcript.keepRanges)applyRender(state,video.id,{keepRanges:transcript.keepRanges});
   (state.transcripts||(state.transcripts={}))[video.id]=transcript;return transcript;
 }

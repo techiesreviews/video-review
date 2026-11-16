@@ -106,8 +106,8 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
    *  the store took the save): the error says saved, and the panel loads the transcript again to show it. */
   async function commit(at,draftEdits,{keep=false}={}){
     if(stale(at))throw Error(RULES.messages.transcriptChanged);
-    const saved=await saveTranscript(video,{...transcript,draftEdits},{editsOnly:true});
-    if(stale(at))throw Object.assign(Error(RELOADED_TEXT),{saved:true,videoId:video?.id});
+    const target=video,saved=await saveTranscript(target,{...transcript,draftEdits},{editsOnly:true});
+    if(stale(at))throw Object.assign(Error(RELOADED_TEXT),{saved:true,videoId:target.id});
     transcript=saved;
     // Whether the note box was editing a comment when the save landed: then its text is that comment's, not a draft.
     const noteOpen=note.id!=null;
@@ -122,7 +122,9 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
     catch(error){if(!error.saved)throw error;landed=error;}
     for(const id of new Set(back.map(e=>e.commentId).filter(Boolean))){
       if(remaining.some(e=>e.commentId===id))continue;
-      await cancelRequest(id);cutNotes.delete(id);
+      // A failed close is reported; it must not hide that the save landed, which the panel shows by loading again.
+      try{await cancelRequest(id);}catch(error){if(!landed)throw error;onError(error);}
+      cutNotes.delete(id);
     }
     if(landed)throw landed;
     return noteOpen;
