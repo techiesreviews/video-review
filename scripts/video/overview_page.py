@@ -349,6 +349,10 @@ def _take_card(scene, take, best, thumbs, prefix):
     if scene.get('favorite') == number and best != number:
         pick = '<span class="pick" title="Computer\'s favorite">☆ pick</span>'
     star_label = 'Take the star off' if starred else 'Keep in rough cut (star it)' if best == number else 'Put in rough cut'
+    # A list of buttons shows only their names, so the name says which recording; the tooltip sits on its card.
+    which = f'scene {scene["number"]}, take {number}'
+    star_name = (f'Take the star off {which}' if starred else f'Keep {which} in rough cut (star it)' if best == number
+                 else f'Put {which} in rough cut')
     return (
         f'<div class="take" data-scene="{esc(scene["id"])}" data-take="{number}">'
         f'<button class="thumb" type="button" data-play="{esc(media)}" data-label="{esc(label)}"'
@@ -357,7 +361,7 @@ def _take_card(scene, take, best, thumbs, prefix):
         f'{pick}'
         f'<button class="st" type="button" data-star data-scene="{esc(scene["id"])}" data-take="{number}"'
         f' data-on="{"true" if best == number else "false"}" data-starred="{"true" if starred else "false"}"'
-        f' aria-label="{star_label}" title="{star_label}" disabled>{"★" if best == number else "☆"}</button>'
+        f' aria-label="{star_name}" title="{star_label}" disabled>{"★" if best == number else "☆"}</button>'
         f'<div class="note">{esc(_take_note(take))}</div></div>')
 
 
