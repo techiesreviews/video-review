@@ -23,7 +23,7 @@ TOOLS=[
     {'name':'get_transcript','description':'Read the existing word-timed transcript for a video version. No transcription or credit spending. Words include stable IDs and review times; a transcript is not proof that a cut sounds natural. draftEdits lists the reviewer\'s current preview removals: {id,startMs,endMs,wordIds,quote,kind,commentId}, in review-file milliseconds.','inputSchema':obj({'videoId':{'type':'string'}},['videoId'])},
     {'name':'set_transcript','description':'Attach an existing word-timed transcript to a video version. Supply {words:[{id,text,startMs,endMs}],revision,label,cuts:[{id,atMs,risk}]}. Times are milliseconds in this exact rendered version. Derive recut timings from the raw transcript and actual Resolve cut list; never buy a new transcription.','inputSchema':obj({'videoId':{'type':'string'},'transcript':{'type':'object'}},['videoId','transcript'])},
     {'name':'list_videos','description':'List the video versions in the review library with file paths, frame rate, duration and comment counts.','inputSchema':obj({})},
-    {'name':'list_comments','description':'Read review comments with timecodes, frame numbers, original-source frame mapping and reply threads. Defaults to open comments on every version. A comment the reviewer sent as a change request has an agentRequest field with the instruction and where it applies.','inputSchema':obj({'videoId':{'type':'string','description':'Only this video version.'},'status':{'type':'string','enum':['open','done','all'],'default':'open'}})},
+    {'name':'list_comments','description':'Read review comments with timecodes, frame numbers, original-source frame mapping and reply threads. Defaults to open comments on every version. A comment the reviewer sent as a change request has an agentRequest field with the instruction and where it applies.','inputSchema':obj({'videoId':{'type':'string','description':'Only this video version.'},'status':{'type':'string','enum':[*store.RULES['statuses'],'all'],'default':store.RULES['newStatus']}})},
     {'name':'get_comment','description':'Read one comment and its reply thread, with its agentRequest field if it is a change request.','inputSchema':obj({'commentId':{'type':'string'}},['commentId'])},
     {'name':'reply_to_comment','description':'Reply in a comment thread, for example to ask the reviewer a question or report progress. The comment stays open.','inputSchema':obj({'commentId':{'type':'string'},'text':{'type':'string'}},['commentId','text'])},
     {'name':'resolve_comment','description':'Mark a comment done after applying it, with a short summary of what changed. The summary appears as your reply under the comment.','inputSchema':obj({'commentId':{'type':'string'},'summary':{'type':'string','description':'What you changed, e.g. "Removed 0.4 s pause at 1:12.300."'}},['commentId','summary'])},
@@ -47,7 +47,7 @@ def video_info(v):
 
 def comment_view(cid):
     c=next((x for x in store.comments(DATA) if x['id']==cid),None)
-    if not c:raise ValueError('Comment not found')
+    if not c:raise ValueError(store.MESSAGES['commentNotFound'])
     video=store.find_video(DATA,c['videoId'])
     return {'video':video_info(video),'comment':store.describe(video,c)}
 
@@ -79,7 +79,6 @@ def call(name,args):
         return comment_view(args['commentId'])
     if name=='add_comment':
         start=store.parse_time(args['start']);end=store.parse_time(args.get('end'))
-        if start is None:raise ValueError('start is required')
         _,c=store.apply(DATA,{'action':'add','videoId':args['videoId'],'startMs':start,'endMs':end,'text':args['text'],'author':'ai'})
         return comment_view(c['id'])
     if name=='open_video':

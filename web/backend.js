@@ -2,8 +2,8 @@
 //  - local:   the Python app (server.py) on this computer stores videos and comments in its data folder.
 //  - browser: the hosted app keeps comments in this browser (IndexedDB) and plays videos straight from disk.
 //             While an agent is connected, one tab relays comments and the agent's changes through the Worker.
-import { applyChange, checkVideo, describe, timecode, rebaseComments } from './review-core.js';
-import { normalizeTranscript, searchLibrary } from './transcript-core.js';
+import { applyChange, applyRender, checkVideo, describe, timecode, RULES } from './review-core.js';
+import { normalizeTranscript, searchLibrary, storeTranscript } from './transcript-core.js';
 
 async function api(route,body){const r=await fetch(route,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{cache:'no-store'});const result=await r.json();if(!r.ok)throw Error(result.error||'Could not save.');return result;}
 
@@ -90,8 +90,8 @@ async function browserBackend(events){
     if(state.appliedOps?.includes(op.id))return {ok:true,result:{note:'Already applied'}};
     try{
       let result;
-      if(op.cmd.action==='open-video'){const v=state.videos.find(x=>x.id===op.cmd.videoId);if(!v)throw Error('Unknown video version');if(op.cmd.render?.keepRanges)rebaseComments(v,state.comments,op.cmd.render.keepRanges,op.cmd.render.durationMs??v.durationMs);if(Object.keys(op.cmd.render||{}).length)v.mediaRevision=op.id;Object.assign(v,op.cmd.render);await events.onOpenVideo?.(op.cmd);const fileOpen=files.get(v.id)?.key===mediaKey(v);result={opened:v.label,at:op.cmd.atMs!=null?timecode(op.cmd.atMs):null,fileOpen,note:fileOpen?'Shown in the reviewer’s tab.':'The updated cut is ready; choose its file once to remember it for refresh.'};}
-      else if(op.cmd.action==='set-transcript'){const v=state.videos.find(x=>x.id===op.cmd.videoId);if(!v)throw Error('Unknown video version');const transcript=normalizeTranscript(op.cmd.transcript,v.durationMs,v.fps);if(transcript.keepRanges)v.keepRanges=transcript.keepRanges;(state.transcripts||(state.transcripts={}))[v.id]=transcript;result={videoId:v.id,words:transcript.words.length,revision:transcript.revision};}
+      if(op.cmd.action==='open-video'){const v=state.videos.find(x=>x.id===op.cmd.videoId);if(!v)throw Error(RULES.messages.unknownVideo);if(Object.keys(op.cmd.render||{}).length){applyRender(state,v.id,op.cmd.render);v.mediaRevision=op.id;}await events.onOpenVideo?.(op.cmd);const fileOpen=files.get(v.id)?.key===mediaKey(v);result={opened:v.label,at:op.cmd.atMs!=null?timecode(op.cmd.atMs):null,fileOpen,note:fileOpen?'Shown in the reviewer’s tab.':'The updated cut is ready; choose its file once to remember it for refresh.'};}
+      else if(op.cmd.action==='set-transcript'){const transcript=storeTranscript(state,op.cmd.videoId,op.cmd.transcript);result={videoId:op.cmd.videoId,words:transcript.words.length,revision:transcript.revision};}
       else if(op.cmd.action==='get-transcript'){result={videoId:op.cmd.videoId,transcript:state.transcripts?.[op.cmd.videoId]??null};}
       else if(op.cmd.action==='register-video'){const v=checkVideo(op.cmd.video,state.videos);state.videos.push(v);result={video:v,note:'The reviewer is asked to open the file to review it.'};}
       else{const c=applyChange(state,op.cmd);result=c?{comment:describe(state.videos.find(v=>v.id===c.videoId),c)}:{};}
@@ -132,10 +132,10 @@ async function browserBackend(events){
     mode:'browser',
     async load(){relay.start();},
     videos:()=>state.videos, comments:()=>state.comments,
-    async apply(cmd){applyChange(state,{...cmd,author:'you'});await save();return state.comments;},
+    async apply(cmd){applyChange(state,{...cmd,author:RULES.pageAuthor});await save();return state.comments;},
     async refresh(){return state.comments;},
     async transcript(v){return state.transcripts?.[v.id]??null;},
-    async saveTranscript(v,data){const transcript=normalizeTranscript(data,v.durationMs,v.fps);if(transcript.keepRanges)v.keepRanges=transcript.keepRanges;(state.transcripts||(state.transcripts={}))[v.id]=transcript;await save();return transcript;},
+    async saveTranscript(v,data){const transcript=storeTranscript(state,v.id,data);await save();return transcript;},
     setView(next){view=next;relay.share();},
     /** The video to play: a URL once the file is open, or what the reviewer needs to do first. */
     async media(v){
