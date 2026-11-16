@@ -43,9 +43,9 @@ class MediaToolError(Exception):
 class ToolMissing(MediaToolError):
     """The tool is not installed, or this computer cannot find it."""
 
-    def __init__(self, tool, windows=None, found=None):
+    def __init__(self, tool, windows=None, found=None, reason=None):
         self.tool = tool
-        problem = f'{tool} at {found} could not be started' if found else \
+        problem = f'{tool} at {found} could not be started ({reason})' if found else \
             f'{tool} is not installed (or this computer cannot find it)'
         super().__init__(f'{problem}. {install_hint(windows)}')
 
@@ -152,10 +152,10 @@ def run(tool, arguments, timeout, text=False):
         raise ToolMissing(tool) from None
     except subprocess.TimeoutExpired:
         raise ToolTimedOut(tool, timeout) from None
-    except OSError:
-        # There, but it cannot start (a damaged download, or a file Windows will not run).
+    except OSError as error:
+        # There, but it cannot start (a damaged download, a file Windows will not run, or no handles left).
         forget()
-        raise ToolMissing(tool, found=command[0]) from None
+        raise ToolMissing(tool, found=command[0], reason=error.strerror or error) from None
 
 
 def main(argv):
