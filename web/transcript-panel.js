@@ -186,8 +186,9 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     }
   }
   $('#restoreOriginalSelection').onclick=()=>{if(editing.selection?.kind==='source')requestSourceRestore(editing.selection,$('#restoreOriginalSelection'));};
-  // An edit saved while a new transcript came in: the panel loads it again, so it shows what was saved.
-  function failed(error){showError(error.message);if(error.saved&&videoRef&&error.videoId===videoRef.id)panel.load(videoRef,backendRef);}
+  // An edit saved while a new transcript came in: the panel loads it again, so it shows what was saved. Saved on a
+  // video no longer open: that video shows it when opened, and nothing is said over this one.
+  function failed(error){if(error.saved&&error.videoId!==videoRef?.id)return;showError(error.message);if(error.saved)panel.load(videoRef,backendRef);}
   function hasDraft(){const selected=editing.selection;return !editing.noteId&&!!noteBox.value.trim()&&!!selected&&selected.kind!=='source';}
   // An unsent note, including letters typed while an edit was saving, is handed back for the next selection.
   const draftAfter=done=>done.noteOpen?'':noteBox.value;

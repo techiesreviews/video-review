@@ -304,6 +304,20 @@ test('a full transcript (original words, joins, source mapping) loaded by the pa
   assert.equal(sameWords(full,{...page,keepRanges:[[10,310]]}),false,'a new source mapping is a new render');
 });
 
+test('a note that cannot be closed while such a save lands is reported, and the save still says it landed',async()=>{
+  const {editing,state,calls,hold}=setup();
+  editing.selectWords(1);await editing.remove({typed:'why'});
+  hold.save=held();const wait=hold.save;
+  const undo=editing.undo();
+  await new Promise(r=>setTimeout(r));
+  editing.load(storeTranscript(state,VIDEO.id,{...TRANSCRIPT,draftEdits:state.transcripts.v.draftEdits}),state.videos[0]);
+  state.comments.length=0;
+  wait.resolve();
+  const error=await undo.then(()=>null,error=>error);
+  assert.equal(error.saved,true,'the panel still loads the transcript again');
+  assert.deepEqual(calls.errors,['Comment not found'],'the failed close is reported');
+});
+
 test('an edit-only save writes only the cut list, so a newer revision, label or joins stay',()=>{
   const state={videos:[{...VIDEO}],comments:[]};
   storeTranscript(state,VIDEO.id,TRANSCRIPT);
