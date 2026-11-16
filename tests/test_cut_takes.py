@@ -471,6 +471,21 @@ class RestartTests(unittest.TestCase):
                 self.assertEqual([item['code'] for item in result['paperEdit']['flags']], ['possible-restart'],
                                  (start, script))
 
+    def test_a_short_start_in_front_of_the_take_that_stays_is_listed_also_when_a_later_take_is_removed(self):
+        # Fifth whole-file look, 2026-11-16: the worse third reading made the first two one group of takes, and
+        # the three-word start in front of the kept take was cut without the listing the rules promise.
+        words = [['And', 1.0, 1.2], ['then', 1.24, 1.4], ['I—', 1.44, 1.6]] + said('And then I look at the timeline.', 4.0) \
+            + said('And then I um um look at the timeline.', 8.0)
+        result = plan_words(words, 'And then I look at the timeline.')
+        self.assertEqual(removed_texts(result), ['And then I um um look at the timeline.'])
+        flag, = flags(result, 'possible-restart')
+        self.assertEqual(flag['start'], 1.0)
+        # In a run of failed tries before the take that stays, a short start still goes with the run.
+        words = said('And then I look at the.', 1.0) + [['And', 4.0, 4.2], ['then', 4.24, 4.4], ['I—', 4.44, 4.6]] \
+            + said('And then I look at the timeline.', 7.0)
+        result = plan_words(words, 'And then I look at the timeline.')
+        self.assertEqual(removed_texts(result), ['And then I look at the. And then I—'])
+
     def test_two_lines_that_only_open_alike_are_both_kept(self):
         words = [['This', 1.0, 1.2], ['is', 1.24, 1.4], ['the', 1.44, 1.6], ['tool.', 1.64, 2.0],
                  ['This', 2.6, 2.8], ['is', 2.84, 3.0], ['the', 3.04, 3.2], ['price.', 3.24, 3.6]]
@@ -853,6 +868,25 @@ class OneScriptLineTests(unittest.TestCase):
         remove(cutter, 0, 4)
         cutter.keep_script_lines()
         self.assertEqual(cutter.keep, [False] * 5 + [True] * 2)
+
+    def test_script_sentences_end_before_a_closing_quote_or_bold_mark_and_at_a_new_paragraph(self):
+        # Fifth whole-file look, 2026-11-16: '"The tool is fast." Next comes the demo.' was read as one line, so
+        # the script's own repeat of the first sentence was not seen.
+        lines = cut_takes.script_sentences
+        self.assertEqual(lines('"The tool is fast." Next comes the demo. "The tool is fast."'),
+                         [['the', 'tool', 'is', 'fast'], ['next', 'comes', 'the', 'demo'], ['the', 'tool', 'is', 'fast']])
+        self.assertEqual(lines('**The tool is fast.** Next up: _the demo!_ (It works.) Done?'),
+                         [['the', 'tool', 'is', 'fast'], ['next', 'up', 'the', 'demo'], ['it', 'works'], ['done']])
+        # A heading, a blank line or a list item ends a sentence that has no full stop.
+        self.assertEqual(lines('# Intro\nThe tool is fast\n\nNext comes\nthe demo\n## Part two\n- First point\n- Second point\n1. Third point'),
+                         [['the', 'tool', 'is', 'fast'], ['next', 'comes', 'the', 'demo'], ['first', 'point'],
+                          ['second', 'point'], ['third', 'point']])
+        self.assertEqual(lines('See [the notes] here. Version 2.5 is out.'), [['see', 'here'], ['version', '25', 'is', 'out']])
+        script = '"The tool is fast." Next comes the demo. "The tool is fast."'
+        words = said('The tool is fast.', 1.0) + said('Next comes this demo.', 4.0) + said('The tool is fast.', 7.0)
+        result = plan_words(words, script)
+        self.assertEqual(removed_texts(result), [])
+        self.assertEqual(kept_starts(result, cut_timeline.load_words(words)), {word[1] for word in words})
 
     def test_a_script_line_said_word_for_word_is_never_lost(self):
         # The last check, whatever made the removal: here each sentence fits the other script line just as well
