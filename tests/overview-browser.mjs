@@ -95,8 +95,10 @@ try{
   check(!strip.missed.length,`scenes that cannot be reached or read in the strip: ${strip.missed.join(', ')}`);
   // A long video: 120 scenes squeeze every segment to its smallest width, and a three-digit number is wider than
   // the 18 px that holds two digits (second look SL-3, 2026-11-16). Scenes 1 to 99 keep those 18 px.
-  const long=await reach(await open(true,{first:build(0,120)}));
+  const longPage=await open(true,{first:build(0,120)}),long=await reach(longPage);
   assert.equal(long.count,120);
+  size=await fits(longPage);
+  check(size.page<=size.screen,`with 120 scenes the page is ${size.page} px wide on a ${size.screen} px screen`);
   check(!long.missed.length,`of 120 scenes, those that cannot be reached or read in the strip: ${long.missed.join(', ')}`);
   check(long.widths.length===1&&long.widths[0]===18,`of 120 scenes, the first 99 are not all 18 px wide in the strip: ${long.widths.join(', ')} px`);
 
