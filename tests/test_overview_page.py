@@ -388,6 +388,15 @@ class ScriptText(unittest.TestCase):
         cue = '### 1 · A\nLook here [point at the screen] and there.\n'
         self.assertEqual(overview_page.scene_texts(cue), {'01-a': 'Look here and there.'})
 
+    def test_a_direction_with_a_link_inside_it_is_left_out_whole(self):
+        # Review round 1: the link was read from the direction's own bracket, so its first words were shown.
+        cue = '### 1 · A\nOne.\n[Show [the page](https://example.com) and zoom in]\nTwo.\n'
+        self.assertEqual(overview_page.scene_texts(cue), {'01-a': 'One. Two.'})
+
+    def test_a_link_alone_on_a_list_item_is_left_out_as_the_cutter_does(self):
+        cue = '### 1 · A\nOne.\n- [The survey](https://example.com/survey)\nTwo.\n'
+        self.assertEqual(overview_page.scene_texts(cue), {'01-a': 'One. Two.'})
+
     def test_a_line_that_opens_a_bracket_it_never_closes_stays_out(self):
         cue = '### 1 · A\n[Face full\nOne.\n'
         self.assertEqual(overview_page.scene_texts(cue), {'01-a': 'One.'})
