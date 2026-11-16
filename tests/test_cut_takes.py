@@ -690,6 +690,104 @@ class EdgeCaseTests(unittest.TestCase):
         self.assertEqual(kept_starts(result) & {round(w.start, 3) for w in words_between(92.78, 98.42)}, set())
 
 
+def take(at):
+    """One take of "This is the tool." that starts at this source second."""
+    return [['This', at, at + 0.2], ['is', at + 0.24, at + 0.4], ['the', at + 0.44, at + 0.6],
+            ['tool.', at + 0.64, at + 1.0]]
+
+
+def runs_of(result):
+    return [(run.source_start, run.source_end) for run in cut_timeline.load_cutlist(result['cutlist']).runs]
+
+
+class SilentDemoTests(unittest.TestCase):
+    """A marked screen demo with no speech in it is still picture Lex marked: no cut, opening or ending drops it."""
+
+    def assert_demo_kept(self, result, start, end, slack=0.0):
+        self.assertTrue(any(first <= start + slack + 1e-9 and last >= end - slack - 1e-9
+                            for first, last in runs_of(result)),
+                        f'the demo {start}-{end} is not whole in the kept ranges {runs_of(result)}')
+
+    def test_a_silent_demo_between_two_takes_of_a_line_stays(self):
+        # The fault of 2026-11-16: the earlier take went, and the opening trim took the silent demo with it.
+        words = take(1.0) + take(10.0)
+        result = plan_words(words, demos=[(5.0, 8.0)])
+        self.assertEqual(removed_texts(result), ['This is the tool.'])
+        self.assert_demo_kept(result, 5.0, 8.0)
+        kept = kept_starts(result, cut_timeline.load_words(words))
+        self.assertIn(10.0, kept)
+        self.assertNotIn(1.0, kept)
+        # The silence between the demo and the take kept beside it stays, as it does where nothing is removed.
+        self.assertEqual(len(result['cutlist']['segments']), 1)
+        self.assertEqual(result['cutlist']['segments'][0]['sourceInFrame'], 150)
+        self.assertEqual(result['paperEdit']['flags'], [])
+
+    def test_a_silent_demo_between_two_removed_takes_is_a_piece_of_its_own(self):
+        words = take(1.0) + take(6.0) + take(12.0)
+        result = plan_words(words, demos=[(3.0, 5.0)])
+        self.assert_demo_kept(result, 3.0, 5.0)
+        self.assertEqual(kept_starts(result, cut_timeline.load_words(words)), {12.0, 12.24, 12.44, 12.64})
+        segments = result['cutlist']['segments']
+        self.assertEqual([(item['sourceInFrame'], item['sourceOutFrame']) for item in segments[:1]], [(90, 150)])
+        # The two failed tries are two removals: the demo between them is not part of what went.
+        self.assertEqual([(item['start'], item['end']) for item in result['paperEdit']['removed']],
+                         [(1.0, 2.0), (6.0, 7.0)])
+        join, = result['paperEdit']['joins']
+        self.assertEqual((join['why'], join['lastWord'], join['firstWord']), ('demo', None, 'This'))
+        self.assertEqual((join['sourceOutFrame'], join['sourceInFrame']),
+                         (segments[0]['sourceOutFrame'], segments[1]['sourceInFrame']))
+        self.assertIn('marked screen demo', cut_takes.render_paper_edit(result['paperEdit']))
+
+    def test_a_demo_that_runs_on_after_kept_speech_into_a_removal_stays_whole(self):
+        words = [['Here', 1.0, 1.2], ['is', 1.24, 1.4], ['the', 1.44, 1.6], ['screen.', 1.64, 2.0]] \
+            + take(7.0) + take(12.0)
+        result = plan_words(words, demos=[(1.5, 6.0)])
+        self.assertEqual(removed_texts(result), ['This is the tool.'])
+        self.assert_demo_kept(result, 1.5, 6.0)
+        kept = kept_starts(result, cut_timeline.load_words(words))
+        self.assertTrue({1.0, 12.0} <= kept)
+        self.assertNotIn(7.0, kept)
+        self.assertEqual(result['cutlist']['segments'][0]['sourceOutFrame'], 180)
+
+    def test_a_silent_demo_before_the_first_word_is_not_trimmed_off_the_opening(self):
+        result = plan_words(take(5.0), demos=[(0.5, 3.0)])
+        self.assert_demo_kept(result, 0.5, 3.0)
+        self.assertEqual(result['cutlist']['segments'][0]['sourceInFrame'], 15)
+        self.assertEqual(result['paperEdit']['opening'], {'leadInMs': 4500, 'demo': True})
+        self.assertIn('opening 4500 ms with the marked screen demo',
+                      cut_takes.render_paper_edit(result['paperEdit']))
+
+    def test_a_silent_demo_after_the_last_word_is_not_trimmed_off_the_ending(self):
+        result = plan_words(take(1.0), demos=[(3.0, 6.0)])
+        self.assert_demo_kept(result, 3.0, 6.0)
+        self.assertEqual(result['cutlist']['segments'][-1]['sourceOutFrame'], 180)
+        self.assertEqual(result['paperEdit']['ending'], {'tailMs': 4000, 'demo': True})
+        # The transcript ends at the last word, so the cutter cannot see whether the recording holds the demo.
+        flag, = result['paperEdit']['flags']
+        self.assertEqual((flag['code'], flag['start'], flag['end']), ('demo-past-last-word', 2.0, 6.0))
+        self.assertIn('check the recording is that long', flag['message'])
+
+    def test_a_demo_edge_never_puts_a_cut_inside_a_removed_word(self):
+        # At 29.97 fps second 2.0 is not on a frame: the frame before it lies inside the removed "tool.".
+        words = take(1.0) + take(10.0)
+        result = plan_words(words, demos=[(2.0, 4.0)], fps=29.97)
+        self.assertEqual(removed_texts(result), ['This is the tool.'])
+        self.assert_demo_kept(result, 2.0, 4.0, slack=1 / 29.97)
+        loaded = cut_timeline.load_words(words)
+        for first, last in runs_of(result):
+            for edge in (first, last):
+                self.assertEqual([word.text for word in loaded if word.start + TOLERANCE < edge < word.end - TOLERANCE],
+                                 [], f'cut at {edge:.3f} s')
+
+    def test_the_join_check_reads_a_cut_with_a_demo_piece_and_finds_no_problems(self):
+        words = take(1.0) + take(6.0) + take(12.0)
+        result = plan_words(words, demos=[(3.0, 5.0)])
+        report = join_check.check_joins(cut_timeline.load_words(words), cut_timeline.load_cutlist(result['cutlist']))
+        found = [flag for entry in report['joins'] + [report['opening'], report['ending']] for flag in entry['flags']]
+        self.assertEqual([flag for flag in found if flag['severity'] == 'problem'], [])
+        self.assertIn('no-words-beside-join', [flag['code'] for flag in found])
+
+
 class FarApartTests(unittest.TestCase):
     def test_a_retake_far_from_its_first_take_is_matched_by_the_script(self):
         script = 'The review page saves every comment. Other things happen. The end.'
