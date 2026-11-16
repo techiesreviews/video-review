@@ -14,7 +14,8 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   const body=$('#transcriptText');
   let backendRef=null,videoRef=null,barTarget=null,dragPoint=null,scrollFrame=null;
   let pauseNodes=[],currentNode=null,auditionRange=null,pauseThreshold=450;
-  // A note typed on a selection a reload could not bring back: the next selection on the same video gets it.
+  // A note typed on a selection a reload could not bring back: the next selection on the same video gets it. A later
+  // refusal with no note typed keeps it.
   let carriedNote='';
   // What is selected and what an edit does live in transcript-editing.js; this file draws it and passes clicks in.
   const editing=createTranscriptEditing({saveTranscript:(v,data,options)=>backendRef.saveTranscript(v,data,options),request,updateRequest,cancelRequest,onError:error=>showError(error.message)});
@@ -43,7 +44,8 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   function placeSoon(){if(placeFrame==null)placeFrame=requestAnimationFrame(()=>{placeFrame=null;placeBar();});}
   body.addEventListener('scroll',placeSoon,{passive:true});addEventListener('resize',placeSoon);window.visualViewport?.addEventListener('resize',placeSoon);window.visualViewport?.addEventListener('scroll',placeSoon);
   new ResizeObserver(placeSoon).observe(bar);
-  function showBar(target=null){barTarget=target;bar.hidden=false;notice();if(carriedNote){noteBox.value=carriedNote;carriedNote='';ghostState();}primaryState();placeBar();}
+  // A word under "Removed in Resolve" has no note box, so a waiting note stays for the next selection that has one.
+  function showBar(target=null){barTarget=target;bar.hidden=false;notice();if(carriedNote&&editing.selection?.kind!=='source'){noteBox.value=carriedNote;carriedNote='';ghostState();}primaryState();placeBar();}
   // A short line on the panel for a refused edit with no selection to show it on; empty, it takes no room but stays in
   // the page, so screen readers announce it.
   function notice(text=''){$('#transcriptNotice').textContent=text;}
@@ -216,7 +218,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     const active=document.activeElement,focus=!active||active===document.body||bar.contains(active)||body.contains(active);
     show(transcript,v);body.scrollTop=scroll;
     if(transcript&&chosen&&reselect(chosen,{focus})){keepDraft(draft);barStatus(REFUSED_TEXT);}
-    else{carriedNote=draft;notice(transcript?REFUSED_TEXT:REMOVED_TEXT);}
+    else{carriedNote=draft||carriedNote;notice(transcript?REFUSED_TEXT:REMOVED_TEXT);}
   }
   /** Selects the same thing on the newer words: words by id (else at their time), the same pause, the same join, and a
    *  span set with the waveform handles exactly. False when it is gone, or is not something an edit is made on. */

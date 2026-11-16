@@ -188,7 +188,7 @@ try{
 
     // A refused Delete whose transcript was removed elsewhere meanwhile says so on the panel, not "try again".
     await word(1).click();await page.locator('.bar-delete').click();
-    await page.waitForFunction(()=>!document.querySelector('#cutPreviewBar').hidden);
+    await page.waitForFunction(()=>document.querySelectorAll('.transcript-word')[1].classList.contains('removed-word'));
     await replace('W15','fifteen-new');
     await page.route('**/api/transcript/words',route=>route.request().method()==='GET'?route.fulfill({status:200,contentType:'application/json',body:'null'}):route.continue());
     await word(9).click();await page.locator('#transcriptNote').fill('keep me');await page.locator('.bar-delete').click();
