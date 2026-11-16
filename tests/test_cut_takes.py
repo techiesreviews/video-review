@@ -657,6 +657,68 @@ class RestartTests(unittest.TestCase):
         self.assertEqual(removed_texts(plan_words(words, script)), [])
 
 
+def said(text, at, pause=0.0):
+    """Made-up word times for a sentence that starts at this second; pause: silence added before it."""
+    words, at = [], at + pause
+    for word in text.split():
+        words.append([word, round(at, 2), round(at + 0.26, 2)])
+        at += 0.3
+    return words
+
+
+class OneScriptLineTests(unittest.TestCase):
+    """The script may join two sentences into one line, or say a line twice: neither makes them takes of each other
+    (second look on release #35, 2026-11-16)."""
+    SCRIPT = 'My intro. The camera is easy to use and the battery lasts all day. The end.'
+
+    def test_two_sentences_the_script_joins_into_one_line_are_both_kept(self):
+        words = said('The camera is easy to use.', 1.0) + said('The battery lasts all day.', 3.2)
+        result = plan_words(words, self.SCRIPT)
+        self.assertEqual(removed_texts(result), [])
+        self.assertEqual(result['paperEdit']['flags'], [])
+        self.assertEqual(kept_starts(result, cut_timeline.load_words(words)), {word[1] for word in words})
+
+    def test_two_parts_of_one_line_that_open_alike_are_both_kept_however_long_the_pause(self):
+        script = 'The camera is easy to use and the camera is cheap.'
+        for pause in (0.4, 2.0):
+            words = said('The camera is easy to use.', 1.0) + said('The camera is cheap.', 2.8, pause)
+            self.assertEqual(removed_texts(plan_words(words, script)), [], pause)
+
+    def test_a_whole_take_of_the_line_still_replaces_its_two_parts(self):
+        words = said('The camera is easy to use.', 1.0) + said('The battery lasts all day.', 3.2) \
+            + said('The camera is easy to use and the battery lasts all day.', 6.0)
+        result = plan_words(words, self.SCRIPT)
+        self.assertEqual(removed_texts(result), ['The camera is easy to use. The battery lasts all day.'])
+        self.assertEqual(result['paperEdit']['removed'][0]['keeps'], 6.0)
+
+    def test_a_second_take_of_one_part_replaces_only_that_part(self):
+        words = said('The camera is easy to use.', 1.0) + said('The camera is easy to use.', 3.2) \
+            + said('The battery lasts all day.', 5.4)
+        result = plan_words(words, self.SCRIPT)
+        self.assertEqual([(item['start'], item['text']) for item in result['paperEdit']['removed']],
+                         [(1.0, 'The camera is easy to use.')])
+
+    def test_a_take_that_changes_the_end_of_the_line_is_still_a_take(self):
+        script = 'The review page saves every comment.'
+        words = said('The review page keeps all comments.', 1.0) + said('The review page saves every comment.', 4.0)
+        self.assertEqual(removed_texts(plan_words(words, script)), ['The review page keeps all comments.'])
+
+    def test_a_line_the_script_says_twice_keeps_both_when_the_transcript_misses_the_full_stop(self):
+        script = 'Thanks for watching this week. Thanks for watching this week.'
+        words = said('Thanks for watching this week', 1.0) + said('Thanks for watching this week.', 3.5)
+        result = plan_words(words, script)
+        self.assertEqual(removed_texts(result), [])
+        # The transcript cannot say whether the first reading is the script's own repeat or a failed try: Lex is told.
+        flag, = result['paperEdit']['flags']
+        self.assertEqual((flag['code'], flag['start']), ('possible-restart', 1.0))
+        self.assertIn('script says this line more than once', flag['message'])
+
+    def test_a_line_said_once_in_the_script_still_loses_its_dropped_start(self):
+        script = 'Thanks for watching this week.'
+        words = said('Thanks for watching this week', 1.0) + said('Thanks for watching this week.', 3.5)
+        self.assertEqual(removed_texts(plan_words(words, script)), ['Thanks for watching this week'])
+
+
 class EdgeCaseTests(unittest.TestCase):
     def test_too_little_silence_is_flagged_and_no_word_is_cut(self):
         # The failed attempt starts 40 ms after "words.", so 100 ms of room cannot fit there.

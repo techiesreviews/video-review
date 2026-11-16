@@ -286,6 +286,10 @@ class NarrowScreens(unittest.TestCase):
     def test_a_long_unbroken_title_wraps_in_the_player_instead_of_widening_the_page(self):
         self.assertEqual(css(render(), '.player .t').get('overflow-wrap'), 'anywhere')
 
+    def test_a_long_server_error_wraps_in_the_stars_line_instead_of_widening_the_page(self):
+        # A scene-file error names the whole folder path, which has no spaces to break at.
+        self.assertEqual(css(render(), '.off').get('overflow-wrap'), 'anywhere')
+
     def test_a_star_has_a_44_px_target_on_touch_and_keeps_its_look(self):
         page = render()
         star = css(page, '.st')
@@ -337,7 +341,16 @@ class StarsOffline(unittest.TestCase):
 
     def test_the_line_waits_for_the_server_answer_instead_of_flashing_on_every_load(self):
         page = render(server='http://127.0.0.1:8879', video='weekly-1234')
-        self.assertIn('<p class="off" id="stars-off" hidden>', page)
+        line = re.search(r'<p class="off" id="stars-off"[^>]*>(.*?)</p>', page)
+        self.assertEqual(line.group(1), '', 'the line is empty until the server answered or did not')
+
+    def test_the_line_is_read_out_by_a_screen_reader_when_it_changes(self):
+        # A live region only speaks when it is on the page before its text changes: never hidden, empty instead.
+        page = render(server='http://127.0.0.1:8879', video='weekly-1234')
+        line = re.search(r'<p class="off" id="stars-off"[^>]*>', page).group(0)
+        self.assertIn(' role="status"', line)
+        self.assertNotIn('hidden', line)
+        self.assertNotIn('display', css(page, '.off'))
 
     def test_the_page_knows_where_to_ask(self):
         page = render(server='http://127.0.0.1:8879', video='weekly-1234')
@@ -707,7 +720,7 @@ class CommandLine(unittest.TestCase):
         # A page that is out of date gets a 403 with a reason; the page must show that, not "start video-review".
         script = overview_page.PAGE_SCRIPT
         self.assertIn("r.json().then(j => Promise.reject(j.error)", script)
-        self.assertIn("off.textContent = typeof said === 'string' && said ? said : offText; setStars(false);", script)
+        self.assertIn("setStars(false); say(typeof said === 'string' && said ? said : offText);", script)
         self.assertIn("'&code=' + encodeURIComponent(code)", script)
         self.assertIn('JSON.stringify({ video, code,', script)
 
@@ -814,14 +827,14 @@ class CommandLine(unittest.TestCase):
 class SavedPageScript(unittest.TestCase):
     """The saved page's own script, run in Node with a fake page (skipped without Node)."""
     def run_page_script(self, answer, click=False):
-        """Run the saved page's script in Node with a fake page and a fake fetch; return what the stars line says and
-        whether the stars are on. answer: what fetch does ('network', or [status, body text])."""
+        """Run the saved page's script in Node with a fake page and a fake fetch; return what the stars line (the
+        page's live region, empty when there is nothing to say) says and whether the stars are on. answer: what fetch does ('network', or [status, body text])."""
         node = shutil.which('node')
         if not node:
             self.skipTest('node is not installed')
         harness = textwrap.dedent('''
             const answer = JSON.parse(process.argv[1]);
-            const off = { textContent: process.argv[2], hidden: true };
+            const off = { textContent: '', dataset: { text: process.argv[2] } };
             const star = { disabled: true };
             globalThis.document = {
               body: { dataset: { server: 'http://127.0.0.1:8879', video: 'v-1', code: 'the-code' } },
@@ -846,7 +859,7 @@ class SavedPageScript(unittest.TestCase):
             ''') + overview_page.PAGE_SCRIPT.split('<script>')[1].split('</script>')[0] + textwrap.dedent('''
             Object.assign(star, { dataset: { scene: '01-intro', take: '2', starred: 'false' } });
             if (click) setTimeout(() => globalThis.onClick({ target: { closest: s => s === '.st' ? star : null } }), 20);
-            setTimeout(() => console.log(JSON.stringify({ said: off.textContent, hidden: off.hidden, on: !star.disabled, asked, sent })), 80);
+            setTimeout(() => console.log(JSON.stringify({ said: off.textContent, on: !star.disabled, asked, sent })), 80);
             ''')
         done = subprocess.run([node, '-e', harness, json.dumps(answer), overview_page.STARS_OFF_TEXT,
                                'click' if click else 'load'],
@@ -859,26 +872,24 @@ class SavedPageScript(unittest.TestCase):
         self.assertEqual(seen['sent'], {'video': 'v-1', 'code': 'the-code', 'scene': '01-intro', 'take': 2})
         self.assertEqual(seen['said'], 'reloaded')
         seen = self.run_page_script([403, json.dumps({'error': overview_page.STALE_PAGE_TEXT})], click=True)
-        self.assertEqual((seen['said'], seen['hidden'], seen['on']), (overview_page.STALE_PAGE_TEXT, False, True))
+        self.assertEqual((seen['said'], seen['on']), (overview_page.STALE_PAGE_TEXT, True))
         seen = self.run_page_script('network', click=True)
         self.assertEqual((seen['said'], seen['on']), (overview_page.STARS_OFF_TEXT, False))
 
     def test_a_failed_star_click_with_an_odd_answer_shows_the_usual_line_and_keeps_the_stars(self):
         for answer in ([500, json.dumps({'error': {'x': 1}})], [500, '{"error": 7}'], [500, 'null'], [500, 'not json']):
             seen = self.run_page_script(answer, click=True)
-            self.assertEqual((seen['said'], seen['hidden'], seen['on']), (overview_page.STARS_OFF_TEXT, False, True),
-                             answer)
+            self.assertEqual((seen['said'], seen['on']), (overview_page.STARS_OFF_TEXT, True), answer)
 
     def test_the_saved_page_shows_the_server_s_reason_or_the_usual_line(self):
         seen = self.run_page_script([200, '{"scenes": []}'])
-        self.assertEqual((seen['on'], seen['hidden']), (True, True))
+        self.assertEqual((seen['on'], seen['said']), (True, ''))
         self.assertTrue(seen['asked'].endswith('/api/scenes?video=v-1&code=the-code'), seen['asked'])
         seen = self.run_page_script([403, json.dumps({'error': overview_page.STALE_PAGE_TEXT})])
-        self.assertEqual((seen['on'], seen['hidden'], seen['said']), (False, False, overview_page.STALE_PAGE_TEXT))
+        self.assertEqual((seen['on'], seen['said']), (False, overview_page.STALE_PAGE_TEXT))
         for answer in ('network', [403, 'not json'], [500, 'null'], [500, '{"error": 7}']):
             seen = self.run_page_script(answer)
-            self.assertEqual((seen['on'], seen['hidden'], seen['said']), (False, False, overview_page.STARS_OFF_TEXT),
-                             answer)
+            self.assertEqual((seen['on'], seen['said']), (False, overview_page.STARS_OFF_TEXT), answer)
 
 
 if __name__ == '__main__':
