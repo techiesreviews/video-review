@@ -177,8 +177,11 @@ def start_background_jobs():
     """Pages saved before page codes get theirs, and pages saved while the server had another port get this one, in
     the background so the server answers at once. Returns the thread."""
     def job():
-        try:overview_page.give_old_pages_a_code(DATA);overview_page.point_saved_pages_at_the_server(DATA)
-        except (ValueError,OSError) as error:print(f'Saved overview pages were not brought up to date yet ({error}); the next take does it.',file=sys.stderr,flush=True)
+        # Each job on its own: the port job needs no lock, so it still runs when the registry is busy for the code job.
+        try:overview_page.give_old_pages_a_code(DATA)
+        except (ValueError,OSError) as error:print(f'Saved overview pages were not given their codes yet ({error}); the next take does it.',file=sys.stderr,flush=True)
+        try:overview_page.point_saved_pages_at_the_server(DATA,f'http://127.0.0.1:{PORT}')
+        except (ValueError,OSError) as error:print(f'Saved overview pages were not pointed at this port yet ({error}); the next start does it.',file=sys.stderr,flush=True)
     thread=threading.Thread(target=job,daemon=True);thread.start()
     return thread
 

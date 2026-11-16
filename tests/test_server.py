@@ -372,6 +372,19 @@ class ReviewServerTests:
         finally:
             overview_page.remember_port(self.data,self.httpd.server_port);self.reset_scenes()
 
+    def test_the_port_job_still_runs_when_the_page_code_job_fails(self):
+        page=self.raw/overview_page.FILE_NAME
+        try:
+            overview_page.remember_port(self.data,self.httpd.server_port+1)
+            overview_page.publish(self.raw,data_dir=self.data)
+            # Another copy of the app wrote its port after this server started: the pages still follow this server.
+            with mock.patch.object(server.overview_page,'give_old_pages_a_code',side_effect=OSError('busy')):
+                with mock.patch('sys.stderr') as stderr:server.start_background_jobs().join(30)
+            assert 'next take' in ''.join(str(call.args[0]) for call in stderr.write.call_args_list)
+            assert f'<body data-server="{self.origin}"' in page.read_text(encoding='utf-8'),'the saved page still asks the old port'
+        finally:
+            overview_page.remember_port(self.data,self.httpd.server_port);self.reset_scenes()
+
     def test_from_the_origin_null_an_unknown_video_looks_like_a_wrong_code(self):
         # Otherwise a website could test guessed folder names: a readable 404 would mean "no such video".
         for video in (self.key,'nope-12345678'):

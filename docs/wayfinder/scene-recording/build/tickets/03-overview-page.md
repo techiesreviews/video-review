@@ -119,7 +119,9 @@ Rules as built (for ticket 04 and the Prompter slice):
   Without ffmpeg, or when ffmpeg cannot read a take, that take shows a plain placeholder and the page still builds.
 - "+ Record" is disabled and says "Coming with the Prompter". The page's server address is `127.0.0.1` and the port
   in `server-port.json`, else `VIDEO_REVIEW_PORT`, else 8879, when the file is written; the server writes its own
-  port when it rewrites the page after a star. When a star click is answered with an error, the page shows what the
+  port when it rewrites the page after a star. A server that starts on another port (the launcher takes the next
+  free one from 8880 to 8899 when 8879 is in use) writes again every saved page that asks another address
+  (`point_saved_pages_at_the_server`), so pages saved earlier keep their stars. When a star click is answered with an error, the page shows what the
   server said in the line above the strip and keeps the stars usable; only a server that does not answer greys them. The strip's total shows a `+` when a best take has no known length.
 - Only the page's wording is new; colours and layout follow the Borumi-style mock-up. A browser that cannot play
   `.mkv` (Firefox) shows "This browser cannot play this file." under the player.
