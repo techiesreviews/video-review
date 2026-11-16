@@ -127,7 +127,7 @@ def script_sentences(text):
     bracket or bold mark), and at a heading, a blank line or a list item, so a line without a full stop does not
     run into the next one. Headings and [directions] are left out."""
     blocks = [[]]
-    for line in text.splitlines():
+    for line in re.sub(r'\[[^\]]*\]', ' ', text).splitlines():
         heading, item = line.lstrip().startswith('#'), LIST_ITEM.match(line)
         if not line.strip() or heading or item:
             blocks.append([])
@@ -135,7 +135,7 @@ def script_sentences(text):
             blocks[-1].append(LIST_ITEM.sub('', line))
     sentences = []
     for block in blocks:
-        for sentence in SCRIPT_STOP.split(re.sub(r'\[[^\]]*\]', ' ', ' '.join(block))):
+        for sentence in SCRIPT_STOP.split(' '.join(block)):
             words = [norm(word) for word in sentence.split() if norm(word)]
             if words:
                 sentences.append(words)
@@ -603,15 +603,8 @@ class Cutter:
                               f'({self.words[last[0]].start:.2f}-{self.words[last[-1]].end:.2f}) '
                               f'{" and ".join(reasons)}. Say if you prefer the last take.')
                     chosen = best
-        keeps = takes[chosen][0]
-        start, rest = self.false_start(takes[chosen], takes, line)
-        if start and chosen == 0 and len(start) < SETTINGS['shortStartWords']:
-            # A short start with no failed try before it is only listed, here as everywhere ("And then I—").
-            if not any(item['code'] == 'possible-restart' and item['start'] <= self.words[start[-1]].end
-                       and item['end'] >= self.words[start[0]].start for item in self.flags):
-                self.ask_restart(start, rest[min(1, len(rest) - 1)])
-        elif start and self.drop(start, 'abandoned-start', rest[0]):
-            keeps = rest[0]
+        start, keeps = self.false_start(takes[chosen], takes, line)
+        keeps = keeps[0]
         # Takes are grouped pair by pair, so one that overlaps two parts of a script line brings both into its
         # group: drop() leaves in a take that says more than the take that stays.
         for number, take in enumerate(takes):
@@ -621,6 +614,16 @@ class Cutter:
             if number > chosen and not self.complete(take, line):
                 reason = 'abandoned-start'
             self.drop(take, reason, keeps)
+        if not start:
+            return
+        # A short start is only listed, here as everywhere ("And then I—"), unless it is the tail of a run of
+        # failed tries: the word before it was removed, so it goes as one passage with that removal.
+        in_run = start[0] > 0 and not self.keep[start[0] - 1]
+        if len(start) >= SETTINGS['shortStartWords'] or in_run:
+            self.drop(start, 'abandoned-start', keeps)
+        elif not any(item['code'] == 'possible-restart' and item['start'] <= self.words[start[-1]].end
+                     and item['end'] >= self.words[start[0]].start for item in self.flags):
+            self.ask_restart(start, keeps + min(1, len(takes[chosen]) - len(start) - 1))
 
     def false_start(self, take, takes, line):
         """Split a kept take at a long pause when what follows is itself a complete take that opens like another take
@@ -766,11 +769,20 @@ class Cutter:
                 asks.append((attempt, take[0]))
             else:
                 self.drop(attempt, 'abandoned-start', take[0])
-        # A restart flagged earlier, or a take left in, whose words are now removed is no longer a question for Lex.
+        # A restart flagged earlier whose words are now removed is no longer a question for Lex. A take left in
+        # that is now removed in part is still listed for the words that stay.
         removed = [self.words[index].start for index, kept in enumerate(self.keep) if not kept]
-        asked = ('possible-restart', 'possible-retake-cue', 'take-says-more')
-        self.flags = [item for item in self.flags if item['code'] not in asked
-                      or not any(item['start'] - TOLERANCE <= at <= item['end'] for at in removed)]
+        asked, flags = ('possible-restart', 'possible-retake-cue'), []
+        for item in self.flags:
+            inside = [at for at in removed if item['start'] - TOLERANCE <= at <= item['end']]
+            if item['code'] == 'take-says-more' and inside:
+                left = [index for index, word in enumerate(self.words)
+                        if self.keep[index] and item['start'] - TOLERANCE <= word.start <= item['end']]
+                if left:
+                    flags.append({**item, 'start': round(self.words[left[0]].start, 3), 'text': self.text(left)})
+            elif item['code'] not in asked or not inside:
+                flags.append(item)
+        self.flags = flags
         for attempt, take in asks:
             if not all(self.keep[index] for index in attempt):
                 continue  # A later step removed part of it already.
@@ -1167,9 +1179,12 @@ def plan(words, fps, script_text=None, demos=(), name='Take cut proposal', sourc
         first, last = words[item['first']], words[item['last']]
         reason = next(iter(item['reasons'])) if len(item['reasons']) == 1 else 'retake-run'
         gaps = [words[index + 1].start - words[index].end for index in range(item['first'], item['last'])]
-        # The cut also takes the silence between the passage and the words on either side of it.
-        beside = [words[index + 1].start - words[index].end for index in (item['first'] - 1, item['last'])
-                  if 0 <= index < len(words) - 1]
+        # The cut also takes the silence between the passage and the words on either side of it, except what a
+        # marked demo keeps of it.
+        beside = [words[index + 1].start - words[index].end
+                  - sum(max(0.0, min(end, words[index + 1].start) - max(start, words[index].end))
+                        for start, end in cutter.demos)
+                  for index in (item['first'] - 1, item['last']) if 0 <= index < len(words) - 1]
         removed.append({'start': round(first.start, 3), 'end': round(last.end, 3),
                         'seconds': round(last.end - first.start, 2), 'reason': reason, 'why': REASONS[reason],
                         'text': cutter.text(range(item['first'], item['last'] + 1)),

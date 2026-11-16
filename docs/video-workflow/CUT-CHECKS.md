@@ -41,8 +41,8 @@ What it does:
   removed. "Again and again", an "again" inside a sentence and an "again" the script itself says ("So, again,
   you see") stay. A sentence begun, dropped and restarted after a pause loses the dropped start; a dropped start
   of fewer than four words ("And then I—", "But I'm—") is only listed, as the Sunday paper edit asks, also in
-  front of a take that stays while a later take of the line is removed; in a run of failed tries it goes with
-  the run.
+  front of a take that stays while another take of the line is removed. It goes only as the tail of a run of
+  failed tries: when the word before it is removed too, so the two go as one passage.
 - **The whole run of failed tries.** From the first failed start to just before the take that stays, as one
   passage, never into that take: a breath of under 1.5 s inside a take does not start a new one. A broken-off
   start ("If you could—") before a long pause goes when, with a script, the rest says the whole line. A finished
@@ -81,7 +81,8 @@ What it does:
     still be said in what stays, as often as the script says it: by those words, or by a kept take that says the
     line through to its last word. If not, the last word-for-word reading goes back in and is listed. Longer
     lines are counted first, so "The tool is fast." inside "The tool is fast and easy to use." is not counted
-    twice; a line of one or two words ("Thanks again.") counts only as a sentence of its own. `tests/test_cut_takes.py` runs this rule over 600 made-up recordings.
+    twice; a line of one or two words ("Thanks again.") counts only as a sentence of its own.
+    `tests/test_cut_takes.py` runs this rule over 600 made-up recordings.
 - **Timing (Lex, 2026-11-10 and 2026-11-11).** 100-150 ms of room before and after speech at every cut, the start
   of the clip too; a whole silence of 200-300 ms between linked phrases (it aims for 250) and 350-500 ms before a
   new thought (it aims for 400); Lex chose these longer pauses (version B) after listening to the cutter's version
@@ -95,7 +96,8 @@ What it does:
   retake cue, and lines not in the script (ad-libs). An ad-lib is a line whose words are not in the script and
   that no take of the same line follows; a failed try is not an ad-lib. A removal that takes out a silence of
   3 s or more says so, whether the silence is inside the removed passage or between it and the words kept beside
-  it (it may be a screen demo). Without `--script`, ad-libs are not checked.
+  it (it may be a screen demo; what a `--demo` range keeps of that silence is not counted). Without `--script`,
+  ad-libs are not checked.
 - **A marked demo with no speech stays too.** A removal beside it, the opening and the ending never take a
   `--demo` range out of the kept ranges, and the silence between the demo and the speech kept beside it stays.
   A demo between two removed takes becomes a piece of its own; its join is listed as "beside the marked screen
