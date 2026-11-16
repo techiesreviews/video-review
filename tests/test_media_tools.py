@@ -240,7 +240,7 @@ class Running(unittest.TestCase):
 
     def test_a_tool_that_is_there_but_cannot_start_is_named_with_its_path(self):
         with mock.patch.object(media_tools.subprocess, 'run', side_effect=OSError(193, 'not a valid application')), \
-                self.assertRaisesRegex(media_tools.ToolMissing, 'ffprobe at /tools/ffprobe could not be started'):
+                self.assertRaisesRegex(media_tools.ToolMissing, r'ffprobe at /tools/ffprobe could not be started \(not a valid application\)'):
             media_tools.run('ffprobe', [], timeout=1)
 
     def test_a_tool_that_runs_too_long_is_stopped_with_a_clear_error(self):
@@ -266,7 +266,6 @@ class Finding(unittest.TestCase):
             with self.assertRaises(media_tools.ToolMissing):
                 media_tools.find('ffmpeg')
             self.assertEqual(media_tools.find('ffmpeg'), '/x/ffmpeg')
-
 
     def test_a_remembered_tool_that_has_gone_is_looked_for_again(self):
         media_tools.forget()
@@ -297,6 +296,12 @@ class CommandLine(unittest.TestCase):
             code, text = self.answer([])
         self.assertEqual(code, 1)
         self.assertIn('winget install Gyan.FFmpeg', text)
+
+    def test_run_from_a_shell_a_missing_tool_exits_with_1(self):
+        done = subprocess.run([sys.executable, str(ROOT / 'media_tools.py'), 'no-such-media-tool'],
+                              capture_output=True, text=True)
+        self.assertEqual(done.returncode, 1)
+        self.assertIn('no-such-media-tool is not installed', done.stdout)
 
     def test_the_launcher_asks_the_module(self):
         launcher = (ROOT / 'start-review.ps1').read_text(encoding='utf-8')

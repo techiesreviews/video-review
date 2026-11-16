@@ -38,7 +38,7 @@ function Test-ReviewTools {
     try {
         $python = Find-ReviewPython
         $answer = & $python.Path @($python.Prefix + @((Join-Path $reviewRoot 'media_tools.py'), 'ffprobe'))
-        if ($LASTEXITCODE -ne 0) {
+        if ($LASTEXITCODE -ne 0 -and $answer) {
             Write-Host "Note: $($answer -join ' ')"
             Write-Host '      The page will open, but adding a video will fail until it is installed.'
         }
