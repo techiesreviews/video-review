@@ -414,6 +414,17 @@ class ScriptText(unittest.TestCase):
         cue = '### 1 · A\n[Face full\nOne.\n'
         self.assertEqual(overview_page.scene_texts(cue), {'01-a': 'One.'})
 
+    def test_a_bracket_that_is_never_closed_hides_no_later_line(self):
+        # Second look on PR #46, round 2: the open bracket ran on to the next direction's closing one.
+        texts = overview_page.scene_texts
+        self.assertEqual(texts('### 1 · A\n[Face full\nOne.\n[Show the camera]\nTwo.\n'), {'01-a': 'One. Two.'})
+        self.assertEqual(texts('### 1 · A\n[Face full\nOne.\nTwo [pause] three.\n'), {'01-a': 'One. Two three.'})
+        self.assertEqual(texts('### 1 · A\nLook here [point at\nthe screen.\n[Face full]\nTwo.\n'),
+                         {'01-a': 'Look here [point at the screen. Two.'})
+
+    def test_a_direction_with_brackets_inside_it_is_left_out_whole(self):
+        self.assertEqual(overview_page.scene_texts('### 1 · A\n[Show the [new] logo]\nOne.\n'), {'01-a': 'One.'})
+
     def test_the_first_of_two_same_headings_wins(self):
         self.assertEqual(overview_page.scene_texts('### 1 · A\nfirst\n### 1 · A\nsecond\n'), {'01-a': 'first'})
 
