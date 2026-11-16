@@ -84,8 +84,9 @@ Rules as built (for ticket 04 and the Prompter slice):
   a page written by the intake or the command uses it (else `VIDEO_REVIEW_PORT`, else 8879).
 - `overview_page.build` makes thumbnails first, then reads the scene file, makes the page and writes it while holding
   the scene file's lock (`scene_store.locked`, the same lock under a public name), so a page never comes from a scene
-  file another program is changing and two rewrites cannot finish in the wrong order. Temporary file names carry a
-  random part (several requests share one process).
+  file another program is changing and two rewrites cannot finish in the wrong order. The pictures that are there are
+  listed under the lock too (`existing_thumbnails`), so a page written last never drops a newer take's picture.
+  Temporary file names carry a random part (several requests share one process).
 - `GET /api/scenes?video=<key>&code=<page code>` returns the saved scene list. `POST /api/scenes/star` takes
   `{"video": key, "code": page code, "scene": id, "take": number-or-null}` (null takes the star off), writes through
   `scene_store.update()`, then rewrites `overview.html`; a star that is saved while the page cannot be rewritten
@@ -130,5 +131,6 @@ Rules as built (for ticket 04 and the Prompter slice):
 
 - Previous findings (P3): R2-1 still open: the commits since the last review did not touch the ticket's front matter or its "Done when 4" line. `docs/wayfinder/scene-recording/build/tickets/03-overview-page.md:4` still says `status: closed`, and line 66 still says "met once `kit pr` lands it on `dev`".
 - Spec (P3): 052f6d1:docs/wayfinder/scene-recording/build/tickets/03-overview-page.md:4 — P3 ticket: this is R2-1, carried over. The front matter says `status: closed`, but "Done when 4" (line 66) says it is only met once `kit pr` lands the change on `dev`. Fix: leave the status open until the change has landed. Or, if the process closes tickets just before `kit pr`, change line 66 to say exactly that.
-- Validation gaps (gap, second look): Add a test that pauses an older rebuild, registers a new take, completes a newer rebuild, then resumes the older one. Check that the final page still shows the new take’s thumbnail.
+- Validation gaps (gap, second look): Add a test that pauses an older rebuild, registers a new take, completes a newer rebuild, then resumes the older one. Check that the final page still shows the new take’s thumbnail. Done:
+  `test_an_older_rewrite_that_finishes_last_keeps_the_newest_takes_picture` in `tests/test_overview_page.py`.
 

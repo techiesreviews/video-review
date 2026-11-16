@@ -417,6 +417,15 @@ class Thumbnails(unittest.TestCase):
         with mock.patch.object(overview_page.subprocess, 'run', side_effect=FileNotFoundError):
             self.assertEqual(overview_page.ensure_thumbnails(self.raw, self.store), set())
 
+    def test_listing_the_frames_that_are_there_makes_none_and_skips_an_empty_one(self):
+        folder = self.raw / 'scenes' / COSTS
+        (folder / 'take-01.jpg').write_bytes(b'')
+        (folder / 'take-02.jpg').write_bytes(b'jpeg')
+        with mock.patch.object(overview_page.subprocess, 'run') as ffmpeg:
+            found = overview_page.existing_thumbnails(self.raw, self.store)
+        self.assertEqual(found, {f'scenes/{COSTS}/take-02.jpg'})
+        ffmpeg.assert_not_called()
+
     def test_an_ffmpeg_that_hangs_is_given_up_on(self):
         with mock.patch.object(overview_page.subprocess, 'run',
                                side_effect=subprocess.TimeoutExpired('ffmpeg', 1)):
@@ -513,8 +522,8 @@ class WritingThePage(unittest.TestCase):
 
         with mock.patch.object(overview_page.subprocess, 'run', side_effect=ffmpeg):
             page = overview_page.build(self.raw).read_text(encoding='utf-8')
-        self.assertTrue(newest in newer_pages[0], "the newer rewrite shows the new take's picture")
-        self.assertTrue(newest in page, "the older rewrite, written last, still shows the new take's picture")
+        self.assertIn(newest, newer_pages[0], "the newer rewrite shows the new take's picture")
+        self.assertIn(newest, page, "the older rewrite, written last, still shows the new take's picture")
 
     def test_the_page_and_thumbnail_temporary_names_differ_between_programs_and_threads(self):
         names = set()
