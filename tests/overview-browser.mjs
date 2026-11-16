@@ -10,7 +10,9 @@ const python=process.env.VIDEO_REVIEW_PYTHON||(process.platform==='win32'?'pytho
 const LONG='IMG_20250914_183022_HDR_portrait_edited_edited.HEIC';
 // A scene-file error names the whole folder, and a folder name has no spaces to break at.
 const ERROR=`No scenes.json in D:\\Recordings\\${'weekly_video_final_export_'.repeat(4)}raw: the scene list is saved when the first take is recorded.`;
-const made=spawnSync(python,['-c',`
+// The page as it is written; star: with Lex's star on this take of the first scene (the page after that star).
+const build=star=>{
+  const made=spawnSync(python,['-c',`
 import sys
 sys.path[:0] = ['.', 'scripts/video']
 import overview_page, scene_store
@@ -19,11 +21,16 @@ store = scene_store.new_store(scenes)
 for scene in scenes:
     scene_store.add_take(store, scene['id'], 1, duration=5.0 + scene['number'] * 3)
 scene_store.add_take(store, '01-scene', 2, duration=20.0)
+if ${star??0}:
+    scene_store.set_star(store, '01-scene', ${star??0})
 scene_store.apply_best(store)
 sys.stdout.reconfigure(encoding='utf-8')
 sys.stdout.write(overview_page.render(store, 'Narrow screen check'))
 `],{encoding:'utf8',windowsHide:true});
-assert.equal(made.status,0,made.stderr);
+  assert.equal(made.status,0,made.stderr);
+  return made;
+};
+const made=build();
 
 const browser=await chromium.launch(process.env.OVERVIEW_BROWSER?{channel:process.env.OVERVIEW_BROWSER}:{});
 try{
@@ -32,12 +39,13 @@ try{
   // The page is served from a made-up address, so its own request for the stars can be answered: stars on.
   // listError, starError: the server answers the take list or a star click with this error instead.
   // later: what the take list answers when it is asked again after the page opened.
-  const open=async(stars,{listError,starError,later}={})=>{
+  // again: the page the address gives when it is loaded a second time (the page written after a star).
+  const open=async(stars,{listError,starError,later,again}={})=>{
     const page=await context.newPage();
-    let lists=0;
+    let lists=0,loads=0;
     await page.route('http://overview.test/**',route=>{
       const path=new URL(route.request().url()).pathname;
-      if(path==='/')return route.fulfill({contentType:'text/html; charset=utf-8',body:made.stdout});
+      if(path==='/')return route.fulfill({contentType:'text/html; charset=utf-8',body:(loads++&&again||made).stdout});
       const error=path==='/api/scenes/star'?starError:listError;
       if(error)return route.fulfill({status:500,contentType:'application/json',body:JSON.stringify({error})});
       if(path==='/api/scenes')lists+=1;
@@ -133,19 +141,32 @@ try{
   await failing.locator('.st:not(:disabled)').first().waitFor();
   check(await failing.locator('.st:disabled').count()===0,'a failed star click leaves stars switched off');
 
-  // A star the server saved although it reports a problem (the rough cut could not follow): the star shows what
-  // is saved, so the same star tapped again takes the star off instead of setting it a second time.
+  // A star the server saved although it reports a problem (the rough cut could not follow): the page loads the
+  // saved state, so the star, the take in front, the strip and the total agree, and it still says what went wrong.
   const SAVED='The star is saved, but the rough cut could not be rebuilt: no cue file.';
-  const saved=await open(true,{starError:SAVED,later:{scenes:[{id:'02-scene',star:1,best:1}]}});
-  const star=saved.locator('.scene').nth(1).locator('.st').first();
-  check(await star.getAttribute('aria-label')==='Keep in rough cut (star it)','the second scene does not start unstarred');
-  await star.tap();
+  const state={scenes:[{id:'01-scene',star:1,best:1}]};
+  const look=where=>where.evaluate(()=>({front:document.querySelector('.scene .row > .take').dataset.take,
+    strip:document.querySelector('.cut div').title,total:document.querySelector('.sub').textContent,
+    said:document.querySelector('[role=status]').textContent,off:document.querySelectorAll('.st:disabled').length}));
+  const saved=await open(true,{starError:SAVED,later:state,again:build(1)});
+  const before=await look(saved);
+  check(before.front==='2'&&before.strip==='Scene 1, take 2','the first scene does not start with take 2 in front');
+  await saved.locator('details').first().evaluate(more=>{more.open=true;});
+  await saved.locator('.scene').first().locator('.st[data-take="1"]').tap();
   await saved.getByRole('status').filter({hasText:SAVED}).waitFor();
-  await saved.locator('.scene').nth(1).locator('.st:not(:disabled)').first().waitFor();
-  check(await star.getAttribute('aria-label')==='Take the star off'&&await star.getAttribute('data-starred')==='true',
-    'a star that was saved with a problem still shows as not starred');
-  const [again]=await Promise.all([saved.waitForRequest(request=>request.url().endsWith('/api/scenes/star')),star.tap()]);
-  check(again.postDataJSON().take===null,'the saved star tapped again sets the star once more instead of taking it off');
+  await saved.locator('.scene').first().locator('.sh + .row > .take[data-take="1"] .st:not(:disabled)').waitFor();
+  const after=await look(saved);
+  check(after.front==='1'&&after.strip==='Scene 1, take 1'&&after.total!==before.total,
+    `after a star that was saved with a problem the page shows take ${after.front} in front, "${after.strip}" and "${after.total}"`);
+  check(after.said===SAVED&&after.off===0,'after loading the saved state the page does not say what went wrong, or its stars are off');
+  // The same when the page could not be written again: loading it again changes nothing, so it says it is out of
+  // date and keeps its stars off rather than show two answers.
+  const stale=await open(true,{starError:SAVED,later:state});
+  await stale.locator('details').first().evaluate(more=>{more.open=true;});
+  await stale.locator('.scene').first().locator('.st[data-take="1"]').tap();
+  await stale.getByRole('status').filter({hasText:'out of date'}).waitFor();
+  const old=await look(stale);
+  check(old.said.startsWith(SAVED)&&old.off===41,`a page that could not be written again says "${old.said}" with ${41-old.off} stars on`);
   assert.deepEqual(faults,[]);
   console.log(`overview page at 320 px: ${strip.count} scenes reachable in the strip, long title and long server error wrap, a failed star click is said in the live region, ${stars.length} stars with a 44 px touch target`);
 }finally{await browser.close();}
