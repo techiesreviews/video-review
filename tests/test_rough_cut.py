@@ -1,5 +1,6 @@
 """Checks for the rough cut list (scripts/video/rough_cut.py). Small invented scene files and cue text only; nothing
 here needs a media tool."""
+import ast
 import contextlib
 import io
 import json
@@ -254,7 +255,7 @@ class AgreesWithTheOverviewStrip(RoughCutCase):
         data = self.saved()
         segments, header = self.strip()
         self.assertEqual(segments, [(item['number'], item['take']) for item in data['scenes']])
-        total = overview_page._clock(data['total_seconds']) + ('' if data['lengths_known'] else '+')
+        total = overview_page._clock(rough_cut.length_total(data['scenes'])) + ('' if data['lengths_known'] else '+')
         self.assertEqual(header, total)
 
     def test_at_the_start(self):
@@ -354,15 +355,24 @@ class WorkedOutOnce(RoughCutCase):
 
     def test_no_other_module_has_its_own_copy_of_the_rules(self):
         # The take in front is chosen by scene_store.choose_best (which also saves it in the scene file); only this
-        # module asks it for the rough cut. The script check of the rough cut is this module's alone.
-        rules = {'choose_best(': {'scene_store.py', 'rough_cut.py'},
-                 'def changed_in_script': {'rough_cut.py'},
-                 "check_script(copy": {'rough_cut.py'}}
-        sources = [path for path in ROOT.rglob('*.py')
-                   if not {'tests', 'node_modules', '.git'} & set(path.relative_to(ROOT).parts)]
-        for rule, allowed in rules.items():
-            found = {path.name for path in sources if rule in path.read_text(encoding='utf-8')}
-            self.assertEqual(found, allowed, rule)
+        # module asks it for the rough cut. The script check of the rough cut (check_script) is this module's alone.
+        allowed = {'choose_best': {'scripts/video/scene_store.py', 'scripts/video/rough_cut.py'},
+                   'check_script': {'scripts/video/scene_store.py', 'scripts/video/rough_cut.py'},
+                   'changed_in_script': {'scripts/video/rough_cut.py'}}
+        skip = {'tests', 'node_modules', '.git', '.scratch', '.venv', 'venv', '__pycache__'}
+        found = {name: set() for name in allowed}
+        for path in ROOT.rglob('*.py'):
+            relative = path.relative_to(ROOT)
+            if skip & set(relative.parts):
+                continue
+            for node in ast.walk(ast.parse(path.read_text(encoding='utf-8'))):
+                # A call or a definition of the rule, by name; a mention in a comment or docstring is no copy.
+                name = (node.name if isinstance(node, ast.FunctionDef) else
+                        node.func.attr if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) else
+                        node.func.id if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) else None)
+                if name in found:
+                    found[name].add(relative.as_posix())
+        self.assertEqual(found, allowed)
 
     def test_the_rough_cut_module_does_not_need_the_page_to_work_out_the_list(self):
         # The page draws the rough cut, so the rough cut must not lean on the page for its rules.
