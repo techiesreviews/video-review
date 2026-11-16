@@ -2,6 +2,7 @@
   "about": "The review-comment rules, in one place. The local app (review_store.py) and the browser and hosted Worker (web/review-core.js) both read this file; tests/fixtures/review-rule-cases.json holds the cases both must answer the same way.",
   "authors": ["you", "ai"],
   "pageAuthor": "you",
+  "agentAuthor": "ai",
   "textEditableBy": ["you"],
   "statuses": ["open", "done"],
   "newStatus": "open",
@@ -24,7 +25,7 @@
   "messages": {
     "unknownVideo": "Unknown video version",
     "timestampOutside": "Timestamp outside video",
-    "rangeEnd": "Range end must follow start",
+    "rangeEnd": "Range end must follow start and be inside the video",
     "text": "Please enter a comment (up to 10,000 characters)",
     "author": "Author must be \"you\" or \"ai\"",
     "notYourComment": "Only the reviewer's own comments can be edited",

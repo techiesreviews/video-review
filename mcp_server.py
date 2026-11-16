@@ -70,16 +70,16 @@ def call(name,args):
         return {'status':status,'versions':result,'total':sum(len(x['comments']) for x in result)}
     if name=='get_comment':return comment_view(args['commentId'])
     if name=='reply_to_comment':
-        store.apply(DATA,{'action':'reply','id':args['commentId'],'author':'ai','text':args['text']});return comment_view(args['commentId'])
+        store.apply(DATA,{'action':'reply','id':args['commentId'],'author':store.RULES['agentAuthor'],'text':args['text']});return comment_view(args['commentId'])
     if name=='resolve_comment':
-        store.apply(DATA,{'action':'reply','id':args['commentId'],'author':'ai','text':args['summary'],'status':'done'});return comment_view(args['commentId'])
+        store.apply(DATA,{'action':'reply','id':args['commentId'],'author':store.RULES['agentAuthor'],'text':args['summary'],'status':'done'});return comment_view(args['commentId'])
     if name=='reopen_comment':
-        if args.get('reason'):store.apply(DATA,{'action':'reply','id':args['commentId'],'author':'ai','text':args['reason'],'status':'open'})
+        if args.get('reason'):store.apply(DATA,{'action':'reply','id':args['commentId'],'author':store.RULES['agentAuthor'],'text':args['reason'],'status':'open'})
         else:store.apply(DATA,{'action':'update','id':args['commentId'],'status':'open'})
         return comment_view(args['commentId'])
     if name=='add_comment':
         start=store.parse_time(args['start']);end=store.parse_time(args.get('end'))
-        _,c=store.apply(DATA,{'action':'add','videoId':args['videoId'],'startMs':start,'endMs':end,'text':args['text'],'author':'ai'})
+        _,c=store.apply(DATA,{'action':'add','videoId':args['videoId'],'startMs':start,'endMs':end,'text':args['text'],'author':store.RULES['agentAuthor']})
         return comment_view(c['id'])
     if name=='open_video':
         store.update_render(DATA,args['videoId'],args.get('durationMs'),args.get('keepRanges'))
