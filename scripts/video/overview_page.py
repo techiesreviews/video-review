@@ -590,10 +590,24 @@ PAGE_SCRIPT = """<script>
   const say = text => { off.textContent = text; };
   const setStars = on => { stars.forEach(s => { s.disabled = !on; }); if (on) say(''); };
   const reason = said => typeof said === 'string' && said ? said : offText;
-  // What the server said about a star click is kept over the reload that follows it, in this tab only.
-  const note = 'overview-said:' + video;
-  let carried = '';
+  // What the server said about a star click is kept over the reload that follows it, in this tab only. So is the
+  // clicked star's scene, and how it was pressed: a reload puts the focus back at the top of the page, and a
+  // keyboard or screen-reader user would lose their place.
+  const note = 'overview-said:' + video, place = 'overview-focus:' + video;
+  let carried = '', clicked = null;
   try { carried = sessionStorage.getItem(note) || ''; sessionStorage.removeItem(note); } catch { carried = ''; }
+  try { const kept = sessionStorage.getItem(place); sessionStorage.removeItem(place); clicked = JSON.parse(kept); } catch { clicked = null; }
+  // After a star click's reload: the star of that scene's take in front (the clicked take, or the one that took
+  // its place).
+  const front = clicked && stars.find(s => s.dataset.scene === clicked.scene && s.dataset.on === 'true');
+  // Give the focus to a star, or to its take's play button while the stars are off (a button that is switched off
+  // cannot hold the focus). Not when the user has put the focus somewhere else in the meantime. quiet: the star
+  // was pressed with a mouse or a finger, which shows no focus ring, so none appears now either (a browser that
+  // does not know focusVisible shows it).
+  const hold = (star, quiet) => {
+    if (!star || ![star, body, null].includes(document.activeElement)) return;
+    (star.disabled ? star.closest('.take').querySelector('.thumb') : star).focus(quiet ? { focusVisible: false } : undefined);
+  };
   // The take list as the server has it saved; a refusal passes on what the server said, no answer passes nothing.
   const list = () => fetch(server + '/api/scenes?video=' + encodeURIComponent(video) + '&code=' + encodeURIComponent(code))
     .then(r => r.ok ? r.json() : r.json().then(j => Promise.reject(j.error), () => Promise.reject()), () => Promise.reject());
@@ -611,19 +625,27 @@ PAGE_SCRIPT = """<script>
   // page that shows other stars than the saved ones says it is out of date and keeps its stars off.
   list().then(saved => {
     const ok = current(saved);
-    setStars(ok); say([carried, ok ? '' : off.dataset.stale].filter(Boolean).join(' '));
-  }, said => { setStars(false); say([carried, reason(said)].filter(Boolean).join(' ')); });
+    setStars(ok); say([carried, ok ? '' : off.dataset.stale].filter(Boolean).join(' ')); hold(front, clicked && clicked.quiet);
+  }, said => { setStars(false); say([carried, reason(said)].filter(Boolean).join(' ')); hold(front, clicked && clicked.quiet); });
   document.addEventListener('click', e => {
     const star = e.target.closest('.st');
     if (star) {
       if (star.disabled) return;
-      // Every star is off while this one is saved: two saves at once could land in the wrong order.
+      // Every star is off while this one is saved: two saves at once could land in the wrong order. That drops
+      // the focus of the clicked star, so every way out below that does not load the page again gives it back.
       stars.forEach(s => { s.disabled = true; });
+      // A click from the keyboard has detail 0; a mouse or a finger counts its clicks from 1.
+      const quiet = e.detail > 0, back = () => hold(star, quiet);
+      // Without storage the page still loads again; the focus then starts at the top.
+      const reload = () => {
+        try { sessionStorage.setItem(place, JSON.stringify({ scene: star.dataset.scene, quiet })); } catch {}
+        location.reload();
+      };
       fetch(server + '/api/scenes/star', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ video, code, scene: star.dataset.scene, take: star.dataset.starred === 'true' ? null : Number(star.dataset.take) })
       }).then(async r => {
-        if (r.ok) return location.reload();
+        if (r.ok) return reload();
         // The server answered but could not do it: say what it said. The star may be saved all the same (the rough
         // cut or the page could not follow). Then the page loads itself again to show the saved state, and says
         // what the server said after that. When it cannot (the saved stars cannot be read, or the browser keeps
@@ -631,11 +653,11 @@ PAGE_SCRIPT = """<script>
         const said = reason(await r.json().then(j => j && j.error, () => ''));
         say(said);
         return list().then(saved => {
-          if (current(saved)) return stars.forEach(s => { s.disabled = false; });
-          try { sessionStorage.setItem(note, said); } catch { return; }
-          location.reload();
-        }, () => {});
-      }, () => { setStars(false); say(offText); });
+          if (current(saved)) { stars.forEach(s => { s.disabled = false; }); return back(); }
+          try { sessionStorage.setItem(note, said); } catch { return back(); }
+          reload();
+        }, back);
+      }, () => { setStars(false); say(offText); back(); });
       return;
     }
     const play = e.target.closest('[data-play]');
