@@ -2,9 +2,10 @@ import {normalizeTranscript,activeWordIndex,wordSelection,originalOmissions,word
 import {makeRemoval,removalBounds,skipRemoved,previewDuration,exportCut,removedRanges,playbackRemovals} from './cut-core.js';
 import {createWaveform} from './waveform-panel.js';
 import {barKey,suggestion,recentNotes,nextWordAfterDelete,afterDelete,broughtBackLine,sentLine,barSpotOffWords,deletedIds,cutsToRestore,cutMarks,keptRuns,lastCutGroup} from './edit-bar-core.js';
+import {clock} from './time-format.js';
 
 const $=s=>document.querySelector(s);
-const stamp=ms=>`${Math.floor(ms/60000)}:${String(Math.floor(ms/1000)%60).padStart(2,'0')}.${String(ms%1000).padStart(3,'0')}`;
+const stamp=ms=>clock(ms,{places:3,hours:false});
 function element(tag,cls,text){const node=document.createElement(tag);if(cls)node.className=cls;if(text!=null)node.textContent=text;return node;}
 
 export function createTranscriptPanel({media,seek,playContext,request,updateRequest,cancelRequest=async()=>{},showError,pause=()=>{},cutsOn=()=>true,notify=()=>{},togglePlay=()=>{},agentConnected=async()=>false}){
