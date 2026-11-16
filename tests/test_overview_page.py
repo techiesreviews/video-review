@@ -370,6 +370,28 @@ class ScriptText(unittest.TestCase):
                'See [this page](https://example.com) now.\n\n### **HOOK**\nnot in scene 1\n### 2 · B\nTwo.\n')
         self.assertEqual(overview_page.scene_texts(cue), {'01-a': 'Bold words. See this page now.', '02-b': 'Two.'})
 
+    def test_a_spoken_line_that_starts_with_a_link_keeps_its_words(self):
+        # Second look on the release, 2026-11-16: the line was taken for a direction and left out whole.
+        cue = '### 1 · A\n[This camera](https://example.com) records in 4K.\n'
+        self.assertEqual(overview_page.scene_texts(cue), {'01-a': 'This camera records in 4K.'})
+
+    def test_a_link_with_a_line_to_itself_is_left_out_like_a_direction(self):
+        cue = '### 1 · A\nOne.\n[The survey: 300 responses.](https://example.com/survey)\nTwo.\n'
+        self.assertEqual(overview_page.scene_texts(cue), {'01-a': 'One. Two.'})
+
+    def test_a_direction_that_runs_over_two_lines_is_left_out_whole(self):
+        # Second look on the release, 2026-11-16: the second line of the direction was shown as speech.
+        cue = '### 1 · A\nOne.\n[Show the camera\nfrom the side.]\nTwo.\n### 2 · B\n[Face full]\nThree.\n'
+        self.assertEqual(overview_page.scene_texts(cue), {'01-a': 'One. Two.', '02-b': 'Three.'})
+
+    def test_a_direction_inside_a_spoken_line_is_left_out(self):
+        cue = '### 1 · A\nLook here [point at the screen] and there.\n'
+        self.assertEqual(overview_page.scene_texts(cue), {'01-a': 'Look here and there.'})
+
+    def test_a_line_that_opens_a_bracket_it_never_closes_stays_out(self):
+        cue = '### 1 · A\n[Face full\nOne.\n'
+        self.assertEqual(overview_page.scene_texts(cue), {'01-a': 'One.'})
+
     def test_the_first_of_two_same_headings_wins(self):
         self.assertEqual(overview_page.scene_texts('### 1 · A\nfirst\n### 1 · A\nsecond\n'), {'01-a': 'first'})
 
