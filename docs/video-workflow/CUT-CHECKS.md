@@ -66,8 +66,10 @@ What it does:
 - **What the script says stays.** Three rules, each a net under the one before:
   - *The script puts back a full stop the transcript left out.* A pause where one script line ends and another
     begins ends a sentence ("The tool is fast | The tool is fast and easy to use." is two lines of the script,
-    not a start and its restart). This only decides what one take is; the timing rules still follow the
-    transcript's own full stops.
+    not a start and its restart). A script line of one word ("Yes.") counts when the word is said on its own: at
+    the start of a sentence, with no comma or dash on it, with the pause after it, and not as the opening of a
+    longer script line. This only decides what one take is; the timing rules still follow the transcript's own
+    full stops.
   - *A take goes only when the take that stays says what it says.* Two sentences that the script joins into one
     line ("The camera is easy to use and the battery lasts all day.") are two parts of that line, not two takes:
     both stay, and a whole take of the line still replaces them. A take that says a script word the kept take
@@ -81,8 +83,9 @@ What it does:
     still be said in what stays, as often as the script says it: by those words, or by a kept take that says the
     line through to its last word. If not, the last word-for-word reading goes back in and is listed. Longer
     lines are counted first, so "The tool is fast." inside "The tool is fast and easy to use." is not counted
-    twice; a line of one or two words ("Thanks again.") counts only as a sentence of its own.
-    `tests/test_cut_takes.py` runs this rule over 600 made-up recordings.
+    twice; a line of one or two words ("Thanks again.") counts only as a sentence of its own, and one word at the
+    start of a sentence with a pause after it is said on its own too, whatever follows the pause.
+    `tests/test_cut_takes.py` runs this rule over 600 made-up recordings, one-word lines among them.
 - **Timing (Lex, 2026-11-10 and 2026-11-11).** 100-150 ms of room before and after speech at every cut, the start
   of the clip too; a whole silence of 200-300 ms between linked phrases (it aims for 250) and 350-500 ms before a
   new thought (it aims for 400); Lex chose these longer pauses (version B) after listening to the cutter's version

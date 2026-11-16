@@ -7,6 +7,7 @@ renders nothing. The cut list is a proposal: Lex approves the paper edit before 
 What it does, in order:
 0. With a script, a pause where one script line ends and another begins ends a sentence, also when the transcript
    left the full stop off (this decides what one take is; timing still follows the transcript's own full stops).
+   A script line of one word ("Yes.") counts when the word is said on its own.
 1. A quiet "again" between pauses marks a retake: the failed attempt before it and the word itself are removed.
    "Again and again" and "again" inside a sentence are speech.
 2. A sentence begun and dropped, then restarted after a pause with the same words, loses the dropped start.
@@ -173,6 +174,10 @@ class Cutter:
     def gap_ms(self, before, after):
         return (self.words[after].start - self.words[before].end) * 1000
 
+    def paused(self, index):
+        """True when a pause long enough to restart in follows this word, or nothing does."""
+        return index + 1 == len(self.words) or self.gap_ms(index, index + 1) >= SETTINGS['restartPauseMs']
+
     def text(self, indices):
         return ' '.join(self.words[index].text for index in indices)
 
@@ -248,17 +253,27 @@ class Cutter:
     def script_stops(self):
         """With a script, a pause where one script line ends and another begins ends a sentence, also when the
         transcript left the full stop off there: "The tool is fast | The tool is fast and easy to use." is two
-        lines of the script, not a start and its restart."""
+        lines of the script, not a start and its restart. A script line of one word ("Yes.") is that line only
+        when it is said on its own: at the start of a sentence, with no comma or dash on it, with the pause after
+        it, and not as the opening of a longer line ("So | the tool is cheap." when the script also says "So the
+        tool is cheap."; the last check still keeps that one when nothing else says the line)."""
         if not self.script:
             return
         tails = {tuple(line[-2:]) for line in self.script if len(line) >= 2}
         heads = {tuple(line[:2]) for line in self.script if len(line) >= 2}
-        for index in range(1, len(self.words)):
-            last = index + 1 == len(self.words)
-            if ends_sentence(self.words[index]) or tuple(self.norms[index - 1:index + 1]) not in tails:
+        alone = {line[0] for line in self.script if len(line) == 1}
+
+        def opens_line(index):
+            return tuple(self.norms[index:index + 2]) in heads \
+                or (self.norms[index] in alone and (ends_sentence(self.words[index]) or self.paused(index)))
+
+        for index, word in enumerate(self.words):
+            if ends_sentence(word):
                 continue
-            if last or (self.gap_ms(index, index + 1) >= SETTINGS['restartPauseMs']
-                        and tuple(self.norms[index + 1:index + 3]) in heads):
+            tail = index > 0 and tuple(self.norms[index - 1:index + 1]) in tails
+            own = self.norms[index] in alone and (index == 0 or self.ends(index - 1)) \
+                and not TRAILING_MARK.search(word.text) and tuple(self.norms[index:index + 2]) not in heads
+            if (tail or own) and self.paused(index) and (index + 1 == len(self.words) or opens_line(index + 1)):
                 self.stops.add(index)
 
     # 1. Quiet "again" retake cues.
@@ -836,8 +851,11 @@ class Cutter:
                 if at < free or tuple(names[at:at + len(line)]) != line:
                     continue
                 # A line of one or two words is only itself as a sentence of its own ("Thanks again."), not as
-                # the same words inside another sentence.
-                own = (at == 0 or self.ends(spoken[at - 1])) and self.ends(spoken[at + len(line) - 1])
+                # the same words inside another sentence. One word at the start of a sentence with a pause after
+                # it is said on its own too ("Yes | The— The tool is fast."), whatever follows the pause.
+                end = spoken[at + len(line) - 1]
+                alone = len(line) == 1 and self.paused(end) and not TRAILING_MARK.search(self.words[end].text)
+                own = (at == 0 or self.ends(spoken[at - 1])) and (self.ends(end) or alone)
                 if len(line) >= 3 or own:
                     found.append(spoken[at:at + len(line)])
                     free = at + len(line)

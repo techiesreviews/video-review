@@ -949,10 +949,14 @@ class OneScriptLineTests(unittest.TestCase):
         result = plan_words(words[:5], script)
         self.assertEqual(removed_texts(result), [])
         self.assertEqual(result['paperEdit']['flags'], [])
-        # The one-word line may be the next line too: the pause after "good" ends that sentence.
-        words = said('This is good', 1.0) + said('Yes', 2.6) + said('This is good.', 4.0) + said('Yes.', 5.6)
-        result = plan_words(words, 'This is good. Yes. The end.')
-        self.assertEqual(kept_starts(result, cut_timeline.load_words(words)) >= {2.6, 5.6}, True)
+        # The line before may have lost its full stop too: the one-word line is the next line there, and the pause
+        # after "fast" ends that sentence.
+        words = said('The tool is fast', 1.0) + said('Yes', 3.0) + said('Yes this is good.', 4.0) \
+            + said('Yes this is good.', 8.0)
+        result = plan_words(words, 'The tool is fast. Yes. Yes this is good.')
+        self.assertEqual([(item['start'], item['text']) for item in result['paperEdit']['removed']],
+                         [(4.0, 'Yes this is good.')])
+        self.assertEqual(result['paperEdit']['flags'], [])
 
     def test_a_word_is_a_one_word_line_only_when_said_on_its_own(self):
         def stops(words, script):
@@ -975,6 +979,33 @@ class OneScriptLineTests(unittest.TestCase):
         self.assertEqual(removed_texts(plan_words(words, 'Yes this is good. The end.')), ['Yes Yes this is good.'])
         # The last word of the recording needs no pause after it.
         self.assertEqual(stops(said('The end.', 1.0) + said('Yes', 3.0), script), {2})
+        # A word that opens a longer script line together with the next word is a breath inside that line.
+        script = 'So. The tool is fast. So the tool is cheap.'
+        words = said('The tool is fast.', 1.0) + said('So', 3.0) + said('the tool is cheap.', 4.0)
+        self.assertEqual(stops(words, script), set())
+        result = plan_words(words + said('So the tool is cheap.', 7.0), script)
+        self.assertEqual([(item['start'], item['text']) for item in result['paperEdit']['removed']],
+                         [(3.0, 'So the tool is cheap.')])
+
+    def test_a_one_word_line_that_no_script_line_follows_goes_back_in_and_is_listed(self):
+        # The last check: after the pause comes a start of one word, or a take that changes a word, so no script
+        # line opens there and the "Yes" still runs into the take that goes.
+        for first_take, script in (('The The tool is fast.', 'Yes. The tool is fast.'),
+                                   ('Yes that is good.', 'Yes. Yes this is good.')):
+            words = said('Yes', 1.0) + said(first_take, 3.0) + said(script[5:], 7.0)
+            result = plan_words(words, script)
+            self.assertEqual([(item['start'], item['text']) for item in result['paperEdit']['removed']],
+                             [(3.0, first_take)], script)
+            flag, = result['paperEdit']['flags']
+            self.assertEqual((flag['code'], flag['start'], flag['text']), ('script-line-kept', 1.0, 'Yes'), script)
+            self.assertIn(1.0, kept_starts(result, cut_timeline.load_words(words)), script)
+        # A comma or a dash on the word, or no pause after it: not the line said on its own, so it goes as before.
+        for first in ('Yes,', 'Yes—'):
+            words = said(first, 1.0) + said('Yes that is good.', 3.0) + said('Yes this is good.', 7.0)
+            result = plan_words(words, 'Yes. Yes this is good.')
+            self.assertEqual(removed_texts(result), [f'{first} Yes that is good.'], first)
+        words = said('Yes yes that is good.', 1.0) + said('Yes this is good.', 7.0)
+        self.assertEqual(removed_texts(plan_words(words, 'Yes. Yes this is good.')), ['Yes yes that is good.'])
 
     def test_a_script_line_said_word_for_word_is_never_lost(self):
         # The last check, whatever made the removal: here each sentence fits the other script line just as well
@@ -1012,9 +1043,9 @@ class EveryScriptLineStaysTests(unittest.TestCase):
     ONE_WORD = ['yes', 'okay', 'right']
 
     def recording(self, seed):
-        """(script lines, words, one-word readings): the readings are the start seconds of each one-word line said
-        on its own. The one-word lines draw from a second run of numbers, so the longer lines of a seed stay as
-        they were before one-word lines were added."""
+        """(script lines, words, one-word readings): the readings are the start seconds of every word said on its
+        own, a one-word line or a start that stops after one word. The one-word lines draw from a second run of
+        numbers, so the longer lines of a seed stay as they were before one-word lines were added."""
         rng, short = random.Random(seed), random.Random(f'one word {seed}')
         longer = []
         for _ in range(rng.randint(2, 5)):
@@ -1030,6 +1061,8 @@ class EveryScriptLineStaysTests(unittest.TestCase):
         def say(tokens, stop, pause):
             nonlocal at
             at += pause
+            if len(tokens) == 1 and stop in ('', '.'):
+                alone.setdefault(tokens[0], []).append(round(at, 3))
             for number, token in enumerate(tokens):
                 text = token + (stop if number == len(tokens) - 1 else '')
                 words.append([text.capitalize() if number == 0 else text, round(at, 3), round(at + 0.25, 3)])
@@ -1038,9 +1071,7 @@ class EveryScriptLineStaysTests(unittest.TestCase):
         for line in lines:
             if len(line) == 1:
                 for _ in range(2 if short.random() < 0.15 else 1):
-                    at += short.choice([0.4, 0.8, 1.2, 2.0])
-                    alone.setdefault(line[0], []).append(round(at, 3))
-                    say(line, '.' if short.random() < 0.6 else '', 0)
+                    say(line, '.' if short.random() < 0.6 else '', short.choice([0.4, 0.8, 1.2, 2.0]))
                 continue
             pause = rng.choice([0.4, 0.8, 1.2, 2.0])
             if rng.random() < 0.3:  # a failed start
@@ -1062,8 +1093,8 @@ class EveryScriptLineStaysTests(unittest.TestCase):
         loaded = cut_timeline.load_words(words)
         kept = kept_starts(cut_takes.plan(loaded, FPS, script_text=script), loaded)
         lost = self.missing(lines, [cut_takes.norm(text) for text, start, _ in words if start in kept])
-        # A one-word line is a word many other sentences say too, so its own readings are counted here: as many
-        # of them stay as the script says the line (a second reading of it may go as a retake).
+        # A one-word line is a word many other sentences say too, so the times it is said on its own are counted
+        # here: as many of them stay as the script says the line (a second reading of it may go as a retake).
         for word, starts in (alone or {}).items():
             if sum(start in kept for start in starts) < min(lines.count([word]), len(starts)):
                 lost.append(f'{word} (said on its own at {starts})')
