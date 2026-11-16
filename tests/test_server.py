@@ -177,6 +177,7 @@ class ReviewServerTests:
             with self.request('/'+name) as r:
                 kind=r.headers['Content-Type'].split(';')[0]
                 assert kind==('application/json' if name.endswith('.json') else 'text/javascript'),(name,kind)
+                assert r.read()==(web/name).read_bytes(),name
 
     def star(self,body,origin=None):
         headers={'Content-Type':'application/json','Origin':origin or self.origin}
@@ -626,17 +627,6 @@ class ReviewServerTests:
         except HTTPError as error:assert error.code==404
         else:raise AssertionError('Followed a link out of the scenes folder')
         finally:link.unlink()
-
-    def test_every_module_the_page_imports_is_served(self):
-        web=Path(server.__file__).resolve().parent/'web';wanted,seen=['app.js'],set()
-        while wanted:
-            name=wanted.pop()
-            if name in seen:continue
-            seen.add(name)
-            with self.request('/'+name) as r:assert r.status==200,name;body=r.read()
-            assert body==(web/name).read_bytes(),name;text=body.decode()
-            wanted+=re.findall(r"""from\s*['"]\./([\w.-]+)['"]""",text)
-        assert {'app.js','review-core.js','time-format.js','review-rules.json'}<=seen,seen
 
 if __name__=='__main__':
     ReviewServerTests.setUpClass()
