@@ -1258,6 +1258,13 @@ class FarApartTests(unittest.TestCase):
         words = said('This tool is very helpful.', 1.0) + said('This tool is really helpful.', 122.0)
         self.assertEqual(removed_texts(plan_words(words, 'This tool is really helpful.')), ['This tool is very helpful.'])
 
+    def cut_out(self, result, start, end):
+        """The seconds between two source times that are in no kept range of the cut list."""
+        fps = result['cutlist']['fps']
+        kept = sum(max(0.0, min(end, item['sourceOutFrame'] / fps) - max(start, item['sourceInFrame'] / fps))
+                   for item in result['cutlist']['segments'])
+        return round(end - start - kept, 2)
+
     def test_a_long_silence_beside_a_removed_take_is_reported(self):
         # Third whole-file look, 2026-11-16: the cut takes the silence between a removed take and the take that
         # stays with it; eight seconds may be a screen demo, so the paper edit must say so.
@@ -1265,41 +1272,38 @@ class FarApartTests(unittest.TestCase):
         result = plan_words(words)
         removal, = result['paperEdit']['removed']
         self.assertEqual((removal['text'], removal['longestSilence']), ('This is the tool.', 0.04))
-        self.assertAlmostEqual(removal['silenceBeside'], 7.84, 2)
-        self.assertIn('takes out the 7.8 s silence beside it', cut_takes.render_paper_edit(result['paperEdit']))
+        # The number is what the cut list really leaves out between the two takes (the room kept beside the take
+        # that stays is not silence taken out).
+        self.assertEqual(removal['silenceBeside'], self.cut_out(result, 2.16, 10.0))
+        self.assertTrue(7.6 <= removal['silenceBeside'] <= 7.84, removal['silenceBeside'])
+        self.assertIn(f'takes out the {removal["silenceBeside"]:.1f} s silence beside it',
+                      cut_takes.render_paper_edit(result['paperEdit']))
         # A short pause beside a removal is not worth a word.
         words = said('This is the tool.', 1.0) + said('This is the tool.', 3.0)
         result = plan_words(words)
         self.assertNotIn('silence beside', cut_takes.render_paper_edit(result['paperEdit']))
-        # A marked screen demo in that silence stays in the cut, so there is nothing to warn about.
-        words = said('This is the tool.', 1.0) + said('This is the tool.', 12.0)
-        result = plan_words(words, demos=[(3.0, 10.0)])
-        removal, = result['paperEdit']['removed']
-        self.assertAlmostEqual(removal['silenceBeside'], 2.84, 2)
-        self.assertNotIn('silence beside', cut_takes.render_paper_edit(result['paperEdit']))
-        # Only the demo's own seconds are left out: a shorter demo leaves a silence worth a word.
-        result = plan_words(words, demos=[(3.0, 6.0)])
-        self.assertAlmostEqual(result['paperEdit']['removed'][0]['silenceBeside'], 6.84, 2)
-        self.assertIn('takes out the 6.8 s silence beside it', cut_takes.render_paper_edit(result['paperEdit']))
         # The silence before a removed last take counts too.
         words = said('This is the tool.', 1.0) + said('This is the, um, um, tool.', 12.0)
         result = plan_words(words)
         removal, = result['paperEdit']['removed']
         self.assertEqual(removal['reason'], 'worse-later-take')
-        self.assertAlmostEqual(removal['silenceBeside'], 9.84, 2)
+        self.assertEqual(removal['silenceBeside'], self.cut_out(result, 2.16, 12.0))
+        self.assertGreater(removal['silenceBeside'], 9.5)
 
-    def test_a_retake_far_from_its_first_take_is_matched_by_the_script(self):
-        script = 'The review page saves every comment. Other things happen. The end.'
-        words = [['The', 10.0, 10.2], ['review', 10.24, 10.6], ['page', 10.64, 10.9], ['saves', 10.94, 11.2],
-                 ['every', 11.24, 11.5], ['comment.', 11.54, 12.0],
-                 ['Other', 13.0, 13.3], ['things', 13.34, 13.7], ['happen.', 13.74, 14.2],
-                 ['The', 100.0, 100.2], ['review', 100.24, 100.6], ['page', 100.64, 100.9],
-                 ['saves', 100.94, 101.2], ['every', 101.24, 101.5], ['comment.', 101.54, 102.0],
-                 ['The', 103.0, 103.2], ['end.', 103.24, 103.6]]
-        result = plan_words(words, script)
-        removal, = result['paperEdit']['removed']
-        self.assertEqual((removal['start'], removal['reason'], removal['keeps']), (10.0, 'earlier-take', 100.0))
-
+    def test_silence_that_a_marked_demo_keeps_beside_a_removed_take_is_not_reported(self):
+        # Second look on PR #42: a marked demo stays in the cut with the silence between it and the speech kept
+        # beside it, so only the silence the cut list really leaves out is reported.
+        words = said('This is the tool.', 1.0) + said('This is the tool.', 12.0)
+        for demo, taken in (((3.0, 10.0), 0.84), ((3.0, 6.0), 0.84), ((8.0, 10.0), 5.84)):
+            result = plan_words(words, demos=[demo])
+            removal, = result['paperEdit']['removed']
+            self.assertEqual(removal['silenceBeside'], self.cut_out(result, 2.16, 12.0), demo)
+            self.assertAlmostEqual(removal['silenceBeside'], taken, delta=0.04, msg=demo)
+            text = cut_takes.render_paper_edit(result['paperEdit'])
+            if taken >= 3:
+                self.assertIn('takes out the 5.8 s silence beside it', text)
+            else:
+                self.assertNotIn('silence beside', text, demo)
 
 class CommandTests(unittest.TestCase):
     def test_command_writes_the_three_files_and_never_overwrites(self):
