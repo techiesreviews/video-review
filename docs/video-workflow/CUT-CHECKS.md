@@ -57,14 +57,23 @@ What it does:
   stumbles, or more of the script line missing), the better earlier take stays and the paper edit says so. A
   line the script itself says more than once is never treated as takes of one line. When no take of a line is
   complete, a take more than a minute from the others stays and is listed.
-- **What the script says stays.** Two sentences that the script joins into one line ("The camera is easy to use
-  and the battery lasts all day.") are two parts of that line, not two takes: both stay, and a whole take of the
-  line still replaces them. A take is removed only when the take that stays says what it says: one that says
-  another part of the line, or more of it than a kept take that picks the line up half way, stays and is listed.
-  A start is not cut when the script has its words as a line or a part of a line of their own, or says the line
-  more than once, also when the transcript left the full stop off: it is listed as a possible restart instead.
-  When two script lines have the same words ("The camera beats the phone." / "The phone beats the camera."), a
-  sentence belongs to the one with its word order.
+- **What the script says stays.** Three rules, each a net under the one before:
+  - *The script puts back a full stop the transcript left out.* A pause where one script line ends and another
+    begins ends a sentence ("The tool is fast | The tool is fast and easy to use." is two lines of the script,
+    not a start and its restart). This only decides what one take is; the timing rules still follow the
+    transcript's own full stops.
+  - *A take goes only when the take that stays says what it says.* Two sentences that the script joins into one
+    line ("The camera is easy to use and the battery lasts all day.") are two parts of that line, not two takes:
+    both stay, and a whole take of the line still replaces them. A take that says another part of the line, or
+    more of it than a kept take that picks the line up half way or stops early, stays and is listed. A start is
+    not cut when the script has its words as a part of a line of their own, or says the line more than once: it
+    is listed as a possible restart. When two script lines have the same words ("The camera beats the phone." /
+    "The phone beats the camera."), a sentence belongs to the one with its word order.
+  - *The last check.* After every other step, a script line that is said word for word in the recording must
+    still be said in what stays, as often as the script says it: by those words, or by a kept take that says the
+    line through to its last word. If not, the last word-for-word reading goes back in and is listed. Longer
+    lines are counted first, so "The tool is fast." inside "The tool is fast and easy to use." is not counted
+    twice. `tests/test_cut_takes.py` runs this rule over 600 made-up recordings.
 - **Timing (Lex, 2026-11-10 and 2026-11-11).** 100-150 ms of room before and after speech at every cut, the start
   of the clip too; a whole silence of 200-300 ms between linked phrases (it aims for 250) and 350-500 ms before a
   new thought (it aims for 400); Lex chose these longer pauses (version B) after listening to the cutter's version

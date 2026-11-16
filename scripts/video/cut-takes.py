@@ -5,6 +5,8 @@ Writes cutlist.json, paper-edit.md and paper-edit.json into a folder; never over
 renders nothing. The cut list is a proposal: Lex approves the paper edit before any timeline is built or rendered.
 
 What it does, in order:
+0. With a script, a pause where one script line ends and another begins ends a sentence, also when the transcript
+   left the full stop off (this decides what one take is; timing still follows the transcript's own full stops).
 1. A quiet "again" between pauses marks a retake: the failed attempt before it and the word itself are removed.
    "Again and again" and "again" inside a sentence are speech.
 2. A sentence begun and dropped, then restarted after a pause with the same words, loses the dropped start.
@@ -18,6 +20,8 @@ What it does, in order:
    first two words, back to a sentence that says something else. The whole run of failed tries goes up to the take
    that stays, never into it; a breath inside a take does not start a new one. A dropped start of under four words
    is only listed, as the paper edit's "inspect" restarts are. An "again" the script itself says is speech.
+   Then the last check on all of the above: a script line said word for word in the recording is still said in
+   what stays, as often as the script says it; if not, its last word-for-word reading goes back in and Lex is told.
 5. Joins keep room around speech and a whole silence in Lex's ranges; long pauses are shortened, a breath inside a
    linked phrase stays, and a cut never lands inside a word: a removal with no frame between it and the kept
    word beside it goes back in and is listed.
@@ -135,10 +139,18 @@ class Cutter:
         self.script_words = [word for line in self.script or () for word in line]
         self.removed = []
         self.flags = []
+        # Words that end a sentence although the transcript has no full stop there (script_stops).
+        self.stops = set()
+        # best_line's answers by the words asked about: the same sentence is asked about at every step.
+        self.closest = {}
         # Set when the cut opens or ends on a marked demo that has no speech.
         self.demo_opens = self.demo_ends = False
 
     # Small helpers.
+
+    def ends(self, index):
+        """True when this word ends a sentence: by its full stop, or by the script (script_stops)."""
+        return ends_sentence(self.words[index]) or index in self.stops
 
     def gap_ms(self, before, after):
         return (self.words[after].start - self.words[before].end) * 1000
@@ -162,6 +174,16 @@ class Cutter:
         indices = [index for index in indices if self.keep[index]]
         if not indices:
             return False
+        if reason != 'retake-cue' and self.says_more(indices, keeps):
+            # Whatever found this removal, it goes only when the take that stays says what it says.
+            asked = ('possible-restart', 'take-says-more')
+            start, end = self.words[indices[0]].start, self.words[indices[-1]].end
+            if not any(item['code'] in asked and item['start'] < end and item['end'] > start for item in self.flags):
+                self.flag('take-says-more', indices[0], indices[-1],
+                          f'This would have been removed as {REASONS[reason]}, but the take kept at '
+                          f'{self.words[keeps].start:.2f} does not say all of it. Left in; cut it by hand if it is '
+                          'a failed try.')
+            return False
         demo = self.demo_at(indices[0], indices[-1])
         if demo:
             start, end = self.words[indices[0]].start, self.words[indices[-1]].end
@@ -184,19 +206,54 @@ class Cutter:
         self.removed += [{'first': run[0], 'last': run[-1], 'reason': reason, 'keeps': keeps} for run in runs]
         return True
 
+    def says_more(self, indices, keeps):
+        """True when these words say more of a script line than the kept take that starts at `keeps` does: a take
+        that says another part of the line, or more of it than a kept take that picks the line up half way."""
+        if not self.script:
+            return False
+        take = []
+        for index in range(keeps, len(self.words)):
+            if not self.keep[index]:
+                break
+            take.append(index)
+            if self.ends(index):
+                break
+        if not take:
+            return False
+        score, line = self.best_line(take)
+        return score >= SETTINGS['scriptMatch'] and not self.says(take, indices, line)
+
+    # 0. Sentence ends the transcript left out.
+
+    def script_stops(self):
+        """With a script, a pause where one script line ends and another begins ends a sentence, also when the
+        transcript left the full stop off there: "The tool is fast | The tool is fast and easy to use." is two
+        lines of the script, not a start and its restart."""
+        if not self.script:
+            return
+        tails = {tuple(line[-2:]) for line in self.script if len(line) >= 2}
+        heads = {tuple(line[:2]) for line in self.script if len(line) >= 2}
+        for index in range(1, len(self.words)):
+            last = index + 1 == len(self.words)
+            if ends_sentence(self.words[index]) or tuple(self.norms[index - 1:index + 1]) not in tails:
+                continue
+            if last or (self.gap_ms(index, index + 1) >= SETTINGS['restartPauseMs']
+                        and tuple(self.norms[index + 1:index + 3]) in heads):
+                self.stops.add(index)
+
     # 1. Quiet "again" retake cues.
 
     def find_attempt(self, cue, lower):
         """Return where the failed attempt before a cue starts, and whether the restart repeats its opening."""
         first = cue - 1
         limit = SETTINGS['attemptMaxSeconds']
-        while first - 1 >= lower and not ends_sentence(self.words[first - 1]) \
+        while first - 1 >= lower and not self.ends(first - 1) \
                 and self.gap_ms(first - 1, first) < SETTINGS['attemptBreakMs'] \
                 and self.words[cue].start - self.words[first - 1].start <= limit:
             first -= 1
         restart = cue + 1
         key = self.norms[restart:restart + 1]
-        if restart + 1 < len(self.words) and not ends_sentence(self.words[restart]) \
+        if restart + 1 < len(self.words) and not self.ends(restart) \
                 and self.gap_ms(restart, restart + 1) < SETTINGS['restartPauseMs']:
             key = self.norms[restart:restart + 2]
         for start in range(first, cue - len(key) + 1):
@@ -242,7 +299,7 @@ class Cutter:
         groups = []
         for index in (index for index, kept in enumerate(self.keep) if kept):
             previous = groups[-1][-1] if groups else None
-            if previous is None or previous != index - 1 or ends_sentence(self.words[previous]) \
+            if previous is None or previous != index - 1 or self.ends(previous) \
                     or self.gap_ms(previous, index) >= SETTINGS['restartPauseMs']:
                 groups.append([index])
             else:
@@ -253,7 +310,7 @@ class Cutter:
         groups = []
         for index in (index for index, kept in enumerate(self.keep) if kept):
             previous = groups[-1][-1] if groups else None
-            if previous is None or previous != index - 1 or ends_sentence(self.words[previous]):
+            if previous is None or previous != index - 1 or self.ends(previous):
                 groups.append([index])
             else:
                 groups[-1].append(index)
@@ -269,7 +326,7 @@ class Cutter:
                 continue
             if not all(loose_equal(self.norms[a], self.norms[b]) for a, b in zip(first[:size], second[:size])):
                 continue
-            if ends_sentence(self.words[first[-1]]):
+            if self.ends(first[-1]):
                 pairs.append((first[0], second[0]))
             elif not self.mostly_repeated(first, second):
                 continue
@@ -289,7 +346,7 @@ class Cutter:
                 self.drop(first, 'abandoned-start', second[0])
         # A stray word or two between a sentence and its redo ("So," or "and then") still makes a pair.
         for first, between, second in zip(phrases, phrases[1:], phrases[2:]):
-            if ends_sentence(self.words[first[-1]]) and len(between) <= 2 and self.opens_alike(first, second):
+            if self.ends(first[-1]) and len(between) <= 2 and self.opens_alike(first, second):
                 pairs.append((first[0], second[0]))
         return pairs
 
@@ -398,13 +455,14 @@ class Cutter:
         """(score, number) of the script line closest to a sentence. The score counts shared words in any order;
         among lines that score the same, the one with most of the words in the same order wins ("The camera beats
         the phone." is not "The phone beats the camera."), then the later one."""
-        names = [self.norms[index] for index in sentence]
-        scores = [(dice(names, line), number) for number, line in enumerate(self.script)]
-        score = max(scores, default=(0.0, None))[0]
-        tied = [number for value, number in scores if value == score]
-        if len(tied) < 2 or not score:
-            return max(scores, default=(0.0, None))
-        return score, max(tied, key=lambda number: (in_order(names, self.script[number]), number))
+        names = tuple(self.norms[index] for index in sentence)
+        if names not in self.closest:
+            scores = [(dice(names, line), number) for number, line in enumerate(self.script)]
+            score = max(scores, default=(0.0, None))[0]
+            tied = [number for value, number in scores if value == score]
+            self.closest[names] = max(scores, default=(0.0, None)) if len(tied) < 2 or not score else \
+                (score, max(tied, key=lambda number: (in_order(names, self.script[number]), number)))
+        return self.closest[names]
 
     def worse(self, later, earlier, line):
         """Return why the later take is clearly worse than the earlier one, or an empty list."""
@@ -472,7 +530,7 @@ class Cutter:
                              next((lines[number] for number in members if number in lines), None))
 
     def complete(self, sentence, line):
-        if not ends_sentence(self.words[sentence[-1]]):
+        if not self.ends(sentence[-1]):
             return False
         return line is None or self.coverage(sentence, line) >= SETTINGS['completeCoverage']
 
@@ -527,14 +585,9 @@ class Cutter:
         if start and self.drop(start, 'abandoned-start', rest[0]):
             keeps = rest[0]
         # Takes are grouped pair by pair, so one that overlaps two parts of a script line brings both into its
-        # group. A take goes only when the take that stays says what it says.
+        # group: drop() leaves in a take that says more than the take that stays.
         for number, take in enumerate(takes):
             if number == chosen:
-                continue
-            if line is not None and not self.says(takes[chosen], take, line):
-                self.flag('take-says-more', take[0], take[-1],
-                          f'The take kept at {self.words[keeps].start:.2f} does not say all of this one. Left in; '
-                          'cut it by hand if it is a failed try.')
                 continue
             reason = 'earlier-take' if number < chosen else 'worse-later-take'
             if number > chosen and not self.complete(take, line):
@@ -566,7 +619,7 @@ class Cutter:
             if not self.keep[index]:
                 return None
             take.append(index)
-            if ends_sentence(self.words[index]):
+            if self.ends(index):
                 return take
         return None
 
@@ -592,7 +645,7 @@ class Cutter:
         """The kept words this word carries on from: back over short breaths, to a sentence end, a removal or a
         long pause."""
         words = []
-        while first > 0 and self.keep[first - 1] and not ends_sentence(self.words[first - 1]) \
+        while first > 0 and self.keep[first - 1] and not self.ends(first - 1) \
                 and self.gap_ms(first - 1, first) < SETTINGS['attemptBreakMs']:
             first -= 1
             words.insert(0, first)
@@ -640,7 +693,7 @@ class Cutter:
                 if self.words[take[0]].start - self.words[kept[0]].start > SETTINGS['attemptMaxSeconds']:
                     break
                 at = self.find_opening(kept, opening)
-                finished = ends_sentence(self.words[kept[-1]])
+                finished = self.ends(kept[-1])
                 if at is None:
                     if finished and len(kept) >= 3:
                         break
@@ -676,10 +729,9 @@ class Cutter:
                     and not self.script_says_once(attempt, take):
                 continue  # "The tool is fast, the tool is cheap." may repeat on purpose: restarts() flagged it.
             if self.script:
-                # Everything removed must belong to the take's own script line, and to the part of it the take
-                # says, not to the talk around it.
-                line = self.best_line(take)[1]
-                if self.best_line(attempt)[1] == line and self.says(take, attempt, line):
+                # Everything removed must belong to the take's own script line, not to the talk around it (and
+                # drop() leaves in what the take does not say).
+                if self.best_line(attempt)[1] == self.best_line(take)[1]:
                     self.drop(attempt, 'abandoned-start', take[0])
             elif unsure or any(len(other) >= 3 and other[0] > start for other in passed):
                 # Without a script, more than a stray word between the attempts may be real talk: ask, do not cut.
@@ -698,10 +750,72 @@ class Cutter:
                       f'Possible unfinished start before the take at {self.words[take].start:.2f}: '
                       f'"{self.text(attempt)}". Left in; listen and cut by hand if it is one.')
 
+    def put_back(self, indices):
+        """Words removed earlier stay after all; what is left of each removal around them is still removed."""
+        for index in indices:
+            self.keep[index] = True
+        left = []
+        for item in self.removed:
+            run = []
+            for index in range(item['first'], item['last'] + 2):
+                if index <= item['last'] and not self.keep[index]:
+                    run.append(index)
+                elif run:
+                    left.append({**item, 'first': run[0], 'last': run[-1]})
+                    run = []
+        self.removed = left
+
+    def keep_script_lines(self):
+        """The last check on the removals, whatever made them. A script line that is said word for word in the
+        recording is still said in what stays, as often as the script says it: by the same words, or by a kept
+        sentence that is a complete take of the line. When it is not, the last word-for-word reading goes back in
+        and Lex is told. Longer lines are counted first and their words are not counted again for a shorter line
+        ("The tool is fast." inside "The tool is fast and easy to use.")."""
+        if not self.script:
+            return
+        spoken = [index for index, name in enumerate(self.norms) if name and name not in FILLERS]
+        names = [self.norms[index] for index in spoken]
+        starts = {}
+        for at, name in enumerate(names):
+            starts.setdefault(name, []).append(at)
+        # A kept sentence counts as a take of its line when it says the line in order through to its last word.
+        takes = {}
+        for sentence in self.sentences():
+            score, line = self.best_line(sentence)
+            said = self.part_of_line(sentence, line) if score >= SETTINGS['scriptMatch'] else ()
+            if len(said) >= SETTINGS['completeCoverage'] * len(self.script[line]) and len(self.script[line]) - 1 in said:
+                takes.setdefault(tuple(self.script[line]), []).append(sentence)
+        used = set()
+        counts = Counter(map(tuple, self.script))
+        for line in sorted(counts, key=len, reverse=True):
+            if len(line) < 3:
+                continue  # Too short to tell from the same words inside another sentence.
+            found, free = [], 0
+            for at in starts.get(line[0], ()):
+                if at >= free and tuple(names[at:at + len(line)]) == line:
+                    found.append(spoken[at:at + len(line)])
+                    free = at + len(line)
+            found = [reading for reading in found if not used.intersection(reading)]
+            used.update(index for reading in found for index in reading)
+            kept = [reading for reading in found if all(self.keep[index] for index in reading)]
+            gone = [reading for reading in found if reading not in kept]
+            # A kept take that is not one of the word-for-word readings counts too, unless its words are counted
+            # for a longer line already.
+            others = [take for take in takes.get(line, ())
+                      if not used.intersection(take) and not any(set(take) & set(reading) for reading in kept)]
+            missing = min(counts[line], len(found)) - len(kept) - len(others)
+            for reading in gone[len(gone) - missing:] if missing > 0 else ():
+                reason = next((item['reason'] for item in self.removed
+                               if item['first'] <= reading[0] <= item['last']), 'earlier-take')
+                self.put_back(range(reading[0], reading[-1] + 1))
+                self.flag('script-line-kept', reading[0], reading[-1],
+                          f'This would have been removed as {REASONS[reason]}, but the script has this line and '
+                          'nothing else that stays says it. Left in; cut it by hand if it is a failed try.')
+
     def possible_restarts(self):
         """Flag a two-word run repeated within a few words of a kept sentence: often a restart without a pause."""
         flagged = [(item['start'], item['end']) for item in self.flags
-                   if item['code'] in ('possible-restart', 'demo-protected')]
+                   if item['code'] in ('possible-restart', 'demo-protected', 'take-says-more', 'script-line-kept')]
         for sentence in self.sentences():
             span = self.words[sentence[0]].start, self.words[sentence[-1]].end
             if any(start < span[1] and end > span[0] for start, end in flagged):
@@ -970,9 +1084,11 @@ class Cutter:
         return [(piece['in'], piece['out']) for piece in merged], joins
 
     def plan(self):
+        self.script_stops()
         self.retake_cues()
         self.takes(self.restarts())
         self.restarted_lines()
+        self.keep_script_lines()
         self.possible_restarts()
         ad_libs = self.ad_libs()
         runs, joins = self.segments()
