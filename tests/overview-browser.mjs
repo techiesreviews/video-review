@@ -1,5 +1,5 @@
 // Browser check of the overview page on a phone-sized screen: 40 made-up scenes, one long unbroken title and a
-// server error that names a long folder.
+// server error that names a long folder; and a long video of 120 scenes, whose strip numbers have three digits.
 // It reads no real video folder and needs no server. Run: node tests/overview-browser.mjs
 // (Playwright's own Chromium by default; OVERVIEW_BROWSER=chrome uses the installed Chrome.)
 import {chromium} from 'playwright';
@@ -11,12 +11,13 @@ const LONG='IMG_20250914_183022_HDR_portrait_edited_edited.HEIC';
 // A scene-file error names the whole folder, and a folder name has no spaces to break at.
 const ERROR=`No scenes.json in D:\\Recordings\\${'weekly_video_final_export_'.repeat(4)}raw: the scene list is saved when the first take is recorded.`;
 // The page as it is written; star: with Lex's star on this take of the first scene (the page after that star).
-const build=star=>{
+// count: how many scenes the video has.
+const build=(star,count=40)=>{
   const made=spawnSync(python,['-c',`
 import sys
 sys.path[:0] = ['.', 'scripts/video']
 import overview_page, scene_store
-scenes = [{'id': f'{n:02d}-scene', 'number': n, 'title': ${JSON.stringify(LONG)} if n == 1 else f'Scene {n}'} for n in range(1, 41)]
+scenes = [{'id': f'{n:02d}-scene', 'number': n, 'title': ${JSON.stringify(LONG)} if n == 1 else f'Scene {n}'} for n in range(1, ${count+1})]
 store = scene_store.new_store(scenes)
 for scene in scenes:
     scene_store.add_take(store, scene['id'], 1, duration=5.0 + scene['number'] * 3)
@@ -41,12 +42,13 @@ try{
   // this status, 500 when none is given). gone: a star click gets no answer at all.
   // later: what the take list answers when it is asked again after the page opened.
   // again: the page the address gives when it is loaded a second time (the page written after a star).
-  const open=async(stars,{listError,starError,status=500,gone,later,again}={})=>{
+  // first: the page the address gives instead of the 40-scene one.
+  const open=async(stars,{listError,starError,status=500,gone,later,again,first}={})=>{
     const page=await context.newPage();
     let lists=0,loads=0;
     await page.route('http://overview.test/**',route=>{
       const path=new URL(route.request().url()).pathname;
-      if(path==='/')return route.fulfill({contentType:'text/html; charset=utf-8',body:(loads++&&again||made).stdout});
+      if(path==='/')return route.fulfill({contentType:'text/html; charset=utf-8',body:(loads++&&again||first||made).stdout});
       if(gone&&path==='/api/scenes/star')return route.abort();
       const error=path==='/api/scenes/star'?starError:listError;
       if(error)return route.fulfill({status,contentType:'application/json',body:JSON.stringify({error})});
@@ -77,18 +79,26 @@ try{
   check(size.page<=size.screen,`the page is ${size.page} px wide on a ${size.screen} px screen`);
 
   // Every scene of the strip can be brought into view, and its number is not cut off.
-  const strip=await page.evaluate(()=>{
+  const reach=where=>where.evaluate(()=>{
     const cut=document.querySelector('.cut'),box=()=>cut.getBoundingClientRect();
     return {count:cut.children.length,scrolls:cut.scrollWidth>cut.clientWidth,focusable:cut.tabIndex===0,
       missed:[...cut.children].filter(part=>{
         part.scrollIntoView({inline:'nearest',block:'nearest'});
         const at=part.getBoundingClientRect(),number=document.createRange();number.selectNodeContents(part);
         return at.left<box().left-1||at.right>box().right+1||number.getBoundingClientRect().width>at.width;
-      }).map(part=>part.textContent)};
+      }).map(part=>part.textContent),
+      widths:[...new Set([...cut.children].slice(0,99).map(part=>part.getBoundingClientRect().width))]};
   });
+  const strip=await reach(page);
   assert.equal(strip.count,40);
   check(strip.scrolls&&strip.focusable,'the strip does not scroll sideways or does not take keyboard focus');
   check(!strip.missed.length,`scenes that cannot be reached or read in the strip: ${strip.missed.join(', ')}`);
+  // A long video: 120 scenes squeeze every segment to its smallest width, and a three-digit number is wider than
+  // the 18 px that holds two digits (second look SL-3, 2026-11-16). Scenes 1 to 99 keep those 18 px.
+  const long=await reach(await open(true,{first:build(0,120)}));
+  assert.equal(long.count,120);
+  check(!long.missed.length,`of 120 scenes, those that cannot be reached or read in the strip: ${long.missed.join(', ')}`);
+  check(long.widths.length===1&&long.widths[0]===18,`of 120 scenes, the first 99 are not all 18 px wide in the strip: ${long.widths.join(', ')} px`);
 
   // Playing the take with the long title must not widen the page.
   await page.locator('[data-play]').first().click();
@@ -211,5 +221,5 @@ try{
   at=await focus(stale);
   check(at==='play button of 01-scene take 2, no ring',`on a touched page that is out of date after its reload, the focus is on: ${at}`);
   assert.deepEqual(faults,[]);
-  console.log(`overview page at 320 px: ${strip.count} scenes reachable in the strip, long title and long server error wrap, a failed star click is said in the live region, the focus stays with the clicked star, ${stars.length} stars with a 44 px touch target`);
+  console.log(`overview page at 320 px: ${strip.count} scenes reachable in the strip and ${long.count} of a long video with their numbers whole, long title and long server error wrap, a failed star click is said in the live region, the focus stays with the clicked star, ${stars.length} stars with a 44 px touch target`);
 }finally{await browser.close();}

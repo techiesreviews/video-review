@@ -289,6 +289,28 @@ class NarrowScreens(unittest.TestCase):
         # Two digits at 12 px need about 15 px; the approved sketch gave a segment 18 px.
         self.assertGreaterEqual(pixels(css(render(), '.cut div')['min-width']), 18)
 
+    def test_a_three_digit_scene_number_gets_room_for_all_its_digits(self):
+        # 100 scenes on a phone squeeze every segment to its smallest width, and "100" at 12 px is about 21 px
+        # wide: more than the 18 px that holds two digits. 1ch is the width of one digit.
+        scenes = [{'id': f'{n:04d}-scene', 'number': n, 'title': f'Scene {n}'} for n in (9, 99, 100, 1000)]
+        store = scene_store.new_store(scenes)
+        scene_store.add_take(store, '0099-scene', 1, duration=5.0)
+        scene_store.add_take(store, '0100-scene', 1, duration=5.0)
+        scene_store.apply_best(store)
+        page = overview_page.render(store, 'Long video')
+        block = re.search(r'<div class="cut".*?</div>\s*<p class="cutlabel"', page, re.S).group(0)
+        styles = {int(number): style for style, number in re.findall(r'<div[^>]*? style="([^"]*)"[^>]*>(\d+)</div>', block)}
+        self.assertEqual(sorted(styles), [9, 99, 100, 1000])
+        # One and two digits keep the look they had: the 18 px every segment gets, and nothing of their own.
+        for number in (9, 99):
+            self.assertNotIn('min-width', styles[number], f'scene {number}')
+        # Three digits and more get their own smallest width, recorded or not: every digit plus some air.
+        for number, digits in ((100, 3), (1000, 4)):
+            room = re.search(r'min-width:calc\((\d+)ch \+ (\d+)px\)', styles[number])
+            self.assertTrue(room, f'scene {number} has no smallest width of its own: {styles[number]!r}')
+            self.assertEqual(int(room.group(1)), digits, f'scene {number}')
+            self.assertGreaterEqual(int(room.group(2)), 4, f'scene {number} has no air around its number')
+
     def test_a_long_unbroken_title_wraps_in_the_player_instead_of_widening_the_page(self):
         self.assertEqual(css(render(), '.player .t').get('overflow-wrap'), 'anywhere')
 
