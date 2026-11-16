@@ -77,6 +77,20 @@ try{
     assert.deepEqual(await page.locator('.transcript-word.selected').allInnerTexts(),['word11'],`${name}: its words stay selected.`);
     assert.equal(await page.locator('#barStatus').innerText(),'Brought back.');
 
+    // Undo whose save works but whose note cannot be closed: the words come back, the error shows, and the bar closes
+    // rather than staying open on a selection that is gone.
+    await word(13).click();await page.locator('.bar-delete').click();
+    await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===1);
+    assert.equal(await page.locator('#transcriptSelection').isVisible(),true,'the bar is open on the next word, with an empty box');
+    await page.route('**/api/comments',route=>route.request().method()==='POST'&&route.request().postDataJSON().action==='reply'?route.fulfill({status:500,contentType:'application/json',body:JSON.stringify({error:'Comments are busy'})}):route.continue());
+    await page.locator('#undoTranscriptCut').click();
+    await page.waitForFunction(()=>document.querySelector('#toast.show.error'));
+    assert.equal(await page.locator('#toastText').innerText(),'Comments are busy');
+    assert.equal(await page.locator('.transcript-word.removed-word').count(),0,`${name}: the words are back.`);
+    assert.equal(await page.locator('#transcriptSelection').isHidden(),true,`${name}: the bar does not stay open on a dropped selection.`);
+    await page.unroute('**/api/comments');
+    await page.locator('#toast').evaluate(n=>n.classList.remove('show','error'));
+
     // A save the server refuses: the word is not struck through, the error shows, the word stays selected.
     await page.route('**/api/transcript/words',route=>route.request().method()==='POST'?route.fulfill({status:500,contentType:'application/json',body:JSON.stringify({error:'Disk full'})}):route.continue());
     await word(6).click();
