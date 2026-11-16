@@ -943,6 +943,12 @@ class OneScriptLineTests(unittest.TestCase):
                          [['open', 'the', 'practice', 'site', 'now'], ['then', 'wait']])
         self.assertEqual(lines('Read [the page](https://example.com/wiki/Site_(web)) first.'),
                          [['read', 'the', 'page', 'first']])
+        # Second look, 2026-11-16 (SL-1): the address ends at its own closing bracket, however many pairs it holds.
+        self.assertEqual(lines('Read [the page](pages/Site_(web_(page))) first.'), [['read', 'the', 'page', 'first']])
+        self.assertEqual(lines('Say hello.\n- [The page](pages/Site_(web_(page)))\nYes.'), [['say', 'hello'], ['yes']])
+        # An address that is never closed is no link, and never runs past its line.
+        self.assertEqual(lines('Read [the page](pages/site first.\nThen go on.'),
+                         [['read', 'pagessite', 'first'], ['then', 'go', 'on']])
         # A link inside a direction goes with the direction.
         self.assertEqual(lines('Say hello. [Show [the site](https://example.com) on screen] Then go on.'),
                          [['say', 'hello'], ['then', 'go', 'on']])
