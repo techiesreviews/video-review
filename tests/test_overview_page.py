@@ -123,6 +123,12 @@ class SceneCards(unittest.TestCase):
         scene_store.set_favorite(store, COSTS, 2)
         self.assertNotIn('pick', scene_html(render(store), COSTS).replace('data-pick', ''))
 
+    def test_the_legend_names_the_pick_badge_as_the_computers_favorite(self):
+        legend = re.search(r'<p class="legend">(.*?)</p>', render(), re.S).group(1)
+        # A bare hollow star is also the star button of every archived take, so the legend names the badge.
+        self.assertIn("☆ pick: the computer's favorite, when it differs.", legend)
+        self.assertNotIn("☆ computer's favorite", legend)
+
     def test_a_changed_script_gets_a_chip_and_an_unchanged_one_does_not(self):
         page = render()
         self.assertIn('Script changed since recording', scene_html(page, '03-the-news-moves-fast'))
