@@ -485,6 +485,15 @@ class RestartTests(unittest.TestCase):
             + said('And then I look at the timeline.', 7.0)
         result = plan_words(words, 'And then I look at the timeline.')
         self.assertEqual(removed_texts(result), ['And then I look at the. And then I—'])
+        # Review round 1: an earlier take of the line minutes before does not make the short start part of a run.
+        words = said('And then I look at the timeline.', 1.0) + said('Other things happen.', 4.0) \
+            + [['And', 200.0, 200.2], ['then', 200.24, 200.4], ['I—', 200.44, 200.6]] \
+            + said('And then I look at the timeline.', 203.0)
+        result = plan_words(words, 'And then I look at the timeline. Other things happen.')
+        self.assertEqual(removed_texts(result), ['And then I look at the timeline.'])
+        self.assertEqual(result['paperEdit']['removed'][0]['keeps'], 203.0)
+        flag, = flags(result, 'possible-restart')
+        self.assertEqual(flag['start'], 200.0)
 
     def test_two_lines_that_only_open_alike_are_both_kept(self):
         words = [['This', 1.0, 1.2], ['is', 1.24, 1.4], ['the', 1.44, 1.6], ['tool.', 1.64, 2.0],
@@ -888,6 +897,22 @@ class OneScriptLineTests(unittest.TestCase):
         self.assertEqual(removed_texts(result), [])
         self.assertEqual(kept_starts(result, cut_timeline.load_words(words)), {word[1] for word in words})
 
+    def test_a_take_left_in_that_a_later_step_removes_in_part_is_still_listed_for_what_stays(self):
+        cutter = cut_takes.Cutter(cut_timeline.load_words(said('The camera is easy to use. The end.', 1.0)), FPS,
+                                  'The camera is easy to use. The end.')
+        cutter.flag('take-says-more', 0, 5, 'Left in.')
+        remove(cutter, 0, 1)
+        cutter.restarted_lines()
+        flag, = cutter.flags
+        self.assertEqual((flag['code'], flag['start'], flag['text']), ('take-says-more', 1.6, 'is easy to use.'))
+        remove(cutter, 2, 5)
+        cutter.restarted_lines()
+        self.assertEqual(cutter.flags, [])
+
+    def test_a_direction_in_brackets_that_runs_over_a_blank_line_or_a_list_is_left_out(self):
+        self.assertEqual(cut_takes.script_sentences('Say hello. [B-roll:\n- shot one\n\n- shot two] Then go on.'),
+                         [['say', 'hello'], ['then', 'go', 'on']])
+
     def test_a_script_line_said_word_for_word_is_never_lost(self):
         # The last check, whatever made the removal: here each sentence fits the other script line just as well
         # when word order is ignored, and the script says the second line twice.
@@ -1023,6 +1048,16 @@ class EdgeCaseTests(unittest.TestCase):
         # The same touch on a frame (1.000 s) cuts cleanly.
         on_frame = [[text, 1.0 if start == 1.017 else start, 1.0 if end == 1.017 else end] for text, start, end in words]
         self.assertEqual(removed_texts(plan_words(on_frame)), ['Start the show again'])
+
+    def test_a_whole_run_of_failed_tries_goes_back_in_when_its_first_word_touches_the_word_before_it(self):
+        # The safe direction, on purpose: the run goes back in whole and is listed once.
+        words = [['My', 0.3, 0.5], ['Intro.', 0.54, 1.017], ['Start', 1.017, 1.3], ['the', 1.34, 1.5],
+                 ['show.', 1.54, 1.8], ['Start', 2.6, 2.9], ['the', 2.94, 3.1], ['Start', 3.9, 4.2],
+                 ['the', 4.24, 4.4], ['show', 4.44, 4.7], ['now.', 4.74, 5.1]]
+        result = plan_words(words, 'My intro. Start the show now.')
+        self.assertEqual(removed_texts(result), [])
+        flag, = flags(result, 'no-clean-frame')
+        self.assertEqual((flag['start'], flag['text']), (1.017, 'Start the show. Start the'))
 
     def test_a_removed_opening_or_ending_that_touches_the_kept_word_between_two_frames_goes_back_in(self):
         opening = [['Start', 0.3, 0.6], ['the', 0.64, 0.8], ['show', 0.84, 1.1], ['again', 1.8, 2.117],
@@ -1227,6 +1262,12 @@ class FarApartTests(unittest.TestCase):
         # A short pause beside a removal is not worth a word.
         words = said('This is the tool.', 1.0) + said('This is the tool.', 3.0)
         result = plan_words(words)
+        self.assertNotIn('silence beside', cut_takes.render_paper_edit(result['paperEdit']))
+        # A marked screen demo in that silence stays in the cut, so there is nothing to warn about.
+        words = said('This is the tool.', 1.0) + said('This is the tool.', 12.0)
+        result = plan_words(words, demos=[(3.0, 10.0)])
+        removal, = result['paperEdit']['removed']
+        self.assertLess(removal['silenceBeside'], 3.0)
         self.assertNotIn('silence beside', cut_takes.render_paper_edit(result['paperEdit']))
         # The silence before a removed last take counts too.
         words = said('This is the tool.', 1.0) + said('This is the, um, um, tool.', 12.0)
