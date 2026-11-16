@@ -826,16 +826,19 @@ class CommandLine(unittest.TestCase):
 
 class SavedPageScript(unittest.TestCase):
     """The saved page's own script, run in Node with a fake page (skipped without Node)."""
-    def run_page_script(self, answer, click=False):
+    def run_page_script(self, answer, click=False, later=(200, '{}'), clicks=1):
         """Run the saved page's script in Node with a fake page and a fake fetch; return what the stars line (the
-        page's live region, empty when there is nothing to say) says and whether the stars are on. answer: what fetch does ('network', or [status, body text])."""
+        page's live region, empty when there is nothing to say) says, whether the stars are on, and what the one
+        star on the fake page shows. answer: what fetch does ('network', or [status, body text]): for the take
+        list when the page opens, or with click=True for the star click (the take list then answers 200 first and
+        `later` when it is asked again). clicks: how often the star is clicked."""
         node = shutil.which('node')
         if not node:
             self.skipTest('node is not installed')
         harness = textwrap.dedent('''
-            const answer = JSON.parse(process.argv[1]);
+            const [answer, later] = JSON.parse(process.argv[1]);
             const off = { textContent: '', dataset: { text: process.argv[2] } };
-            const star = { disabled: true };
+            const star = { disabled: true, setAttribute(name, value) { this[name] = value; } };
             globalThis.document = {
               body: { dataset: { server: 'http://127.0.0.1:8879', video: 'v-1', code: 'the-code' } },
               querySelectorAll: () => [star],
@@ -845,25 +848,28 @@ class SavedPageScript(unittest.TestCase):
             const player = { querySelector: () => ({ addEventListener: () => {} }) };
             const realGet = document.getElementById;
             document.getElementById = id => id === 'player' ? player : realGet(id);
-            let asked = '', sent = null, calls = 0;
-            const click = process.argv[3] === 'click';
+            let asked = '', lists = 0;
+            const sends = [], clicks = Number(process.argv[3]);
             globalThis.location = { reload: () => { off.textContent = 'reloaded'; } };
-            globalThis.fetch = (url, options) => {
-              asked = url; calls += 1;
-              if (options) sent = JSON.parse(options.body);
-              if (click && calls === 1) return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
-              if (answer === 'network') return Promise.reject(new TypeError('Failed to fetch'));
-              const [status, text] = answer;
+            const reply = said => {
+              if (said === 'network') return Promise.reject(new TypeError('Failed to fetch'));
+              const [status, text] = said;
               return Promise.resolve({ ok: status < 300, json: () => Promise.resolve().then(() => JSON.parse(text)) });
             };
+            globalThis.fetch = (url, options) => {
+              if (options) { sends.push(JSON.parse(options.body)); return reply(answer); }
+              asked = url; lists += 1;
+              return reply(!clicks ? answer : lists === 1 ? [200, '{}'] : later);
+            };
             ''') + overview_page.PAGE_SCRIPT.split('<script>')[1].split('</script>')[0] + textwrap.dedent('''
-            Object.assign(star, { dataset: { scene: '01-intro', take: '2', starred: 'false' } });
-            if (click) setTimeout(() => globalThis.onClick({ target: { closest: s => s === '.st' ? star : null } }), 20);
-            setTimeout(() => console.log(JSON.stringify({ said: off.textContent, on: !star.disabled, asked, sent })), 80);
+            Object.assign(star, { dataset: { scene: '01-intro', take: '2', starred: 'false', on: 'false' }, textContent: '☆' });
+            for (let n = 0; n < clicks; n += 1) setTimeout(() => globalThis.onClick({ target: { closest: s => s === '.st' ? star : null } }), 20 + 40 * n);
+            setTimeout(() => console.log(JSON.stringify({ said: off.textContent, on: !star.disabled, asked, sent: sends.at(-1) ?? null, sends,
+              star: { starred: star.dataset.starred, on: star.dataset.on, glyph: star.textContent, label: star['aria-label'] ?? null, title: star.title ?? null } })), 60 + 40 * clicks);
             ''')
-        done = subprocess.run([node, '-e', harness, json.dumps(answer), overview_page.STARS_OFF_TEXT,
-                               'click' if click else 'load'],
-                              capture_output=True, text=True, timeout=30)
+        done = subprocess.run([node, '-e', harness, json.dumps([answer, later]), overview_page.STARS_OFF_TEXT,
+                               str(clicks if click else 0)],
+                              capture_output=True, text=True, timeout=30, encoding='utf-8')
         self.assertEqual(done.returncode, 0, done.stderr)
         return json.loads(done.stdout)
 
@@ -880,6 +886,42 @@ class SavedPageScript(unittest.TestCase):
         for answer in ([500, json.dumps({'error': {'x': 1}})], [500, '{"error": 7}'], [500, 'null'], [500, 'not json']):
             seen = self.run_page_script(answer, click=True)
             self.assertEqual((seen['said'], seen['on']), (overview_page.STARS_OFF_TEXT, True), answer)
+
+    def test_a_star_that_was_saved_although_the_server_reports_a_problem_shows_as_saved(self):
+        # The server saves the star first; when the rough cut or the page cannot follow it answers 500. The page
+        # then takes the saved stars, so the same star clicked again takes the star off instead of setting it again.
+        problem = 'The star is saved, but the rough cut could not be rebuilt: no'
+        saved = json.dumps({'scenes': [{'id': '01-intro', 'star': 2, 'best': 2}]})
+        seen = self.run_page_script([500, json.dumps({'error': problem})], click=True, later=[200, saved], clicks=2)
+        self.assertEqual((seen['said'], seen['on']), (problem, True))
+        on, _, _ = overview_page.STAR_LABELS
+        self.assertEqual(seen['star'], {'starred': 'true', 'on': 'true', 'glyph': '★', 'label': on, 'title': on})
+        self.assertEqual([body['take'] for body in seen['sends']], [2, None])
+
+    def test_a_failed_star_click_leaves_the_stars_off_when_the_saved_stars_cannot_be_read(self):
+        # Without the saved stars the page cannot know which way a click would switch.
+        problem = 'The star is saved, but the page could not be rewritten: no'
+        for later in ('network', [409, '{"error": "The scene file is not valid."}']):
+            seen = self.run_page_script([500, json.dumps({'error': problem})], click=True, later=later)
+            self.assertEqual((seen['said'], seen['on']), (problem, False), later)
+
+    def test_a_page_that_was_not_written_again_shows_the_saved_stars_when_it_opens(self):
+        _, keep, put = overview_page.STAR_LABELS
+        for scene, shown in (({'id': '01-intro', 'star': 2, 'best': 2}, ('true', 'true', '★')),
+                             ({'id': '01-intro', 'star': None, 'best': 2}, ('false', 'true', '★')),
+                             ({'id': '01-intro', 'star': 1, 'best': 1}, ('false', 'false', '☆')),
+                             ({'id': '09-other', 'star': 2, 'best': 2}, ('false', 'false', '☆'))):
+            seen = self.run_page_script([200, json.dumps({'scenes': [scene]})])
+            self.assertEqual((seen['star']['starred'], seen['star']['on'], seen['star']['glyph']), shown, scene)
+            self.assertTrue(seen['on'])
+        self.assertEqual(self.run_page_script([200, json.dumps({'scenes': [{'id': '01-intro', 'star': None, 'best': 2}]})])['star']['label'], keep)
+        self.assertEqual(self.run_page_script([200, json.dumps({'scenes': [{'id': '01-intro', 'star': 1, 'best': 1}]})])['star']['label'], put)
+
+    def test_the_page_script_and_the_page_use_the_same_star_labels(self):
+        self.assertEqual(overview_page.STAR_LABELS,
+                         ('Take the star off', 'Keep in rough cut (star it)', 'Put in rough cut'))
+        for label in overview_page.STAR_LABELS:
+            self.assertIn(f"'{label}'", overview_page.PAGE_SCRIPT)
 
     def test_the_saved_page_shows_the_server_s_reason_or_the_usual_line(self):
         seen = self.run_page_script([200, '{"scenes": []}'])
