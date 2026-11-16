@@ -850,6 +850,8 @@ class Cutter:
             others = [take for take in takes.get(line, ())
                       if not used.intersection(take) and not any(set(take) & set(reading) for reading in kept)]
             missing = min(counts[line], len(found)) - len(kept) - len(others)
+            # The words of a kept take of this line are its own too: a shorter line is not counted inside it.
+            used.update(index for take in takes.get(line, ()) for index in take)
             for reading in gone[len(gone) - missing:] if missing > 0 else ():
                 reason = next((item['reason'] for item in self.removed
                                if item['first'] <= reading[0] <= item['last']), 'earlier-take')
