@@ -214,28 +214,40 @@ def server_address(data_dir=None):
 # The script text -------------------------------------------------------------------------------------------------
 
 ANY_HEADING = re.compile(r'^#{1,6}[ \t]')
-LINK = re.compile(r'\[([^\]]*)\]\([^)]*\)')
+# A link stays on one line.
+LINK = re.compile(r'\[([^\]\n]*)\]\([^)\n]*\)')
+# A link with a line to itself is a direction with an address.
+LINK_LINE = re.compile(rf'^[ \t]*{LINK.pattern}[ \t]*$', re.M)
+# A [direction] may run over several lines of its scene, but never past the next opening bracket.
+DIRECTION = re.compile(r'\[[^\[\]]*\]')
+
+
+def spoken_text(text):
+    """One scene's lines as the words to say: a link is read as its text, or left out when it has a line to
+    itself; [directions] are left out, also inside a line and over several lines, and so is a line that opens a
+    bracket it never closes; bold marks go."""
+    text = DIRECTION.sub(' ', LINK.sub(r'\1', LINK_LINE.sub('', text)))
+    lines = [line for line in text.splitlines() if not line.lstrip().startswith('[')]
+    return ' '.join(' '.join(lines).replace('**', '').split())
 
 
 def scene_texts(cue_text):
-    """{scene id: spoken text} from a cue file. Stage directions (lines that start with a bracket), links and
-    bold marks are left out. A heading that is not a scene ends the scene before it; for a heading that
-    appears twice the first wins, as in scene_store.parse_cue_file."""
+    """{scene id: spoken text} from a cue file, without stage directions, link addresses and bold marks (see
+    spoken_text). A heading that is not a scene ends the scene before it; for a heading that appears twice the
+    first wins, as in scene_store.parse_cue_file."""
     texts = {}
     current = None
     for line in cue_text.splitlines():
-        line = line.strip()
-        if ANY_HEADING.match(line):
-            match = scene_store.HEADING.match(line)
+        if ANY_HEADING.match(line.strip()):
+            match = scene_store.HEADING.match(line.strip())
             key = scene_store.scene_id(match.group(1), match.group(2).strip()) if match else None
             current = key if key and key not in texts else None
             if current:
                 texts[current] = []
-            continue
-        if current is None or not line or line.startswith('['):
-            continue
-        texts[current].append(' '.join(LINK.sub(r'\1', line).replace('**', '').split()))
-    return {key: ' '.join(lines) for key, lines in texts.items() if lines}
+        elif current is not None:
+            texts[current].append(line)
+    spoken = {key: spoken_text('\n'.join(lines)) for key, lines in texts.items()}
+    return {key: text for key, text in spoken.items() if text}
 
 
 # Thumbnails ------------------------------------------------------------------------------------------------------
