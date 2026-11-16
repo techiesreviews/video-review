@@ -38,7 +38,7 @@ What it does:
   front of a closing quote, bracket or bold mark), and at a heading, a blank line or a list item, so a line
   without a full stop does not run into the next one. Headings and `[directions]` are left out.
   A link is read as its text, or left out when it has a line to itself, like a direction; images and bare
-  `https://` addresses are left out.
+  web addresses (`http://` or `https://`) are left out.
 - **Retakes.** A quiet "again" with a pause around it marks a retake: the failed attempt and the word itself are
   removed. "Again and again", an "again" inside a sentence and an "again" the script itself says ("So, again,
   you see") stay. A sentence begun, dropped and restarted after a pause loses the dropped start; a dropped start
