@@ -2,7 +2,7 @@ import {chromium} from 'playwright';
 import assert from 'node:assert/strict';
 
 const base='https://video.techies.tools';
-for(const name of ['','app.js','backend.js','cut-core.js','transcript-core.js','transcript-panel.js','waveform-core.js','waveform-panel.js','library-panel.js','review-core.js','style.css']){
+for(const name of ['','app.js','backend.js','cut-core.js','cut-preferences.json','transcript-core.js','transcript-panel.js','waveform-core.js','waveform-panel.js','library-panel.js','review-core.js','style.css']){
   const response=await fetch(base+'/'+name+'?release=listening-20261028');
   const text=await response.text();assert.equal(response.status,200);
   if(!name){assert.ok(text.includes('transcriptNoteForm')&&text.includes('librarySearch')&&text.includes('undoTranscriptCut'));assert.ok(text.includes('waveformCanvas')&&text.includes('toggleTranscriptView')&&text.includes('pauseThreshold'));assert.ok(!text.includes('id="commentBtn"'));}

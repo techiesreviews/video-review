@@ -11,25 +11,22 @@ import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import cut_preferences  # noqa: E402
 import cut_timeline  # noqa: E402
 
-# Lex's recorded starting preferences, from EDITING-LESSONS.md (docs/video-workflow/CUT-CHECKS.md).
+# Lex's preferences and this check's working limits, from web/cut-preferences.json (the cutter reads the same file).
 THRESHOLDS = {
-    # Lex's choice of 2026-11-10: the same 100-150 ms of room before the first word as at every other cut.
-    'leadInMs': [100, 150],
-    # Lex's choice of 2026-11-11: the longer pauses between phrases.
-    'linkedGapMs': [200, 300],
-    'newThoughtGapMs': [350, 500],
-    'speechEdgeMs': [100, 150],
-    # Two sides of 100-150 ms add up to 300 ms at most, so a new thought may leave more (the cutter's working value).
-    'newThoughtRoomMaxMs': 200,
-    'audioFadeMs': 15,
-    # Working limits of this check, not recorded preferences.
-    'clippedEdgeMaxMs': 80,
-    'orphanWordMaxMs': 300,
-    'orphanPauseMs': 300,
+    # The same room before the first word as beside every other cut.
+    'leadInMs': cut_preferences.LEX['roomMs'],
+    'linkedGapMs': cut_preferences.LEX['linkedGapMs'],
+    'newThoughtGapMs': cut_preferences.LEX['newThoughtGapMs'],
+    'speechEdgeMs': cut_preferences.LEX['roomMs'],
+    # Two sides of roomMs may fall short of a new thought's pause, so it may leave more (the cutter's working value).
+    'newThoughtRoomMaxMs': cut_preferences.CUTTER['newThoughtRoomMaxMs'],
+    'audioFadeMs': cut_preferences.LEX['audioFadeMs'],
+    **cut_preferences.JOIN_CHECK,
 }
-SENTENCE_END = re.compile(r'[.!?]["\')\]]*$')
+SENTENCE_END = cut_timeline.SENTENCE_END
 CONTEXT_WORDS = 3
 
 

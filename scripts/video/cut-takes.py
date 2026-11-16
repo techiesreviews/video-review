@@ -39,47 +39,14 @@ import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import cut_preferences  # noqa: E402
 import cut_timeline  # noqa: E402
 import script_text  # noqa: E402
 
-SETTINGS = {
-    # Lex's answers of 2026-11-10 (room on both sides of speech) and 2026-11-11 (the whole silence at a join:
-    # he listened to the cutter's version next to the original and chose the longer pauses).
-    'roomMs': [100, 150],
-    'linkedGapMs': [200, 300],
-    'newThoughtGapMs': [350, 500],
-    'audioFadeMs': 15,
-    # Where the cutter aims inside those ranges.
-    'linkedTargetMs': 250,
-    'newThoughtTargetMs': 400,
-    # Room per side at a new-thought join may reach this (half the aimed silence): 100-150 ms on each side adds up to
-    # 300 ms at most, so 350-500 ms of silence needs more. Every other cut stays at 100-150 ms.
-    'newThoughtRoomMaxMs': 200,
-    # Working values of this cutter, not Lex's words; each is listed in the paper edit.
-    'breathMaxMs': 700,
-    'longSilenceMs': 3000,
-    'cuePauseMs': 250,
-    'restartPauseMs': 300,
-    'attemptBreakMs': 1500,
-    'attemptMaxSeconds': 30,
-    'nearTakeSeconds': 60,
-    'scriptMatch': 0.5,
-    'nearTakeMatch': 0.6,
-    'nearTakeRest': 0.5,
-    'restartRepeat': 0.6,
-    # Two sentences are takes of one script line only when this share of the line's words that the shorter one says
-    # is said by the other too; less, and they are two parts of the line.
-    'samePartOfLine': 0.6,
-    'completeCoverage': 0.8,
-    'worseCoverageDrop': 0.15,
-    'worseStumbles': 2,
-    'worseKeptPoint': 0.6,
-    # A dropped start shorter than this is listed, not cut: the paper edit only asks to inspect "And then I—".
-    'shortStartWords': 4,
-    # A line is an ad-lib only when no more than this share of its main words is in its closest script line.
-    'adLibMainWords': 0.5,
-}
-SENTENCE_END = re.compile(r'[.!?]["\')\]]*$')
+# Lex's choices (room around speech, the pauses at a join, the fade), then the cutter's working values; the numbers,
+# with Lex's dated answers beside them, are in web/cut-preferences.json.
+SETTINGS = {**cut_preferences.LEX, **cut_preferences.CUTTER}
+SENTENCE_END = cut_timeline.SENTENCE_END
 TRAILING_MARK = re.compile(r'[,;:.!?–—-]["\')\]]*$')
 # In a script: the end of a sentence with the quotes, brackets and bold marks that close after it.
 SCRIPT_STOP = re.compile(r'(?<=[.!?])["\'”’»)\]*_`]*\s+')
