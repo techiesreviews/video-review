@@ -51,15 +51,15 @@ export function normalizeTranscript(data, durationMs=Infinity, videoFps=null) {
 export function storeTranscript(state,videoId,data,{editsOnly=false}={}){
   const video=state.videos.find(v=>v.id===videoId);if(!video)throw Error(RULES.messages.unknownVideo);
   const transcript=normalizeTranscript(data,video.durationMs,video.fps);
-  if(editsOnly&&!sameWords(state.transcripts?.[video.id],transcript,video))throw Error(RULES.messages.transcriptChanged);
+  if(editsOnly&&!sameWords(state.transcripts?.[video.id],transcript))throw Error(RULES.messages.transcriptChanged);
   if(transcript.keepRanges)applyRender(state,video.id,{keepRanges:transcript.keepRanges});
   (state.transcripts||(state.transcripts={}))[video.id]=transcript;return transcript;
 }
-function sameWords(saved,transcript,video){
-  if(!saved)return false;
-  let current;try{current=normalizeTranscript(saved,video.durationMs,video.fps);}catch{return false;}
-  const wordsOnly=({draftEdits,...rest})=>JSON.stringify(rest);
-  return wordsOnly(current)===wordsOnly(transcript);
+/** True when the saved transcript has the words (ids, text and times) and the source mapping transcript was made on,
+ *  as review_store.same_words checks it. */
+export function sameWords(saved,transcript){
+  const words=t=>Array.isArray(t?.words)?JSON.stringify([t.words.map(w=>[w?.id,w?.text,w?.startMs,w?.endMs]),t.keepRanges??null]):null;
+  return words(saved)!==null&&words(saved)===words(transcript);
 }
 
 // Removed source ranges use the recording clock; preview cuts use the review clock.

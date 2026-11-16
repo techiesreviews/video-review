@@ -231,19 +231,19 @@ def save_transcript(directory,video_id,data,edits_only=False):
     result=_clean_transcript(video,data)
     path=transcript_path(directory,video_id);path.parent.mkdir(parents=True,exist_ok=True)
     with locked(path):
-        if edits_only and not _same_words(video,read(path,None),result):raise ValueError(MESSAGES['transcriptChanged'])
+        if edits_only and not same_words(read(path,None),result):raise ValueError(MESSAGES['transcriptChanged'])
         write(path,result)
     if result.get('keepRanges') is not None and result['keepRanges']!=video.get('keepRanges'):
         update_render(directory,video_id,None,result['keepRanges'])
     return result
 
-def _same_words(video,saved,result):
-    """True when the saved transcript is the one result was made on: everything but the preview cuts is the same."""
-    if not isinstance(saved,dict):return False
-    try:current=_clean_transcript(video,saved)
-    except ValueError:return False
-    def words_only(transcript):return {key:value for key,value in transcript.items() if key!='draftEdits'}
-    return words_only(current)==words_only(result)
+def same_words(saved,transcript):
+    """True when the saved transcript has the words (ids, text and times) and the source mapping transcript was made on,
+    as web/transcript-core.js sameWords checks it."""
+    def words(t):
+        if not isinstance(t,dict) or not isinstance(t.get('words'),list):return None
+        return [[w.get('id'),w.get('text'),w.get('startMs'),w.get('endMs')] if isinstance(w,dict) else None for w in t['words']],t.get('keepRanges')
+    return words(saved) is not None and words(saved)==words(transcript)
 
 def _clean_transcript(video,data):
     """The transcript as it is saved, checked against the video; a ValueError says what is wrong."""
