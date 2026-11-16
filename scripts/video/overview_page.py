@@ -394,7 +394,8 @@ def _scene_section(scene, text, thumbs, prefix, changed):
 
 def _number_room(number):
     """The inline style that gives a strip segment room for a scene number of three digits or more, else nothing:
-    one and two digits fit the 18 px every segment gets. 1ch is the width of one digit; the 6 px is air."""
+    one and two digits fit the 18 px every segment gets. 1ch is the width of a "0", and the page's font draws
+    every digit about that wide; the 6 px is air."""
     digits = len(str(number))
     return f';min-width:calc({digits}ch + 6px)' if digits > 2 else ''
 
