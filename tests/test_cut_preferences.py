@@ -124,8 +124,8 @@ class EveryScriptReadsTheFile(unittest.TestCase):
 
     def test_a_cut_follows_the_changed_numbers(self):
         """The cutter's cut moves with the file: the room before the first word and the pause it aims for. The
-        numbers are ones today's values cannot give: today's room leaves 133 ms before "Intro", and an aim of
-        310 ms in the same changed range gives a 334 ms pause."""
+        numbers are ones today's values cannot give: today's room leaves 133 ms before "Intro", today's aim of
+        250 ms gives a 334 ms pause in the same changed range, and 367 ms is outside today's pause range."""
         def change(data):
             change_numbers(data)
             data['lex']['roomMs']['value'] = [160, 200]
@@ -139,6 +139,7 @@ class EveryScriptReadsTheFile(unittest.TestCase):
         join = result['paperEdit']['joins'][0]
         self.assertEqual(join['fadeMs'], 17)
         self.assertEqual(join['gapMs'], 367, join)
+        self.assertIsNone(join['note'], join)
         self.assertEqual(round((0.5 - result['cutlist']['segments'][0]['sourceInFrame'] / 30) * 1000), 200)
 
 
