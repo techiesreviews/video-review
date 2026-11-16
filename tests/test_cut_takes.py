@@ -860,6 +860,16 @@ class OneScriptLineTests(unittest.TestCase):
         self.assertEqual(removed_texts(plan_words(words, 'The camera is easy to carry.')),
                          ['The camera is easy to move.'])
 
+    def test_a_take_said_in_another_word_order_keeps_a_script_word_the_kept_take_leaves_out(self):
+        # Release checks, 2026-11-16 (TOOLS-307): lined up in order, "To use the camera is easy." matches only
+        # "the camera is easy", so the later take seemed to say all of it and the only "use" was cut.
+        script = 'The camera is easy to use and carry.'
+        words = said('To use the camera is easy.', 1.0) + said('The camera is easy to carry.', 3.4)
+        result = plan_words(words, script)
+        self.assertEqual(removed_texts(result), [])
+        flag, = flags(result, 'take-says-more')
+        self.assertEqual(flag['start'], 1.0)
+
     def test_a_short_script_line_that_a_retake_cue_would_remove_stays(self):
         # Fourth whole-file look, 2026-11-16: the script says "Thanks again." and the "again" has a pause on both
         # sides, as a retake cue has.
@@ -994,6 +1004,44 @@ class OneScriptLineTests(unittest.TestCase):
                                   '[The survey.](https://example.com/survey)\nYes.')
         self.assertEqual(cutter.script, [['yes']])
 
+    def test_brackets_inside_a_direction_or_a_bracket_never_closed_hide_no_spoken_word(self):
+        # Release checks, 2026-11-16 (TOOLS-307): the cutter ended a direction at its first "]" and ran an open
+        # one on to a later direction's "]", so it read another script than the overview page shows.
+        lines = cut_takes.script_sentences
+        self.assertEqual(lines('[Open [Advanced] settings]\nOne.'), [['one']])
+        self.assertEqual(lines('[Open [Settings] and press Save]\nOne.'), [['one']])
+        self.assertEqual(lines('[Show the [new] logo]\nOne.'), [['one']])
+        # A line that opens a bracket it never closes is left out on its own, as on the overview page.
+        self.assertEqual(lines('[pause\nOne.\nTwo [smile] three.'), [['one'], ['two', 'three']])
+        self.assertEqual(lines('[Face full\nOne.\n[Show the camera]\nTwo.'), [['one'], ['two']])
+
+    def test_a_bold_link_alone_on_its_line_is_not_speech(self):
+        lines = cut_takes.script_sentences
+        self.assertEqual(lines('Say hello.\n**[Source](docs/source.md)**\nYes.'), [['say', 'hello'], ['yes']])
+        self.assertEqual(lines('Say hello.\n- _[Source](docs/source.md)_\nYes.'), [['say', 'hello'], ['yes']])
+        # Bold link text inside a spoken line is still read.
+        self.assertEqual(lines('Read **[the guide](docs/guide.md)** first.'), [['read', 'the', 'guide', 'first']])
+
+    def test_escaped_brackets_in_link_text_keep_their_words(self):
+        lines = cut_takes.script_sentences
+        self.assertEqual(lines('Read [the \\[important\\] guide](docs/guide.md) first.'),
+                         [['read', 'the', 'important', 'guide', 'first']])
+        self.assertEqual(lines('Say \\[this\\] now.'), [['say', 'this', 'now']])
+
+    def test_the_cutter_and_the_overview_page_read_the_same_words(self):
+        overview_page = load('overview_page', ROOT / 'scripts/video/overview_page.py')
+        samples = ['[Show the [new] logo]\nOne.', '[pause\nOne.\nTwo [smile] three.',
+                   '[Face full\nOne.\n[Show the camera]\nTwo.',
+                   'One.\n- [The survey](https://example.com/survey)\nTwo.',
+                   'Say hello.\n**[Source](docs/source.md)**\nYes.',
+                   'Read [the \\[important\\] guide](docs/guide.md) first.',
+                   'Watch [![The demo](thumb.png)](videos/demo.mp4) now.',
+                   'Look here [point at\nthe screen.\n[Face full]\nTwo.']
+        for sample in samples:
+            page = overview_page.scene_texts(f'### 1 · A\n{sample}\n').get('01-a', '')
+            self.assertEqual([cut_takes.norm(word) for word in page.split() if cut_takes.norm(word)],
+                             [word for line in cut_takes.script_sentences(sample) for word in line], sample)
+
     def test_a_short_line_is_not_counted_inside_a_take_of_a_longer_line(self):
         # Second look on PR #42: after a quiet "again" the longer line follows, which opens with the short line's
         # words. Those words belong to the longer line, also when its take leaves a word out ("very").
@@ -1109,6 +1157,15 @@ class OneScriptLineTests(unittest.TestCase):
         words = said('Thanks for watching this week', 1.0) + said('Thanks for watching this week.', 3.5)
         self.assertEqual(removed_texts(plan_words(words, script)), ['Thanks for watching this week'])
 
+    def test_a_one_word_line_is_not_replaced_by_a_later_sentence_that_opens_with_the_word(self):
+        # Release checks, 2026-11-16 (TOOLS-307): "Yes, we can." counted as a take of the line "Yes.", so the
+        # "Yes" said on its own went with the failed try it was run into, and Lex was not told.
+        words = said('Yes', 1.0) + said('The', 1.6) + said('The tool is fast.', 2.2) \
+            + said('The tool is fast.', 4.0) + said('Yes, we can.', 5.8)
+        result = plan_words(words, 'Yes. The tool is fast.')
+        self.assertIn(1.0, kept_starts(result, cut_timeline.load_words(words)))
+        self.assertIn(1.0, [item['start'] for item in flags(result, 'script-line-kept')])
+
 
 class EveryScriptLineStaysTests(unittest.TestCase):
     """Many made-up recordings instead of one shape at a time: lines that open alike or hold another line, failed
@@ -1168,10 +1225,12 @@ class EveryScriptLineStaysTests(unittest.TestCase):
                 pause = rng.choice([0.4, 0.9, 1.6, 2.4])
         return lines, words, alone
 
-    def lost_lines(self, lines, words, alone=None):
-        script = ' '.join(' '.join(line).capitalize() + '.' for line in lines)
+    def lost_lines(self, lines, words, alone=None, script=None, fps=FPS):
+        """Script lines the cut loses. The script is the lines as sentences, unless a script text is given; then
+        the lines are what must still be said word for word."""
+        script = script or ' '.join(' '.join(line).capitalize() + '.' for line in lines)
         loaded = cut_timeline.load_words(words)
-        kept = kept_starts(cut_takes.plan(loaded, FPS, script_text=script), loaded)
+        kept = kept_starts(cut_takes.plan(loaded, fps, script_text=script), loaded)
         lost = self.missing(lines, [cut_takes.norm(text) for text, start, _ in words if start in kept])
         # A one-word line is a word many other sentences say too, so the times it is said on its own are counted
         # here: as many of them stay as the script says the line (a second reading of it may go as a retake).
@@ -1205,6 +1264,30 @@ class EveryScriptLineStaysTests(unittest.TestCase):
             self.assertEqual(self.lost_lines(lines, words, alone), [],
                              f'seed {seed}: {" ".join(text for text, _, _ in words)}')
 
+    # The rare shapes the release checks of 2026-11-16 found (TOOLS-307): (script text, lines that must still be
+    # said, recording, words said on their own, frames per second).
+    RARE_SHAPES = [
+        ('Hello.', [['hello']], [['Hello.', 1.0, 1.18]], None, 15),
+        ('The tool is fast.\n[Open [Advanced] settings]\nThe tool is fast.', [['the', 'tool', 'is', 'fast']] * 2,
+         said('The tool is fast.', 1.0) + said('The tool is fast.', 3.0), None, FPS),
+        ('[pause\nThe tool is fast.\nThe tool is fast.', [['the', 'tool', 'is', 'fast']] * 2,
+         said('The tool is fast.', 1.0) + said('The tool is fast.', 3.0), None, FPS),
+        ('Yes. The tool is fast.', [['yes'], ['the', 'tool', 'is', 'fast']],
+         said('Yes', 1.0) + said('The', 1.6) + said('The tool is fast.', 2.2) + said('The tool is fast.', 4.0)
+         + said('Yes, we can.', 5.8), {'yes': [1.0]}, FPS),
+        ('The camera is easy to use and carry.', [['to', 'use', 'the', 'camera', 'is', 'easy'],
+                                                  ['the', 'camera', 'is', 'easy', 'to', 'carry']],
+         said('To use the camera is easy.', 1.0) + said('The camera is easy to carry.', 3.4), None, FPS),
+        ('The tool is fast.\n**[Source](docs/source.md)**\nThe tool is fast.', [['the', 'tool', 'is', 'fast']] * 2,
+         said('The tool is fast.', 1.0) + said('The tool is fast.', 3.0), None, FPS),
+        ('Read [the \\[important\\] guide](docs/guide.md) first.', [['read', 'the', 'important', 'guide', 'first']],
+         said('Read the important guide first.', 1.0) + said('Read the guide first.', 3.0), None, FPS),
+    ]
+
+    def test_no_script_line_is_lost_in_the_rare_shapes_of_the_release_checks(self):
+        for script, lines, words, alone, fps in self.RARE_SHAPES:
+            self.assertEqual(self.lost_lines(lines, words, alone, script, fps), [], script)
+
     def test_the_check_itself_finds_a_lost_line(self):
         fast, long = 'the tool is fast'.split(), 'the tool is fast and easy'.split()
         self.assertEqual(self.missing([fast, long], long), ['the tool is fast'])
@@ -1214,6 +1297,19 @@ class EveryScriptLineStaysTests(unittest.TestCase):
 
 
 class EdgeCaseTests(unittest.TestCase):
+    def test_a_last_word_with_no_frame_in_the_preferred_room_still_gets_an_ending(self):
+        # Release checks, 2026-11-16 (TOOLS-307): at 15 fps a frame is 67 ms, wider than the 100-150 ms range, so
+        # a last word ending at 1.18 s has no frame in it. The fallback then turned "no next word" into a frame.
+        for end in [round(1.01 + step / 100, 2) for step in range(25)]:
+            words = [['Hello.', 0.6, end]]
+            result = plan_words(words, fps=15)
+            timeline = cut_timeline.load_cutlist(result['cutlist'])
+            room = round((timeline.runs[-1].source_end - end) * 1000)
+            self.assertGreaterEqual(room, ROOM_MS[0], end)
+            self.assertLess(room, ROOM_MS[0] + 67, end)
+            if room > 150:
+                self.assertEqual([item['code'] for item in result['paperEdit']['flags']], ['tight-edge'], end)
+
     def test_too_little_silence_is_flagged_and_no_word_is_cut(self):
         # The failed attempt starts 40 ms after "words.", so 100 ms of room cannot fit there.
         words = [['Intro', 0.5, 0.8], ['words.', 0.84, 1.2], ['Start', 1.24, 1.5], ['the', 1.54, 1.7],
