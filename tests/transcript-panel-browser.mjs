@@ -160,6 +160,12 @@ try{
     assert.ok(stored.draftEdits[0].startMs<=3000&&stored.draftEdits[0].endMs>=3000);
     assert.equal(stored.words[14].text,'fourteen-new');
 
+    // A cut with its own note, for the Undo below.
+    await word(7).click();await page.locator('#transcriptNote').fill('cut note');await page.locator('.bar-delete').click();
+    await page.waitForFunction(()=>document.querySelectorAll('.transcript-word')[7].classList.contains('removed-word'));
+    stored=JSON.parse(await readFile(join(temp,'transcripts/words.json'),'utf8'));
+    assert.equal(stored.draftEdits.length,2,JSON.stringify(stored.draftEdits));
+
     // A refused Delete on a join that is gone from the newer words: nothing is selected instead, the line shows on the
     // panel, and the typed note waits for the next selection.
     await page.locator('.transcript-join',{hasText:'J1'}).click();
@@ -183,8 +189,11 @@ try{
     assert.equal(await page.locator('#transcriptNoteForm').isHidden(),true,`${name}: a removed word's bar has no note box.`);
     assert.equal(await page.locator('#transcriptNote').inputValue(),'',`${name}: the waiting note is not put in the hidden box.`);
     assert.equal(await page.locator('#transcriptNotice').innerText(),'',`${name}: the line goes once something is selected.`);
-    await word(3).click();
-    assert.equal(await page.locator('#transcriptNote').inputValue(),'rough join',`${name}: the typed note is kept for the next selection.`);
+    // An Undo that works brings back the cut with its own note: the words come back selected with both notes in the box.
+    await page.locator('#undoTranscriptCut').click();
+    await page.waitForFunction(()=>!document.querySelectorAll('.transcript-word')[7].classList.contains('removed-word'));
+    assert.deepEqual(await page.locator('.transcript-word.selected').allInnerTexts(),['word7']);
+    assert.equal(await page.locator('#transcriptNote').inputValue(),'cut note rough join',`${name}: the typed note is kept for the next selection.`);
 
     // A refused Delete whose transcript was removed elsewhere meanwhile says so on the panel, not "try again".
     await word(1).click();await page.locator('.bar-delete').click();
