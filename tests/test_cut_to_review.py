@@ -1,10 +1,13 @@
 """Offline checks for cut-to-review.py and resolve_build.py: a fake Resolve, a fake ffprobe, no network."""
+import builtins
 import contextlib
 import hashlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
+import shutil
 import socket
 import sys
 import tempfile
@@ -756,6 +759,83 @@ class UploadFailures(Base):
         with mock.patch.object(cut_to_review.urllib.request, 'urlopen', offline):
             with self.assertRaisesRegex(cut_to_review.Stop, 'could not be reached'):
                 self.upload(cut_to_review.post_json)
+
+
+class Killed(BaseException):
+    """The program dies in the middle of a save (power cut, a closed window)."""
+
+
+class CutShort:
+    """A file being written that takes half of the text and then dies."""
+
+    def __init__(self, handle):
+        self.handle = handle
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *error):
+        self.handle.close()
+
+    def __getattr__(self, name):
+        return getattr(self.handle, name)
+
+    def write(self, text):
+        self.handle.write(text[:len(text) // 2])
+        self.handle.flush()
+        raise Killed()
+
+
+class InterruptedRecordSave(Base):
+    """A save of the upload record that dies halfway: the record on disk stays whole, so a rerun carries on."""
+    SAVES = 7  # each of the three steps as started and as finished, then the upload as complete
+
+    def setUp(self):
+        super().setUp()
+        self.assertEqual(self.build(), cut_to_review.STOP_EXIT)
+
+    def upload(self, run_dir, data, die_at=None):
+        """One upload to a local review page; the save numbered die_at (from 1) of the upload record dies halfway."""
+        saves = []
+        real_open = builtins.open
+
+        def opening(file, mode='r', *rest, **options):
+            handle = real_open(file, mode, *rest, **options)
+            path = Path(file) if isinstance(file, (str, os.PathLike)) else None
+            # The safe save writes a file next to the record first, so that one counts as a save of the record too.
+            if path and path.parent == run_dir and path.name.startswith(cut_to_review.DONE_FILE) and 'w' in mode:
+                saves.append(path.name)
+                if len(saves) == die_at:
+                    return CutShort(handle)
+            return handle
+        args = cut_to_review.parse(['--upload', str(run_dir), '--data-dir', str(data)])
+        with mock.patch.object(builtins, 'open', opening), mock.patch.object(io, 'open', opening), \
+                contextlib.redirect_stdout(io.StringIO()):
+            code = cut_to_review.upload(args, environ={}, post=no_network)
+        return code, len(saves)
+
+    def test_a_whole_upload_saves_the_record_seven_times(self):
+        self.assertEqual(self.upload(self.run_dir, self.space.root / 'data'), (0, self.SAVES))
+
+    def test_a_save_that_dies_halfway_leaves_a_record_the_rerun_can_finish(self):
+        for die_at in range(1, self.SAVES + 1):
+            with self.subTest(save=die_at):
+                run_dir = self.space.root / f'run-{die_at}' / 'v1'
+                shutil.copytree(self.run_dir, run_dir)
+                data = self.space.root / f'data-{die_at}'
+                with self.assertRaises(Killed):
+                    self.upload(run_dir, data, die_at)
+                record = run_dir / cut_to_review.DONE_FILE
+                if record.exists():
+                    json.loads(record.read_text(encoding='utf-8'))  # whole, never half a save
+                self.assertEqual(self.upload(run_dir, data)[0], 0)
+                self.assertTrue(json.loads(record.read_text(encoding='utf-8'))['complete'])
+                manifest = json.loads((data / 'manifest.json').read_text(encoding='utf-8'))
+                self.assertEqual([item['id'] for item in manifest], ['test-video-v1'])
+                view = json.loads((data / 'view-request.json').read_text(encoding='utf-8'))
+                self.assertEqual(view['videoId'], 'test-video-v1')
+                self.assertEqual([path.name for path in run_dir.glob(cut_to_review.DONE_FILE + '*')],
+                                 [cut_to_review.DONE_FILE])
 
 
 class HostedRetry(unittest.TestCase):
