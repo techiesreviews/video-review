@@ -920,6 +920,9 @@ class OneScriptLineTests(unittest.TestCase):
     def test_a_direction_in_brackets_that_runs_over_a_blank_line_or_a_list_is_left_out(self):
         self.assertEqual(cut_takes.script_sentences('Say hello. [B-roll:\n- shot one\n\n- shot two] Then go on.'),
                          [['say', 'hello'], ['then', 'go', 'on']])
+        # A direction never runs past a heading, so a missing closing bracket cannot swallow the scenes after it.
+        self.assertEqual(cut_takes.script_sentences('Say hello. [B-roll\n## Two\nThen go on. [music] The end.'),
+                         [['say', 'hello'], ['broll'], ['then', 'go', 'on'], ['the', 'end']])
 
     def test_a_script_line_said_word_for_word_is_never_lost(self):
         # The last check, whatever made the removal: here each sentence fits the other script line just as well
@@ -1304,6 +1307,19 @@ class FarApartTests(unittest.TestCase):
                 self.assertIn('takes out the 5.8 s silence beside it', text)
             else:
                 self.assertNotIn('silence beside', text, demo)
+
+    def test_a_retake_far_from_its_first_take_is_matched_by_the_script(self):
+        script = 'The review page saves every comment. Other things happen. The end.'
+        words = [['The', 10.0, 10.2], ['review', 10.24, 10.6], ['page', 10.64, 10.9], ['saves', 10.94, 11.2],
+                 ['every', 11.24, 11.5], ['comment.', 11.54, 12.0],
+                 ['Other', 13.0, 13.3], ['things', 13.34, 13.7], ['happen.', 13.74, 14.2],
+                 ['The', 100.0, 100.2], ['review', 100.24, 100.6], ['page', 100.64, 100.9],
+                 ['saves', 100.94, 101.2], ['every', 101.24, 101.5], ['comment.', 101.54, 102.0],
+                 ['The', 103.0, 103.2], ['end.', 103.24, 103.6]]
+        result = plan_words(words, script)
+        removal, = result['paperEdit']['removed']
+        self.assertEqual((removal['start'], removal['reason'], removal['keeps']), (10.0, 'earlier-take', 100.0))
+
 
 class CommandTests(unittest.TestCase):
     def test_command_writes_the_three_files_and_never_overwrites(self):
