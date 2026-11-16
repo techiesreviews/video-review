@@ -35,6 +35,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(ROOT))
+import cut_preferences  # noqa: E402
 import cut_timeline  # noqa: E402
 import file_store  # noqa: E402
 import resolve_build  # noqa: E402
@@ -64,6 +65,11 @@ HOSTED_RETRY_SECONDS = 2
 
 class Stop(Exception):
     """A check failed: the message says what and what to do. Nothing after the check has run."""
+
+
+def cut_fade_ms(cutlist):
+    """The fade the cut list asks for, else Lex's fade from web/cut-preferences.json."""
+    return cutlist.get('audioFadeMs', cut_preferences.LEX['audioFadeMs'])
 
 
 def sha256_file(path):
@@ -429,7 +435,7 @@ def build(args, connect=resolve_build.connect, log=print, sleep=None):
         try:
             builder.open_project(args.project or args.video)
             builder.build_timeline(plan['source'], plan['fps'], media['width'], media['height'], plan['segments'],
-                                   plan['cutlist'].get('audioFadeMs', join_check.THRESHOLDS['audioFadeMs']),
+                                   cut_fade_ms(plan['cutlist']),
                                    markers(report))
             extra = {} if sleep is None else {'sleep': sleep}
             video_file = builder.render(f'{args.video}-{args.version}', plan['fps'], media['width'], media['height'],

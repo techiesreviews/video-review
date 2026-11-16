@@ -1,0 +1,61 @@
+{
+  "about": "Lex's cut preferences: the one place for the room around speech, the pauses at a join, the fade and the working values of the cutter and the join check. The cutter (scripts/video/cut-takes.py), the join check (join-check.py), cut-to-review.py and the review page's preview all read this file, and no script types these numbers again (tests/test_cut_preferences.py fails if one does). Times are in milliseconds unless a name says otherwise.",
+  "lex": {
+    "roomMs": {
+      "value": [100, 150],
+      "why": "Lex's answer of 2026-11-10: room on both sides of speech, the same before the first word as at every other cut."
+    },
+    "linkedGapMs": {
+      "value": [200, 300],
+      "why": "Lex's answer of 2026-11-11: the whole silence at a join between linked phrases. He listened to the cutter's version next to the original and chose the longer pauses."
+    },
+    "newThoughtGapMs": {
+      "value": [350, 500],
+      "why": "Lex's answer of 2026-11-11: the whole silence at a join before a new thought, the longer pauses he chose."
+    },
+    "audioFadeMs": {
+      "value": 15,
+      "why": "Lex's starting preference from EDITING-LESSONS.md, in the tools since 2026-11-04: the audio fade at every cut, as the Resolve cut's native fades. The preview fades its jumps the same."
+    }
+  },
+  "cutter": {
+    "linkedTargetMs": 250,
+    "newThoughtTargetMs": 400,
+    "newThoughtRoomMaxMs": 200,
+    "breathMaxMs": 700,
+    "longSilenceMs": 3000,
+    "cuePauseMs": 250,
+    "restartPauseMs": 300,
+    "attemptBreakMs": 1500,
+    "attemptMaxSeconds": 30,
+    "nearTakeSeconds": 60,
+    "scriptMatch": 0.5,
+    "nearTakeMatch": 0.6,
+    "nearTakeRest": 0.5,
+    "restartRepeat": 0.6,
+    "samePartOfLine": 0.6,
+    "completeCoverage": 0.8,
+    "worseCoverageDrop": 0.15,
+    "worseStumbles": 2,
+    "worseKeptPoint": 0.6,
+    "shortStartWords": 4,
+    "adLibMainWords": 0.5
+  },
+  "cutterNotes": {
+    "about": "Working values of the cutter, not Lex's words; each is listed in the paper edit.",
+    "linkedTargetMs": "Where the cutter aims inside linkedGapMs.",
+    "newThoughtTargetMs": "Where the cutter aims inside newThoughtGapMs.",
+    "newThoughtRoomMaxMs": "Room per side at a new-thought join may reach this (half the aimed silence): 100-150 ms on each side adds up to 300 ms at most, so 350-500 ms of silence needs more. Every other cut stays inside roomMs. The join check allows the same.",
+    "samePartOfLine": "Two sentences are takes of one script line only when this share of the line's words that the shorter one says is said by the other too; less, and they are two parts of the line.",
+    "shortStartWords": "A dropped start shorter than this is listed, not cut: the paper edit only asks to inspect \"And then I-\".",
+    "adLibMainWords": "A line is an ad-lib only when no more than this share of its main words is in its closest script line."
+  },
+  "joinCheck": {
+    "clippedEdgeMaxMs": 80,
+    "orphanWordMaxMs": 300,
+    "orphanPauseMs": 300
+  },
+  "joinCheckNotes": {
+    "about": "Working limits of the join check, not recorded preferences. It reads roomMs as the room before the first word (leadInMs) and beside every cut (speechEdgeMs)."
+  }
+}
