@@ -285,6 +285,10 @@ class StarsOffline(unittest.TestCase):
         self.assertEqual(len(buttons), 4)
         self.assertTrue(all(' disabled' in button for button in buttons))
 
+    def test_the_line_waits_for_the_server_answer_instead_of_flashing_on_every_load(self):
+        page = render(server='http://127.0.0.1:8879', video='weekly-1234')
+        self.assertIn('<p class="off" id="stars-off" hidden>', page)
+
     def test_the_page_knows_where_to_ask(self):
         page = render(server='http://127.0.0.1:8879', video='weekly-1234')
         self.assertIn('data-server="http://127.0.0.1:8879"', page)
