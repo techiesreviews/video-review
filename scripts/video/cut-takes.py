@@ -108,6 +108,11 @@ def dice(first, second):
     return 2 * overlap(first, second) / (len(first) + len(second)) if first and second else 0.0
 
 
+def in_order(first, second):
+    """How many words two word lists share in the same order."""
+    return sum(block.size for block in SequenceMatcher(None, first, second, autojunk=False).get_matching_blocks())
+
+
 def script_sentences(text):
     lines = [line for line in text.splitlines() if not line.lstrip().startswith('#')]
     text = re.sub(r'\[[^\]]*\]', ' ', ' '.join(lines))
@@ -333,6 +338,13 @@ class Cutter:
         blocks = SequenceMatcher(None, names, self.script[line], autojunk=False).get_matching_blocks()
         return {block.b + offset for block in blocks for offset in range(block.size)}
 
+    def says(self, take, other, line):
+        """True when a take says what another sentence says of a script line (as much of it as a complete take
+        says of its line): only then does the take make the other one a failed try. A take that says another part
+        of the line, or picks the line up half way, does not."""
+        part = self.part_of_line(other, line)
+        return len(part & self.part_of_line(take, line)) >= SETTINGS['completeCoverage'] * len(part)
+
     def same_part(self, first, second, line):
         """True when two sentences say the same part of a script line, as two takes of it do. The script may join
         two sentences into one line ("The camera is easy to use and the battery lasts all day."): said as two
@@ -345,9 +357,12 @@ class Cutter:
         script says their line more than once, or it has them as a line or a part of a line of their own."""
         if self.said_twice(first) or self.said_twice(second):
             return 'The script says this line more than once'
-        if self.script and not self.repeats_whole(first, second) and self.other_line(first, second):
-            return 'The script has both'
-        return None
+        if not self.script or not self.other_line(first, second):
+            return None
+        # A start the later words repeat in full is a dropped start, unless it says a whole line of its own
+        # ("The tool is fast" before "The tool is fast and easy to use.").
+        whole = self.coverage(first, self.best_line(first)[1]) >= SETTINGS['completeCoverage']
+        return 'The script has both' if whole or not self.repeats_whole(first, second) else None
 
     def same_line(self, first, second):
         """True when two sentences say the same line: the same part of the same script sentence, or a near copy
@@ -378,9 +393,16 @@ class Cutter:
         return overlap([self.norms[index] for index in sentence], self.script[line]) / len(self.script[line])
 
     def best_line(self, sentence):
+        """(score, number) of the script line closest to a sentence. The score counts shared words in any order;
+        among lines that score the same, the one with most of the words in the same order wins ("The camera beats
+        the phone." is not "The phone beats the camera."), then the later one."""
         names = [self.norms[index] for index in sentence]
         scores = [(dice(names, line), number) for number, line in enumerate(self.script)]
-        return max(scores, default=(0.0, None))
+        score = max(scores, default=(0.0, None))[0]
+        tied = [number for value, number in scores if value == score]
+        if len(tied) < 2 or not score:
+            return max(scores, default=(0.0, None))
+        return score, max(tied, key=lambda number: (in_order(names, self.script[number]), number))
 
     def worse(self, later, earlier, line):
         """Return why the later take is clearly worse than the earlier one, or an empty list."""
@@ -502,8 +524,18 @@ class Cutter:
         start, rest = self.false_start(takes[chosen], takes, line)
         if start and self.drop(start, 'abandoned-start', rest[0]):
             keeps = rest[0]
+        # Takes are grouped pair by pair, so one that overlaps two parts of a script line brings both into its
+        # group. A take goes only when the take that stays says what it says.
+        more = [take for number, take in enumerate(takes)
+                if number != chosen and line is not None and not self.says(takes[chosen], take, line)]
+        if more:
+            times = ', '.join(f'{self.words[take[0]].start:.2f}' for take in more)
+            self.flag('take-says-more', more[0][0], more[0][-1],
+                      f'{"The take at" if len(more) == 1 else "The takes at"} {times}: the take kept at '
+                      f'{self.words[keeps].start:.2f} does not say all of {"it" if len(more) == 1 else "them"}. '
+                      'Left in; cut by hand what is a failed try.')
         for number, take in enumerate(takes):
-            if number == chosen:
+            if number == chosen or take in more:
                 continue
             reason = 'earlier-take' if number < chosen else 'worse-later-take'
             if number > chosen and not self.complete(take, line):
@@ -615,6 +647,9 @@ class Cutter:
                         break
                     passed.append(kept)
                     continue
+                if finished and at > 1 and self.script and self.best_line(kept)[0] >= SETTINGS['scriptMatch'] \
+                        and self.complete(kept, self.best_line(kept)[1]):
+                    break  # A whole script line that ends with the take's opening ("... the phone. The phone ...").
                 # A finished sentence before the take that opens the same way is a failed try, unless the script
                 # has it as a different line. Without a script, one that only repeats the opening is asked about.
                 if finished and not self.same_line(kept[at:], take):
@@ -645,7 +680,7 @@ class Cutter:
                 # Everything removed must belong to the take's own script line, and to the part of it the take
                 # says, not to the talk around it.
                 line = self.best_line(take)[1]
-                if self.best_line(attempt)[1] == line and self.same_part(attempt, take, line):
+                if self.best_line(attempt)[1] == line and self.says(take, attempt, line):
                     self.drop(attempt, 'abandoned-start', take[0])
             elif unsure or any(len(other) >= 3 and other[0] > start for other in passed):
                 # Without a script, more than a stray word between the attempts may be real talk: ask, do not cut.
@@ -723,13 +758,21 @@ class Cutter:
                 chosen.append(frame)
         return chosen
 
-    def fallback(self, at, direction, limit, word_index, side):
-        """No frame leaves the preferred room: take the roomiest one that stays off both words, and flag it."""
+    def clean_frame(self, at, direction, limit):
+        """The roomiest frame on one side of a word time that is inside neither that word nor the sound at the limit,
+        or None: two words that touch between two frames leave no frame to cut at."""
         fps = self.fps
         frame = math.floor((limit + TOLERANCE) * fps) if direction > 0 else math.ceil((limit - TOLERANCE) * fps)
-        if (frame / fps - at) * direction < -TOLERANCE:
-            frame = math.ceil((at - TOLERANCE) * fps) if direction > 0 else math.floor((at + TOLERANCE) * fps)
         frame = max(frame, 0)
+        return frame if (frame / fps - at) * direction >= -TOLERANCE else None
+
+    def fallback(self, at, direction, limit, word_index, side):
+        """No frame leaves the preferred room: take the roomiest one that stays off both words, and flag it. None
+        when there is no such frame (clean_frame)."""
+        fps = self.fps
+        frame = self.clean_frame(at, direction, limit)
+        if frame is None:
+            return None
         room = round((frame / fps - at) * 1000) * direction
         self.flag('tight-edge', word_index, word_index,
                   f'Only {room} ms of room {side} "{self.words[word_index].text}" (preferred '
@@ -775,11 +818,17 @@ class Cutter:
         entry = ins[-1] if ins else self.fallback(start, -1, in_limit, after, 'before')
         return out, entry, kind, None
 
-    def restore(self, before, after):
-        """A removal too short to cut between two frames goes back in, and Lex is told."""
+    def restore(self, before, after, touching=False):
+        """A removal too short to cut between two frames goes back in, and Lex is told. So does one that touches
+        the kept word beside it between two frames (touching): every frame there is inside one of the two words."""
         for index in range(before + 1, after):
             self.keep[index] = True
         self.removed = [item for item in self.removed if not before < item['first'] < after]
+        if touching:
+            self.flag('no-clean-frame', before + 1, after - 1,
+                      'This would have been removed, but it touches the word kept beside it between two frames, so '
+                      'no frame cuts cleanly there. Left in; cut it by hand.')
+            return
         self.flag('too-short-to-cut', before + 1, after - 1,
                   'This would have been removed, but it is too short to cut cleanly at whole frames. Left in; listen.')
 
@@ -788,6 +837,14 @@ class Cutter:
         if not kept:
             raise ValueError('Every word was removed. Check the transcript and the retake marks.')
         first, last = kept[0], kept[-1]
+        # A removed opening or ending that touches the first or last kept word between two frames goes back in.
+        if first and self.clean_frame(self.words[first].start, -1, self.words[first - 1].end) is None:
+            self.restore(-1, first, touching=True)
+            return self.segments()
+        if last + 1 < len(self.words) \
+                and self.clean_frame(self.words[last].end, 1, self.words[last + 1].start) is None:
+            self.restore(last, len(self.words), touching=True)
+            return self.segments()
         open_in = self.edge(first, -1, self.words[first - 1].end if first else 0.0, SETTINGS['roomMs'][1])
         runs, joins = [], []
         for before, after in zip(kept, kept[1:]):
@@ -808,6 +865,13 @@ class Cutter:
                     continue
             out_limit = self.words[before + 1].start
             in_limit = self.words[after - 1].end
+            if self.clean_frame(self.words[before].end, 1, out_limit) is None \
+                    or self.clean_frame(self.words[after].start, -1, in_limit) is None:
+                # Only a removal can touch a kept word: between two kept words there is a silence to cut in.
+                if removed:
+                    # A removal of under two frames is too short to cut anyway: say that instead.
+                    self.restore(before, after, self.words[after].start - self.words[before].end >= 2 / self.fps)
+                continue
             out, entry, kind, note = self.join_frames(before, after, out_limit, in_limit)
             if entry <= out:
                 if removed:
