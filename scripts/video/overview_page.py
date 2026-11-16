@@ -392,6 +392,13 @@ def _scene_section(scene, text, thumbs, prefix, changed):
             f'{body}<div class="row">{record}{cards}{empty}</div>{archive}</section>')
 
 
+def _number_room(number):
+    """The inline style that gives a strip segment room for a scene number of three digits or more, else nothing:
+    one and two digits fit the 18 px every segment gets. 1ch is the width of one digit; the 6 px is air."""
+    digits = len(str(number))
+    return f';min-width:calc({digits}ch + 6px)' if digits > 2 else ''
+
+
 def _cut_strip(store):
     """(strip markup, scenes recorded, takes, total seconds, whether every length is known)."""
     segments, recorded, takes, total, complete = [], 0, 0, 0.0, True
@@ -400,7 +407,7 @@ def _cut_strip(store):
         best = scene_store.choose_best(scene)[0]
         take = next((t for t in scene['takes'] if t['number'] == best), None)
         if take is None:
-            segments.append(f'<div class="none" style="flex:{UNKNOWN_SEGMENT}"'
+            segments.append(f'<div class="none" style="flex:{UNKNOWN_SEGMENT}{_number_room(scene["number"])}"'
                             f' title="Scene {scene["number"]}: not recorded yet">{scene["number"]}</div>')
             continue
         recorded += 1
@@ -410,7 +417,8 @@ def _cut_strip(store):
         else:
             total += duration
         flex = max(1, round(duration)) if duration is not None else UNKNOWN_SEGMENT
-        segments.append(f'<div style="flex:{flex}" title="Scene {scene["number"]}, take {best}">'
+        segments.append(f'<div style="flex:{flex}{_number_room(scene["number"])}"'
+                        f' title="Scene {scene["number"]}, take {best}">'
                         f'{scene["number"]}</div>')
     return ''.join(segments), recorded, takes, total, complete
 
