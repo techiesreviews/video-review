@@ -214,18 +214,18 @@ def server_address(data_dir=None):
 # The script text -------------------------------------------------------------------------------------------------
 
 ANY_HEADING = re.compile(r'^#{1,6}[ \t]')
-# A link stays on one line.
-LINK = re.compile(r'\[([^\]\n]*)\]\([^)\n]*\)')
-# A link with a line to itself is a direction with an address.
-LINK_LINE = re.compile(rf'^[ \t]*{LINK.pattern}[ \t]*$', re.M)
+# A link stays on one line, and its text holds no bracket: inside a [direction] only the link itself is one.
+LINK = re.compile(r'\[([^\[\]\n]*)\]\([^)\n]*\)')
+# A link with a line to itself (also as a list item) is a direction with an address.
+LINK_LINE = re.compile(rf'^[ \t]*(?:(?:[-*+]|\d+[.)])[ \t]+)?{LINK.pattern}[ \t]*$', re.M)
 # A [direction] may run over several lines of its scene, but never past the next opening bracket.
 DIRECTION = re.compile(r'\[[^\[\]]*\]')
 
 
 def spoken_text(text):
     """One scene's lines as the words to say: a link is read as its text, or left out when it has a line to
-    itself; [directions] are left out, also inside a line and over several lines, and so is a line that opens a
-    bracket it never closes; bold marks go."""
+    itself; [directions] are left out, also inside a line and over several lines, and so is a line that starts
+    with a bracket that is never closed; bold marks go."""
     text = DIRECTION.sub(' ', LINK.sub(r'\1', LINK_LINE.sub('', text)))
     lines = [line for line in text.splitlines() if not line.lstrip().startswith('[')]
     return ' '.join(' '.join(lines).replace('**', '').split())
