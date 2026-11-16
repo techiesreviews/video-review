@@ -149,6 +149,45 @@ test('a save that fails leaves the cut out, the selection in place, and closes t
   assert.equal(editing.edits().length,1,'trying again works');
 });
 
+// An agent or another tab replaces the transcript in the store, and this page never hears of it.
+const replacedElsewhere=state=>storeTranscript(state,VIDEO.id,{revision:'r2',words:TEXT.map((_,i)=>i===6?{...word(6),text:'sixty'}:word(i)),cuts:[]});
+
+test('a Delete the store refuses because the words changed elsewhere is marked for a reload, and keeps the newer words',async()=>{
+  const {editing,state,calls}=setup();
+  replacedElsewhere(state);
+  editing.selectWords(5,6);
+  const error=await editing.remove({typed:'tighter'}).catch(e=>e);
+  assert.match(error.message,/transcript changed/);
+  assert.equal(error.refused,true,'the panel loads that video\'s transcript again');
+  assert.equal(error.videoId,'v','tagged with the video it was made on');
+  assert.notEqual(error.saved,true);
+  assert.equal(state.transcripts.v.revision,'r2','the newer words stay in the store');
+  assert.equal(state.transcripts.v.words[6].text,'sixty');assert.deepEqual(state.transcripts.v.draftEdits,[]);
+  assert.deepEqual(editing.selectedIds(),['W5','W6'],'the place to come back to after the reload');
+  assert.deepEqual(calls.cancels,[state.comments[0].id],'no open note claims the refused cut');
+  assert.equal(editing.busy,false);
+});
+
+test('an Undo or Restore the store refuses because the words changed elsewhere is marked for a reload, and its note stays open',async()=>{
+  const {editing,state,calls}=setup();
+  editing.selectWords(1);await editing.remove();
+  replacedElsewhere(state);
+  const undo=await editing.undo().catch(e=>e);
+  assert.equal(undo.refused,true);assert.equal(undo.videoId,'v');
+  const restore=await editing.restore([editing.edits()[0].id]).catch(e=>e);
+  assert.equal(restore.refused,true);assert.equal(restore.videoId,'v');
+  assert.equal(state.transcripts.v.words[6].text,'sixty','the newer words stay in the store');
+  assert.deepEqual(calls.cancels,[],'the cut was not brought back, so its note stays open');
+});
+
+test('a save that fails for another reason is not marked for a reload',async()=>{
+  const {editing,fail}=setup();
+  editing.selectWords(1);
+  fail.save=new Error('Disk full');
+  const error=await editing.remove().catch(e=>e);
+  assert.equal(error.refused,undefined);
+});
+
 test('an Undo or Restore whose save fails keeps the cut and its note',async()=>{
   const {editing,calls,fail}=setup();
   editing.selectWords(1);await editing.remove();
@@ -442,7 +481,7 @@ test('a comment opens on its words by id, a join by its cut, and anything else o
 test('the panel only draws: the editing rules and saves live in transcript-editing.js',async()=>{
   const {readFile}=await import('node:fs/promises');
   const panel=await readFile(new URL('../web/transcript-panel.js',import.meta.url),'utf8');
-  assert.ok(panel.includes("import {createTranscriptEditing} from './transcript-editing.js';"),'the panel uses the editing module');
+  assert.match(panel,/import \{createTranscriptEditing[,\w]*\} from '\.\/transcript-editing\.js';/,'the panel uses the editing module');
   for(const rule of ['makeRemoval','keptRuns','lastCutGroup','cutsToRestore','nextWordAfterDelete','wordSelection','removalBounds','cutNotes','notePending','draftEdits:'])
     assert.ok(!panel.includes(rule),`${rule} belongs in transcript-editing.js, not the page`);
 });

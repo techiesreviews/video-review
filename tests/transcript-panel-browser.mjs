@@ -1,5 +1,5 @@
 // Browser check of the transcript panel's editing on a tiny made-up video, at desktop and phone width: Delete, a Delete
-// over words already deleted (two pieces), Undo, Restore, a note to the agent, and a save the server refuses.
+// over words already deleted (two pieces), Undo, Restore, a note to the agent, a save the server refuses, and an edit refused because the words changed elsewhere.
 // It never opens a real review. Run: node tests/transcript-panel-browser.mjs (needs Playwright and ffmpeg).
 // TRANSCRIPT_PANEL_SHOTS=<folder> also saves a screenshot of each width there.
 import {chromium} from 'playwright';
@@ -106,6 +106,42 @@ try{
     await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===1);
     assert.deepEqual((await onDisk()).map(e=>e.wordIds),[['W6']],`${name}: trying again saves it.`);
 
+    // The words change elsewhere (an agent or another tab) and this page never hears of it. A Delete is refused by the
+    // store: the panel loads the newer words, keeps the same words selected with the typed note and the scroll, and says
+    // so in a short line on the bar, not in a toast. The newer words are never overwritten, and Delete then saves.
+    await page.locator('#toast').evaluate(n=>n.classList.remove('show','error'));
+    const replace=async (id,text)=>writeFile(join(temp,'transcripts/words.json'),JSON.stringify({words:words.map(w=>w.id===id?{...w,text}:w),cuts:[{id:'J1',atMs:3000}],revision:'elsewhere-'+id}));
+    await replace('W10','ten-new');
+    await word(10).click();await page.locator('#transcriptNote').fill('tighter');
+    const scrolled=await page.locator('#transcriptText').evaluate(n=>n.scrollTop);
+    await page.locator('.bar-delete').click();
+    await page.waitForFunction(()=>document.querySelector('#barStatus').textContent.startsWith('Not saved'));
+    assert.equal(await page.locator('#barStatus').innerText(),'Not saved: the words changed elsewhere. They are loaded again; try again.');
+    assert.equal(await word(10).innerText(),'ten-new',`${name}: the newer words are shown.`);
+    assert.deepEqual(await page.locator('.transcript-word.selected').allInnerTexts(),['ten-new'],`${name}: the same word stays selected.`);
+    assert.equal(await page.locator('#transcriptNote').inputValue(),'tighter',`${name}: the typed note stays in the box.`);
+    assert.ok(Math.abs(await page.locator('#transcriptText').evaluate(n=>n.scrollTop)-scrolled)<=2,`${name}: the place in the text is kept.`);
+    assert.equal(await page.locator('#toast.show.error').count(),0,`${name}: no toast.`);
+    assert.equal(await page.locator('.transcript-word.removed-word').count(),0,`${name}: the new transcript has no cuts yet.`);
+    let stored=JSON.parse(await readFile(join(temp,'transcripts/words.json'),'utf8'));
+    assert.equal(stored.words[10].text,'ten-new');assert.deepEqual(stored.draftEdits||[],[],`${name}: the newer words are not overwritten.`);
+    await page.locator('.bar-delete').click();
+    await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===1);
+    stored=JSON.parse(await readFile(join(temp,'transcripts/words.json'),'utf8'));
+    assert.deepEqual(stored.draftEdits.map(e=>e.wordIds),[['W10']],`${name}: trying again saves the cut on the newer words.`);
+    assert.equal(stored.words[10].text,'ten-new');
+
+    // An Undo with nothing selected, refused the same way: the newer words load and the line shows on the panel.
+    await replace('W12','twelve-new');
+    await page.locator('#clearTranscriptSelection').click();
+    await page.locator('#undoTranscriptCut').click();
+    await page.waitForFunction(()=>!document.querySelector('#transcriptNotice').hidden);
+    assert.equal(await page.locator('#transcriptNotice').innerText(),'Not saved: the words changed elsewhere. They are loaded again; try again.');
+    assert.equal(await word(12).innerText(),'twelve-new',`${name}: the newer words are shown.`);
+    assert.equal(await page.locator('#toast.show.error').count(),0,`${name}: no toast.`);
+    stored=JSON.parse(await readFile(join(temp,'transcripts/words.json'),'utf8'));
+    assert.equal(stored.words[12].text,'twelve-new');assert.deepEqual(stored.draftEdits||[],[],`${name}: the newer words are not overwritten.`);
+
     // A note on a join goes to the agent with the join's id.
     await page.locator('.transcript-join',{hasText:'J1'}).click();
     await page.locator('#transcriptNote').fill('Check this join');await page.keyboard.press('Enter');
@@ -121,7 +157,7 @@ try{
     assert.deepEqual(errors,[],`${name}: no page errors.`);
     await page.close();
   }
-  console.log('PASS: transcript panel editing at desktop and phone width: Delete, a split Delete, Undo, Restore, a refused save, a note on a join.');
+  console.log('PASS: transcript panel editing at desktop and phone width: Delete, a split Delete, Undo, Restore, a refused save, words changed elsewhere, a note on a join.');
 }finally{
   await browser?.close();server.kill();
   await rm(temp,{recursive:true,force:true});
