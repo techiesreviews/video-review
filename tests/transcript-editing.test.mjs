@@ -35,7 +35,10 @@ function setup({transcript=TRANSCRIPT}={}){
       return applyChange(state,{action:'add',videoId:VIDEO.id,startMs:selection.startMs,endMs:selection.endMs,text:selection.text,editRequest:selection.editRequest,createdAt:new Date(++now*1000).toISOString()});
     },
     async updateRequest(id,text){calls.updates.push([id,text]);return applyChange(state,{action:'update',id,text});},
-    async cancelRequest(id){calls.cancels.push(id);applyChange(state,{action:'reply',id,author:'you',text:'Undid this preview removal; keep the passage.',status:'done'});},
+    async cancelRequest(id){
+      calls.cancels.push(id);
+      if(hold.cancel){const wait=hold.cancel;delete hold.cancel;await wait.promise;}
+      applyChange(state,{action:'reply',id,author:'you',text:'Undid this preview removal; keep the passage.',status:'done'});},
     onError:error=>calls.errors.push(error.message),
     schedule(run,ms){const timer={run,ms,live:true};timers.push(timer);return ()=>{timer.live=false;};},
   });
@@ -316,6 +319,20 @@ test('a note that cannot be closed while such a save lands is reported, and the 
   const error=await undo.then(()=>null,error=>error);
   assert.equal(error.saved,true,'the panel still loads the transcript again');
   assert.deepEqual(calls.errors,['Comment not found'],'the failed close is reported');
+});
+
+for(const kind of ['Undo','Restore'])test(`an ${kind} whose note is still closing when another video opens ends as saved, not drawn on the new video`,async()=>{
+  const {editing,state,calls,hold}=setup();
+  editing.selectWords(1);await editing.remove({typed:'why'});
+  hold.cancel=held();const wait=hold.cancel;
+  const back=kind==='Undo'?editing.undo():editing.restore([editing.edits()[0].id]);
+  while(!calls.cancels.length)await new Promise(r=>setTimeout(r));
+  editing.load(null,{...VIDEO,id:'w'});
+  wait.resolve();
+  const error=await back.then(()=>null,error=>error);
+  assert.equal(error?.saved,true,'no result for the panel to seek or select with');
+  assert.equal(error.videoId,'v');
+  assert.deepEqual(state.transcripts.v.draftEdits,[]);
 });
 
 test('an edit-only save writes only the cut list, so a newer revision, label or joins stay',()=>{

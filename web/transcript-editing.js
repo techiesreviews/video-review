@@ -115,9 +115,10 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
     return noteOpen;
   }
   /** Saves the cut list without the cuts brought back, then closes each note none of its pieces is left in (also when
-   *  the save landed as a new transcript came in, since the cut is gone from the store either way). */
+   *  the save landed as a new transcript came in, since the cut is gone from the store either way). A new transcript
+   *  that came in while the notes were closing also ends it as saved, so nothing is drawn on the new words. */
   async function commitThenClose(at,remaining,back,options){
-    let noteOpen,landed=null;
+    const target=video;let noteOpen,landed=null;
     try{noteOpen=await commit(at,remaining,options);}
     catch(error){if(!error.saved)throw error;landed=error;}
     for(const id of new Set(back.map(e=>e.commentId).filter(Boolean))){
@@ -126,6 +127,7 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
       try{await cancelRequest(id);}catch(error){if(!landed)throw error;onError(error);}
       cutNotes.delete(id);
     }
+    if(!landed&&stale(at))landed=Object.assign(Error(RELOADED_TEXT),{saved:true,videoId:target.id});
     if(landed)throw landed;
     return noteOpen;
   }
