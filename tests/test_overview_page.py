@@ -696,6 +696,29 @@ class CommandLine(unittest.TestCase):
         self.assertFalse((other / 'overview.html').exists())  # a video without a saved page does not get one
         self.assertFalse(gone.exists())
 
+    def test_a_folder_that_may_not_be_read_does_not_stop_the_pages_after_it(self):
+        locked = Path(self.temp.name) / 'A locked folder'
+        locked.mkdir()
+        scene_store.save(locked, sample_store())
+        overview_page.remember_port(self.data, 8879)
+        overview_page.publish(locked, data_dir=self.data)  # registered first, so it is looked at first
+        page = overview_page.publish(self.raw, data_dir=self.data)
+        key = overview_page.video_key(self.raw)
+        code = overview_page.page_code(self.data, key)
+        overview_page.remember_port(self.data, 8880)
+        real_lookup = overview_page.lookup
+
+        def lookup(data_dir, asked):
+            # Before Python 3.14 the check for the scene file raises for a folder the user may not read.
+            if asked != key:
+                raise PermissionError(13, 'Permission denied', str(locked))
+            return real_lookup(data_dir, asked)
+        with mock.patch.object(overview_page, 'lookup', side_effect=lookup):
+            self.assertEqual(overview_page.point_saved_pages_at_the_server(self.data), [key])
+        text = page.read_text(encoding='utf-8')
+        self.assertIn('<body data-server="http://127.0.0.1:8880"', text)
+        self.assertIn(f'data-code="{code}"', text)
+
     def test_a_scene_title_cannot_pass_for_the_page_address(self):
         store = sample_store()
         store['scenes'][0]['title'] = '<body data-server="http://127.0.0.1:8880"'
