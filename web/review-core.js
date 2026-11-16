@@ -2,7 +2,7 @@
 // The rules themselves (fields, limits, who may write and edit, messages) are in review-rules.json, which
 // review_store.py reads for the local Python app; tests/fixtures/review-rule-cases.json is run against both.
 import RULES from './review-rules.json' with {type:'json'};
-import {timecode} from './time-format.js';
+import {frame,timecode} from './time-format.js';
 
 export {RULES,timecode};
 export const AUTHORS=RULES.authors;
@@ -71,7 +71,7 @@ export function reviewerStamp(c){let stamp=(c.author||RULES.pageAuthor)===RULES.
 function agentRequest(video,c){
   const e=c.editRequest,hasEnd=c.endMs!==null&&c.endMs!==undefined;
   return {type:'change',instruction:c.text,quote:e.quote??null,wordIds:e.wordIds||[],firstWordId:e.firstWordId??null,lastWordId:e.lastWordId??null,
-    startFrame:Math.round(c.startMs*video.fps/1000),endFrame:hasEnd?Math.round(c.endMs*video.fps/1000):null,
+    startFrame:frame(c.startMs,video.fps),endFrame:hasEnd?frame(c.endMs,video.fps):null,
     sourceSpans:c.sourceSpans??e.sourceSpans??sourceSpans(video,c.startMs,hasEnd?c.endMs:null),transcriptRevision:e.transcriptRevision??null,...(e.cutId?{cutId:e.cutId}:{})};
 }
 
@@ -79,7 +79,7 @@ export function describe(video,c){
   const fps=video.fps,hasEnd=c.endMs!==null&&c.endMs!==undefined;
   return {id:c.id,videoId:c.videoId,status:c.status,author:c.author||RULES.pageAuthor,text:c.text,
     start:timecode(c.startMs),end:hasEnd?timecode(c.endMs):null,startMs:c.startMs,endMs:hasEnd?c.endMs:null,
-    startFrame:Math.round(c.startMs*fps/1000),endFrame:hasEnd?Math.round(c.endMs*fps/1000):null,
+    startFrame:frame(c.startMs,fps),endFrame:hasEnd?frame(c.endMs,fps):null,
     sourceSpans:c.sourceSpans??c.editRequest?.sourceSpans??sourceSpans(video,c.startMs,hasEnd?c.endMs:null),
     ...(c.editRequest?{editRequest:c.editRequest}:{}),
     ...(c.editRequest?.type==='change'?{agentRequest:agentRequest(video,c)}:{}),
@@ -106,7 +106,7 @@ export function checkEditRequest(request,video,startMs,endMs){
   if(request.type==='change'){
     const ids=request.wordIds??[];
     if(!Array.isArray(ids)||ids.length>LIMITS.wordIds||ids.some(id=>typeof id!=='string'||length(id)>LIMITS.idLength))throw Error(M.wordIds);
-    result.wordIds=[...ids];result.startFrame=Math.round(startMs*video.fps/1000);result.endFrame=endMs==null?null:Math.round(endMs*video.fps/1000);
+    result.wordIds=[...ids];result.startFrame=frame(startMs,video.fps);result.endFrame=endMs==null?null:frame(endMs,video.fps);
   }
   if(request.type==='restore'){
     const {sourceStartMs:a,sourceEndMs:b,sourceDurationMs:d}=request;

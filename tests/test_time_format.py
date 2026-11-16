@@ -19,12 +19,14 @@ OPTION_NAMES = {'places': 'places', 'nearest': 'nearest', 'hours': 'hours', 'pad
 
 # The two homes of the time formats; every other file must call them.
 HOMES = {'time_format.py', 'web/time-format.js'}
-# Hand-made time formatting: milliseconds split into hours and minutes, seconds taken modulo 60, or a remainder of
-# 1000 milliseconds written out. Each of the copies this replaced matches at least one of these.
+# Hand-made time formatting: milliseconds split into hours and minutes, seconds taken modulo 60, a remainder of 1000
+# milliseconds written out, or a frame number rounded by hand. Each of the copies this replaced matches one of these.
 HAND_MADE = {
     '.py': [re.compile(r'//\s*(60000|3600000)\b'), re.compile(r'%\s*60\b'),
-            re.compile(r'divmod\([^)]*,\s*(60|3600)\s*\)'), re.compile(r'%\s*1000\s*:0?3\}')],
-    '.js': [re.compile(r'/\s*(60000|3600000)\b'), re.compile(r'%\s*60\b'), re.compile(r'%\s*1000\b')],
+            re.compile(r'divmod\([^)]*,\s*(60|3600)\s*\)'), re.compile(r'%\s*1000\s*:0?3\}'),
+            re.compile(r'''[Ff]rame['"]?\s*[:=]\s*(round|round_half_up)\(''')],
+    '.js': [re.compile(r'/\s*(60000|3600000)\b'), re.compile(r'%\s*60\b'), re.compile(r'%\s*1000\b'),
+            re.compile(r'[Ff]rame\s*[:=]\s*Math\.round\(')],
 }
 HAND_MADE['.mjs'] = HAND_MADE['.js']
 HAND_MADE['.html'] = []
@@ -77,11 +79,14 @@ class NoHandMadeTimesTest(unittest.TestCase):
                     "text = f'{minutes:02}:{total // 1000 % 60:02}.{total % 1000:03}'",
                     "hours, rest = divmod(seconds, 3600)", "minutes, seconds = divmod(rest, 60)",
                     "return (f'{total // 3600000:02}:{total // 60000 % 60:02}:{total // 1000 % 60:02}'",
-                    "f'{separator}{total % 1000:03}')"],
+                    "f'{separator}{total % 1000:03}')",
+                    "'startFrame':round_half_up(c['startMs']*fps/1000),", "result.update(startFrame=round(start*fps/1000))"],
             '.js': ["const h=Math.floor(ms/3600000),m=Math.floor(ms/60000)%60,s=Math.floor(ms/1000)%60;",
                     "const stamp=ms=>`${Math.floor(ms/60000)}:${String(Math.floor(ms/1000)%60).padStart(2,'0')}`;",
                     "const precise=ms=>short(ms)+'.'+String(Math.round(Math.max(0,ms))%1000).padStart(3,'0');",
-                    "const clock=ms=>`${String(Math.round(ms)%1000).padStart(3,'0')}`;"],
+                    "const clock=ms=>`${String(Math.round(ms)%1000).padStart(3,'0')}`;",
+                    "startFrame:Math.round(c.startMs*video.fps/1000),endFrame:hasEnd?Math.round(c.endMs*video.fps/1000):null,",
+                    "result.wordIds=[...ids];result.startFrame=Math.round(startMs*video.fps/1000);"],
         }
         for suffix, lines in copies.items():
             for line in lines:
