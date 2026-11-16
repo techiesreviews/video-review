@@ -635,8 +635,8 @@ class Upload(Base):
         self.assertEqual(calls, ['register_video', 'set_transcript', 'open_video'])
         register = sent[1][1]['params']['arguments']
         self.assertEqual(register['fileName'], 'test-video-v1.mp4')
-        self.assertEqual(register['fingerprint'],
-                         cut_to_review.sampled_fingerprint(self.run_dir / 'test-video-v1.mp4'))
+        self.assertEqual(register['sha256'], sha((self.run_dir / 'test-video-v1.mp4').read_bytes()))
+        self.assertNotIn('fingerprint', register)
         self.assertNotIn('path', register)
         self.assertNotIn('vr_secret', output.getvalue())
 
@@ -691,24 +691,26 @@ class UploadFailures(Base):
 
     def test_lost_registration_answer_is_taken_as_registered(self):
         self.lose_the_registration_answer()
-        # The page did register it: it lists the id with the fingerprint this run sent.
-        sent = self.sent[1]['params']['arguments']['fingerprint']
-        self.assertEqual(sent, cut_to_review.sampled_fingerprint(self.run_dir / 'test-video-v1.mp4'))
+        # The page did register it: it lists the id with the hash of the whole file, which this run sent.
+        sent = self.sent[1]['params']['arguments']['sha256']
+        self.assertEqual(sent, sha((self.run_dir / 'test-video-v1.mp4').read_bytes()))
         self.assertEqual(self.upload(self.exists_as(sent)), 0)
         names = [message['params']['name'] for message in self.sent if message['method'] == 'tools/call']
         self.assertEqual(names, ['register_video', 'register_video', 'list_videos', 'set_transcript', 'open_video'])
 
-    def exists_as(self, fingerprint):
-        """A hosted page that already has the id test-video-v1, listed with this fingerprint."""
+    def exists_as(self, file_hash):
+        """A hosted page that already has the id test-video-v1, listed with this hash of its file. The page's own
+        fingerprint of an opened file (its size and both ends) is listed too and decides nothing."""
         def page(url, message, token):
             self.sent.append(message)
             name = message.get('params', {}).get('name')
             if name == 'register_video':
                 return {'jsonrpc': '2.0', 'id': message['id'],
                         'result': {'content': [{'text': 'That id already exists; use a new id'}], 'isError': True}}
-            text = json.dumps({'videos': [{'id': 'another-v1', 'fingerprint': None},
+            text = json.dumps({'videos': [{'id': 'another-v1', 'sha256': None},
                                           {'id': 'test-video-v1', 'fileName': 'test-video-v1.mp4',
-                                           'fingerprint': fingerprint}]}) if name == 'list_videos' else '{}'
+                                           'fingerprint': 'sample-sha256:' + 'cd' * 32,
+                                           'sha256': file_hash}]}) if name == 'list_videos' else '{}'
             return {'jsonrpc': '2.0', 'id': message['id'], 'result': {'content': [{'text': text}]}}
         return page
 
@@ -722,15 +724,20 @@ class UploadFailures(Base):
             self.upload(lost)
 
     def test_after_a_lost_answer_another_video_with_the_same_id_is_left_alone(self):
-        # The first request never arrived, and the id on the page belongs to an unrelated video: another file,
-        # or one whose file the page does not know.
+        # The first request never arrived, and the id on the page belongs to an unrelated video: another file, one
+        # registered without a hash, or a file of the same size with the same start and end and another middle
+        # (the page's own fingerprint cannot tell that one from this run's file; the hash of the whole file can).
         self.lose_the_registration_answer()
-        for fingerprint in ('sample-sha256:' + 'ab' * 32, None):
-            with self.subTest(fingerprint=fingerprint):
+        ours = (self.run_dir / 'test-video-v1.mp4').read_bytes()
+        middle = len(ours) // 2
+        twin = ours[:middle] + bytes([ours[middle] ^ 1]) + ours[middle + 1:]
+        self.assertEqual((len(twin), twin[0], twin[-1]), (len(ours), ours[0], ours[-1]))
+        for file_hash in ('ab' * 32, None, sha(twin)):
+            with self.subTest(sha256=file_hash):
                 del self.sent[:]
                 with self.assertRaisesRegex(cut_to_review.Stop, 'test-video-v1 is already on the review page .* '
                                                                 'not as this file .*Nothing was changed'):
-                    self.upload(self.exists_as(fingerprint))
+                    self.upload(self.exists_as(file_hash))
                 names = [message['params']['name'] for message in self.sent if message['method'] == 'tools/call']
                 self.assertEqual(names, ['register_video', 'list_videos'])
         record = json.loads((self.run_dir / cut_to_review.DONE_FILE).read_text(encoding='utf-8'))
@@ -755,7 +762,7 @@ class UploadFailures(Base):
         names = [message['params']['name'] for message in self.sent if message['method'] == 'tools/call']
         self.assertEqual(names, ['register_video', 'register_video', 'list_videos', 'register_video', 'list_videos'])
         # Once the page lists it as this file, the same command finishes the upload.
-        self.assertEqual(self.upload(self.exists_as(self.sent[1]['params']['arguments']['fingerprint'])), 0)
+        self.assertEqual(self.upload(self.exists_as(self.sent[1]['params']['arguments']['sha256'])), 0)
 
     def test_a_registration_the_tab_applied_late_is_carried_on(self):
         # The usual way a hosted upload stops during the registration: the tab was in the background.
@@ -765,7 +772,7 @@ class UploadFailures(Base):
             return {'jsonrpc': '2.0', 'id': message['id'], 'result': {'content': [{'text': text}]}}
         with self.assertRaisesRegex(cut_to_review.Stop, 'has not applied register_video yet'):
             self.upload(pending)
-        self.assertEqual(self.upload(self.exists_as(self.sent[1]['params']['arguments']['fingerprint'])), 0)
+        self.assertEqual(self.upload(self.exists_as(self.sent[1]['params']['arguments']['sha256'])), 0)
         names = [message['params']['name'] for message in self.sent if message['method'] == 'tools/call']
         self.assertEqual(names, ['register_video', 'register_video', 'list_videos', 'set_transcript', 'open_video'])
 
@@ -903,24 +910,6 @@ class SameIdOnTheLocalPage(Base):
         self.assertEqual(self.upload(), 0)
         self.assertTrue(json.loads((self.run_dir / cut_to_review.DONE_FILE).read_text(encoding='utf-8'))['complete'])
         self.assertTrue(any('transcript' in name for name in self.saved()))
-
-
-class SampledFingerprint(unittest.TestCase):
-    """The same value the hosted page makes for a file (sampledFingerprint in web/backend.js):
-    tests/fingerprint.test.mjs checks that function against these same sizes, bytes and hashes."""
-
-    CASES = ((5, '187f1dba81c7b20be04d43cb8bebcebe76faf62c8f48615fc8262b81b3b940d2'),
-             (1 << 20, '1c6a7739d264dbdbfc78831c43139877bfcd361f3310577e3e343d63ee61d534'),
-             ((1 << 20) * 3 // 2, 'c85aaf0b1b83fc273300afb7950654bf7fbac4ad0a09d8e15d964c4173bde8d8'),
-             ((1 << 20) * 3 + 11, 'b3af718ae081f6fffff68b4d20f7b3d363c40e43e2a65afaf545dba46a2217c8'))
-
-    def test_matches_the_browser_for_small_and_large_files(self):
-        with tempfile.TemporaryDirectory() as folder:
-            for size, expected in self.CASES:
-                with self.subTest(size=size):
-                    path = Path(folder) / f'{size}.bin'
-                    path.write_bytes(bytes((index * 31 + 7) % 251 for index in range(size)))
-                    self.assertEqual(cut_to_review.sampled_fingerprint(path), 'sample-sha256:' + expected)
 
 
 class Killed(BaseException):

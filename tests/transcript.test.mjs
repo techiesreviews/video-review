@@ -108,10 +108,10 @@ test('source restore requests retain original-clock anchors beyond the reviewed 
   assert.throws(()=>applyChange(state,{action:'add',videoId:'v',startMs:0,text:'Invalid',editRequest:{type:'restore',sourceStartMs:13000,sourceEndMs:15000,sourceDurationMs:14000}}),/restore range/);
 });
 
-test('a video registered with a fingerprint is listed with it, and one without has none',()=>{
-  // An interrupted upload (cut-to-review.py) finds its own registration again by this fingerprint.
-  const entry={id:'talk-v1',title:'talk',label:'talk · v1',fileName:'talk-v1.mp4',fps:30,durationMs:2000};
-  assert.equal(checkVideo({...entry,fingerprint:'sample-sha256:abc',addedBy:'ai'},[]).fingerprint,'sample-sha256:abc');
-  assert.equal(checkVideo(entry,[]).fingerprint,null);
-  assert.throws(()=>checkVideo({...entry,fingerprint:'sample-sha256:abc'},[{id:'talk-v1'}]),/already exists/);
+test('a video registered with the hash of its file keeps it, and one without has none',()=>{
+  // An interrupted upload (cut-to-review.py) finds its own registration again by this hash.
+  const entry={id:'talk-v1',title:'talk',label:'talk · v1',fileName:'talk-v1.mp4',fps:30,durationMs:2000},hash='ab'.repeat(32);
+  assert.equal(checkVideo({...entry,sha256:hash,addedBy:'ai'},[]).sha256,hash);
+  assert.equal(checkVideo(entry,[]).sha256,null);
+  assert.throws(()=>checkVideo({...entry,sha256:hash},[{id:'talk-v1',sha256:hash}]),/already exists/);
 });

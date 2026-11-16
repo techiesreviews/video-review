@@ -74,19 +74,6 @@ def sha256_file(path):
     return digest.hexdigest()
 
 
-def sampled_fingerprint(path):
-    """The hosted page's fingerprint of a file, as its browser makes it (sampledFingerprint in web/backend.js):
-    sha256 over "<size>:" + the first and the last MiB."""
-    mib = 1 << 20
-    size = Path(path).stat().st_size
-    with open(path, 'rb') as file:
-        head, tail = file.read(mib), b''
-        if size > mib:
-            file.seek(max(mib, size - mib))
-            tail = file.read()
-    return 'sample-sha256:' + hashlib.sha256(f'{size}:'.encode() + head + tail).hexdigest()
-
-
 def canonical_sha256(data):
     """The hash of a JSON object independent of spacing and key order: used for an approval block inside it."""
     text = json.dumps(data, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
@@ -596,12 +583,13 @@ def upload(args, environ=os.environ, post=post_json, log=print):
         if not token:
             raise Stop('Set VIDEO_REVIEW_TOKEN (Connect agent in Video Review copies it) for --hosted.')
         call, page = hosted_caller(args.review_url or HOSTED_URL, token, post), args.review_url or HOSTED_URL
-        identity = {'fingerprint': sampled_fingerprint(video)}
+        identity = {'sha256': payload['file']['sha256']}
         register['fileName'] = video.name
     else:
         call, page = local_caller(args.data_dir), args.review_url or LOCAL_URL
         identity = {'path': str(video.resolve()), 'fingerprint': payload['file']['sha256']}
-    # What the page lists for this file once it is registered: the proof that an id found there is this run's.
+    # What the page lists for this file once it is registered, with the hash of the whole file (checked above):
+    # the proof that an id found there is this run's.
     register.update(identity)
     progress.update(videoId=payload['videoId'], reviewPage=page, hosted=bool(args.hosted), destination=destination)
     steps = (('register_video', register),

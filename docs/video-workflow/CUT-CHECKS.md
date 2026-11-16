@@ -232,9 +232,9 @@ and opens it. The file stays on this computer; nothing goes to YouTube. `--hoste
 with the token in `VIDEO_REVIEW_TOKEN`. A changed file or an id uploaded before is refused. Each finished step
 is recorded in `review-upload-record.json`, so after a failure the same command carries on where it stopped.
 If the upload stopped while the video was being registered and the id is already on the page, it carries on
-only when the page lists that id as this exact file. For another file nothing on the page is changed and the
-upload asks for a new `--version`; that also happens to a hosted upload an older version of this tool left
-unfinished, until the reviewer has opened the file on the page.
+only when the page lists that id as this exact file (the hash of the whole file). For another file nothing on
+the page is changed and the upload asks for a new `--version`; that also happens to a hosted upload an older
+version of this tool left unfinished, because it was registered without that hash.
 
 `--dry-run` does steps 1, 2 and 6 into `renders/<slug>/<version>-dry-run/` without Resolve, a render or the
 review page. A render can take long: agents start the command with `scripts/agents/kit go`.
