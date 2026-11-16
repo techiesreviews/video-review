@@ -635,6 +635,8 @@ class Upload(Base):
         self.assertEqual(calls, ['register_video', 'set_transcript', 'open_video'])
         register = sent[1][1]['params']['arguments']
         self.assertEqual(register['fileName'], 'test-video-v1.mp4')
+        self.assertEqual(register['fingerprint'],
+                         cut_to_review.sampled_fingerprint(self.run_dir / 'test-video-v1.mp4'))
         self.assertNotIn('path', register)
         self.assertNotIn('vr_secret', output.getvalue())
 
@@ -688,6 +690,29 @@ class UploadFailures(Base):
                 cut_to_review.upload(args, environ={}, post=no_network)
 
     def test_lost_registration_answer_is_taken_as_registered(self):
+        self.lose_the_registration_answer()
+        # The page did register it: it lists the id with the fingerprint this run sent.
+        sent = self.sent[1]['params']['arguments']['fingerprint']
+        self.assertEqual(sent, cut_to_review.sampled_fingerprint(self.run_dir / 'test-video-v1.mp4'))
+        self.assertEqual(self.upload(self.exists_as(sent)), 0)
+        names = [message['params']['name'] for message in self.sent if message['method'] == 'tools/call']
+        self.assertEqual(names, ['register_video', 'register_video', 'list_videos', 'set_transcript', 'open_video'])
+
+    def exists_as(self, fingerprint):
+        """A hosted page that already has the id test-video-v1, listed with this fingerprint."""
+        def page(url, message, token):
+            self.sent.append(message)
+            name = message.get('params', {}).get('name')
+            if name == 'register_video':
+                return {'jsonrpc': '2.0', 'id': message['id'],
+                        'result': {'content': [{'text': 'That id already exists; use a new id'}], 'isError': True}}
+            text = json.dumps({'videos': [{'id': 'another-v1', 'fingerprint': None},
+                                          {'id': 'test-video-v1', 'fileName': 'test-video-v1.mp4',
+                                           'fingerprint': fingerprint}]}) if name == 'list_videos' else '{}'
+            return {'jsonrpc': '2.0', 'id': message['id'], 'result': {'content': [{'text': text}]}}
+        return page
+
+    def lose_the_registration_answer(self):
         def lost(url, message, token):
             self.sent.append(message)
             if message.get('params', {}).get('name') == 'register_video':
@@ -696,15 +721,37 @@ class UploadFailures(Base):
         with self.assertRaisesRegex(cut_to_review.Stop, 'timed out'):
             self.upload(lost)
 
-        def exists(url, message, token):
+    def test_after_a_lost_answer_another_video_with_the_same_id_is_left_alone(self):
+        # The first request never arrived, and the id on the page belongs to an unrelated video: another file,
+        # or one whose file the page does not know.
+        self.lose_the_registration_answer()
+        for fingerprint in ('sample-sha256:' + 'ab' * 32, None):
+            with self.subTest(fingerprint=fingerprint):
+                del self.sent[:]
+                with self.assertRaisesRegex(cut_to_review.Stop, 'test-video-v1 is already on the review page .* '
+                                                                'not as this file .*Nothing was changed'):
+                    self.upload(self.exists_as(fingerprint))
+                names = [message['params']['name'] for message in self.sent if message['method'] == 'tools/call']
+                self.assertEqual(names, ['register_video', 'list_videos'])
+        record = json.loads((self.run_dir / cut_to_review.DONE_FILE).read_text(encoding='utf-8'))
+        self.assertEqual(record['steps'], [])
+        self.assertNotIn('complete', record)
+
+    def test_after_a_lost_answer_a_page_that_cannot_list_its_videos_is_left_alone(self):
+        self.lose_the_registration_answer()
+
+        def nothing_shared(url, message, token):
             self.sent.append(message)
-            if message.get('params', {}).get('name') == 'register_video':
+            name = message.get('params', {}).get('name')
+            if name == 'register_video':
                 return {'jsonrpc': '2.0', 'id': message['id'],
-                        'result': {'content': [{'text': 'That id already exists; use a new id'}], 'isError': True}}
-            return {'jsonrpc': '2.0', 'id': message['id'], 'result': {'content': [{'text': '{}'}]}}
-        self.assertEqual(self.upload(exists), 0)
+                        'result': {'content': [{'text': 'That id already exists'}], 'isError': True}}
+            text = '{"available": false}' if name == 'list_videos' else '{}'
+            return {'jsonrpc': '2.0', 'id': message['id'], 'result': {'content': [{'text': text}]}}
+        with self.assertRaisesRegex(cut_to_review.Stop, 'not as this file'):
+            self.upload(nothing_shared)
         names = [message['params']['name'] for message in self.sent if message['method'] == 'tools/call']
-        self.assertEqual(names, ['register_video', 'register_video', 'set_transcript', 'open_video'])
+        self.assertEqual(names, ['register_video', 'register_video', 'list_videos'])
 
     def test_an_id_taken_before_this_run_is_still_refused(self):
         def exists(url, message, token):
@@ -759,6 +806,105 @@ class UploadFailures(Base):
         with mock.patch.object(cut_to_review.urllib.request, 'urlopen', offline):
             with self.assertRaisesRegex(cut_to_review.Stop, 'could not be reached'):
                 self.upload(cut_to_review.post_json)
+
+
+class SameIdOnTheLocalPage(Base):
+    """The upload stopped while the registration was under way, and the id on the local page is another video."""
+
+    def setUp(self):
+        super().setUp()
+        self.assertEqual(self.build(), cut_to_review.STOP_EXIT)
+        self.data = self.space.root / 'review-data'
+
+    def upload(self):
+        args = cut_to_review.parse(['--upload', str(self.run_dir), '--data-dir', str(self.data)])
+        with contextlib.redirect_stdout(io.StringIO()):
+            return cut_to_review.upload(args, environ={}, post=no_network)
+
+    def stop_during_the_registration(self):
+        def killed(name, arguments):
+            raise Killed()
+        with mock.patch.object(cut_to_review, 'local_caller', lambda data_dir: killed), self.assertRaises(Killed):
+            self.upload()
+        record = json.loads((self.run_dir / cut_to_review.DONE_FILE).read_text(encoding='utf-8'))
+        self.assertEqual((record['started'], record['steps']), ('register_video', []))
+
+    def register(self, path):
+        """Another run put a video on the page under the same id, and the reviewer saved a preview cut on it. It is
+        a cut of the same length and shape, so the page would take this run's transcript for it."""
+        import review_store
+        directory = review_store.data_dir(self.data)
+        payload = json.loads((self.run_dir / cut_to_review.UPLOAD_FILE).read_text(encoding='utf-8'))
+        review_store.register_video(directory, {**payload['register'], 'title': 'Other', 'label': 'Other · v1',
+                                                'path': str(path)})
+        words = [{'id': 'w1', 'text': 'kept', 'startMs': 0, 'endMs': 400},
+                 {'id': 'w2', 'text': 'removed', 'startMs': 500, 'endMs': 900}]
+        review_store.save_transcript(directory, 'test-video-v1', {
+            'words': words, 'revision': 'theirs',
+            'draftEdits': [{'id': 'e1', 'startMs': 500, 'endMs': 900, 'wordIds': ['w2'], 'quote': 'removed'}]})
+
+    def saved(self):
+        return {str(path.relative_to(self.data)): path.read_bytes()
+                for path in sorted(self.data.rglob('*')) if path.is_file()}
+
+    def test_another_video_with_the_same_id_keeps_its_transcript_and_preview_cuts(self):
+        self.stop_during_the_registration()
+        other = self.space.root / 'other.mp4'
+        other.write_bytes(b'an unrelated video')
+        self.register(other)
+        before = self.saved()
+        self.assertIn(b'"theirs"', b''.join(before.values()))
+        self.assertIn(b'"e1"', b''.join(before.values()))
+        for _ in range(2):
+            with self.assertRaisesRegex(cut_to_review.Stop, 'not as this file .*Nothing was changed'):
+                self.upload()
+            self.assertEqual(self.saved(), before)
+        record = json.loads((self.run_dir / cut_to_review.DONE_FILE).read_text(encoding='utf-8'))
+        self.assertEqual(record['steps'], [])
+        self.assertNotIn('complete', record)
+
+    def test_the_same_path_with_other_content_is_not_this_file(self):
+        # The page lists this path, but with the hash of a file that was there before this render.
+        self.stop_during_the_registration()
+        video = self.run_dir / 'test-video-v1.mp4'
+        ours = video.read_bytes()
+        video.write_bytes(b'an older render at this path')
+        self.register(video)
+        video.write_bytes(ours)
+        before = self.saved()
+        with self.assertRaisesRegex(cut_to_review.Stop, 'not as this file'):
+            self.upload()
+        self.assertEqual(self.saved(), before)
+
+    def test_this_runs_own_registration_is_carried_on(self):
+        # The page did register this file before the upload stopped: the rerun finishes it.
+        self.stop_during_the_registration()
+        import review_store
+        payload = json.loads((self.run_dir / cut_to_review.UPLOAD_FILE).read_text(encoding='utf-8'))
+        review_store.register_video(review_store.data_dir(self.data), {
+            **payload['register'], 'path': str(self.run_dir / 'test-video-v1.mp4'),
+            'fingerprint': payload['file']['sha256']})
+        self.assertEqual(self.upload(), 0)
+        self.assertTrue(json.loads((self.run_dir / cut_to_review.DONE_FILE).read_text(encoding='utf-8'))['complete'])
+        self.assertTrue(any('transcript' in name for name in self.saved()))
+
+
+class SampledFingerprint(unittest.TestCase):
+    """The same value the hosted page makes for a file (sampledFingerprint in web/backend.js). The expected values
+    come from running that function in Node on the same bytes."""
+
+    CASES = ((5, '187f1dba81c7b20be04d43cb8bebcebe76faf62c8f48615fc8262b81b3b940d2'),
+             (1 << 20, '1c6a7739d264dbdbfc78831c43139877bfcd361f3310577e3e343d63ee61d534'),
+             ((1 << 20) * 3 // 2, 'c85aaf0b1b83fc273300afb7950654bf7fbac4ad0a09d8e15d964c4173bde8d8'),
+             ((1 << 20) * 3 + 11, 'b3af718ae081f6fffff68b4d20f7b3d363c40e43e2a65afaf545dba46a2217c8'))
+
+    def test_matches_the_browser_for_small_and_large_files(self):
+        with tempfile.TemporaryDirectory() as folder:
+            for size, expected in self.CASES:
+                with self.subTest(size=size):
+                    path = Path(folder) / f'{size}.bin'
+                    path.write_bytes(bytes((index * 31 + 7) % 251 for index in range(size)))
+                    self.assertEqual(cut_to_review.sampled_fingerprint(path), 'sample-sha256:' + expected)
 
 
 class Killed(BaseException):

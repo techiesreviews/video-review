@@ -56,9 +56,20 @@ def render(store=None, **options):
 class SceneCards(unittest.TestCase):
     def test_scenes_come_in_script_order_with_number_and_title(self):
         page = render()
-        titles = re.findall(r'<b class="stitle">(.*?)</b>', page)
+        titles = re.findall(r'<h2 class="stitle">(.*?)</h2>', page)
         self.assertEqual(titles, ['01 · INTRO', '02 · WHAT IT REALLY COSTS', '03 · THE NEWS MOVES FAST',
                                   '04 · ROOM 1: WHAT CHANGED?', '05 · WHAT&#x27;S NEXT'])
+
+    def test_each_scene_title_is_a_heading_one_level_under_the_pages(self):
+        # A screen reader jumps from scene to scene by heading; the page's own heading is the only level one.
+        page = render()
+        self.assertEqual(len(re.findall(r'<h1[ >]', page)), 1)
+        self.assertEqual(len(re.findall(r'<h2[ >]', page)), len(sample_store()['scenes']))
+        for section in re.findall(r'<section class="scene".*?</section>', page, re.S):
+            self.assertEqual(len(re.findall(r'<h2 class="stitle">', section)), 1)
+        self.assertNotIn('<b class="stitle">', page)
+        # A heading brings its own space above and below; the title keeps the look it had.
+        self.assertIn('.stitle { font: 700 15px/1.2 system-ui; margin: 0; overflow-wrap: anywhere; }', page)
 
     def test_the_scenes_script_text_is_shown_without_directions(self):
         costs = scene_html(render(), COSTS)
