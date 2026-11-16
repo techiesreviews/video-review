@@ -790,6 +790,19 @@ class Cutter:
         return any(not kept and word.start < end / self.fps - TOLERANCE and word.end > start / self.fps + TOLERANCE
                    for word, kept in zip(self.words, self.keep))
 
+    def demo_edge(self, frame, direction, demo):
+        """Tell Lex when a demo piece starts or ends closer to a removed word than the room kept at other cuts:
+        the demo stays whole, so the cut cannot move away from the word."""
+        at, (low, high) = frame / self.fps, SETTINGS['roomMs']
+        for index, word in enumerate(self.words):
+            beside = word.start < at if direction < 0 else word.end > at
+            gap = round((at - word.end if direction < 0 else word.start - at) * 1000)
+            if not self.keep[index] and beside and gap < low:
+                self.flag('tight-edge', index, index,
+                          f'Only {gap} ms between the removed "{word.text}" and the marked screen demo '
+                          f'({demo[0]:.2f}-{demo[1]:.2f}) (preferred {low}-{high} ms): the demo stays whole, so the '
+                          'cut sits that close. Listen.')
+
     def keep_demos(self, runs, joins, kept):
         """Put back the frames of a marked demo that a removal, the opening or the ending left out: a demo with no
         speech in it is still picture Lex marked. The silence between the demo and the speech kept beside it stays
@@ -807,8 +820,12 @@ class Cutter:
                     before = max((run[1] for run in runs if run[1] <= low), default=None)
                     if before is not None and not self.removed_between(before, low):
                         low = before
+                    else:
+                        self.demo_edge(low, -1, demo)
                     if run_in != math.inf and not self.removed_between(high, run_in):
                         high = run_in
+                    else:
+                        self.demo_edge(high, 1, demo)
                     pieces.append({'in': low, 'out': high, 'first': None, 'last': None})
                     if run_in == math.inf and demo[1] > self.words[-1].end:
                         # The cut now ends later than the speech does, and the transcript cannot say what is there.
@@ -916,8 +933,8 @@ def plan(words, fps, script_text=None, demos=(), name='Take cut proposal', sourc
     ends = next(item for item in reversed(segments) if item['sourceInFrame'] / fps < last_word.end)
     opening = {'leadInMs': round((first_word.start - (opens['sourceInFrame'] - opens['timelineStartFrame']) / fps)
                                  * 1000)}
-    ending = {'tailMs': round(((start - ends['timelineStartFrame'] + ends['sourceInFrame']) / fps - last_word.end)
-                              * 1000)}
+    ending = {'tailMs': round(((cutlist['durationFrames'] - ends['timelineStartFrame'] + ends['sourceInFrame']) / fps
+                               - last_word.end) * 1000)}
     if cutter.demo_opens:
         opening['demo'] = True
     if cutter.demo_ends:

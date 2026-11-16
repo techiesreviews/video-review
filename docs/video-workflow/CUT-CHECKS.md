@@ -72,7 +72,8 @@ What it does:
   `--demo` range out of the kept ranges, and the silence between the demo and the speech kept beside it stays.
   A demo between two removed takes becomes a piece of its own; its join is listed as "beside the marked screen
   demo". A demo that runs past the last word of the transcript is kept and listed, because the cutter cannot see
-  how long the recording is.
+  how long the recording is. A cut that opens or ends on a demo has more than 100-150 ms before its first word
+  or after its last one on purpose; the paper edit says so, and the join check lists a long lead-in to confirm.
 
 The working values it uses beyond Lex's numbers are listed in each paper edit. The join check wants the same
 100-150 ms before the first word (Lex, 2026-11-10), so the cutter's opening passes it.

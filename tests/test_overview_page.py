@@ -290,7 +290,8 @@ class NarrowScreens(unittest.TestCase):
         page = render()
         star = css(page, '.st')
         self.assertEqual((star['width'], star['height']), ('26px', '26px'), 'the visible star stays as approved')
-        target = css(page, '.st::after', media='(any-pointer: coarse)')
+        # Only a star that can be used: while the stars are off, a touch beside one still plays the take.
+        target = css(page, '.st:not(:disabled)::after', media='(any-pointer: coarse)')
         self.assertEqual((target.get('content'), target.get('position')), ("''", 'absolute'))
         self.assertGreaterEqual(pixels(star['width']) - 2 * pixels(target['inset']), 44)
 

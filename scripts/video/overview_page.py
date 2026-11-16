@@ -528,7 +528,7 @@ PAGE_HEAD = """<!doctype html>
   .st:hover:not(:disabled) { background: var(--bg); }
   .st:disabled { cursor: not-allowed; opacity: .55; }
   @media (any-pointer: coarse) {
-    .st::after { content: ''; position: absolute; inset: -9px; }
+    .st:not(:disabled)::after { content: ''; position: absolute; inset: -9px; }
   }
   .pick { position: absolute; top: 5px; left: 5px; font: 700 11px/1 system-ui; color: var(--muted); background: oklch(16% 0.06 282 / .7); border-radius: 6px; padding: 5px 6px; }
   .empty { color: var(--dim); font-size: 13px; padding: 12px; border-radius: 10px; box-shadow: inset 0 0 0 1px var(--border); display: grid; align-items: center; min-height: 96px; }
