@@ -172,10 +172,10 @@ try{
 
   // Keyboard and screen-reader focus stays where the user was (release review R1-1, 2026-11-16): a star click
   // switches every star off while it is saved and mostly loads the page again, and both drop the focus.
-  // What has the focus, in words: the star or the play button of which take.
+  // What has the focus, in words: the star or the play button of which take, and whether its focus ring shows.
   const focus=where=>where.evaluate(()=>{
     const at=document.activeElement,take=at?.closest('.take');
-    return take?`${at.classList.contains('st')?'star':'play button'} of ${take.dataset.scene} take ${take.dataset.take}${take.closest('details')?', archived':''}`:`nothing (${at?.tagName})`;
+    return take?`${at.classList.contains('st')?'star':'play button'} of ${take.dataset.scene} take ${take.dataset.take}${take.closest('details')?', archived':''}, ${at.matches(':focus-visible')?'ring':'no ring'}`:`nothing (${at?.tagName})`;
   });
   // Enter on a star of the first scene, from the keyboard.
   const press=async(where,take)=>{
@@ -189,26 +189,27 @@ try{
   await press(starred,1);
   await starred.locator('.scene').first().locator('.sh + .row > .take[data-take="1"] .st:not(:disabled)').waitFor();
   let at=await focus(starred);
-  check(at==='star of 01-scene take 1',`after a star click from the keyboard and the reload, the focus is on: ${at}`);
-  // The same after a star that was saved with a problem (the page above, which was touched, not typed).
+  check(at==='star of 01-scene take 1, ring',`after a star click from the keyboard and the reload, the focus is on: ${at}`);
+  // The same after a star that was saved with a problem (the page above). That star was touched, not pressed
+  // from the keyboard, so no focus ring appears that was not there before.
   at=await focus(saved);
-  check(at==='star of 01-scene take 1',`after a star that was saved with a problem and the reload, the focus is on: ${at}`);
+  check(at==='star of 01-scene take 1, no ring',`after a touched star that was saved with a problem and the reload, the focus is on: ${at}`);
   // The server refuses the click (409) and nothing loads again: the focus is back on the clicked star.
   const no=await open(true,{starError:ERROR,status:409});
   await press(no,1);
   await no.getByRole('status').filter({hasText:ERROR}).waitFor();
   await front(no).and(no.locator(':not(:disabled)')).waitFor();
   at=await focus(no);
-  check(at==='star of 01-scene take 1, archived',`after a refused star click from the keyboard, the focus is on: ${at}`);
+  check(at==='star of 01-scene take 1, archived, ring',`after a refused star click from the keyboard, the focus is on: ${at}`);
   // Stars that stay off cannot hold the focus, so the take's play button keeps the user's place: when the click
   // gets no answer, and on a page that is out of date after its reload (the page above).
   const silent=await open(true,{gone:true});
   await press(silent,1);
   await silent.getByRole('status').filter({hasText:'video-review'}).waitFor();
   at=await focus(silent);
-  check(at==='play button of 01-scene take 1, archived',`after a star click that got no answer, the focus is on: ${at}`);
+  check(at==='play button of 01-scene take 1, archived, ring',`after a star click that got no answer, the focus is on: ${at}`);
   at=await focus(stale);
-  check(at==='play button of 01-scene take 2',`on a page that is out of date after its reload, the focus is on: ${at}`);
+  check(at==='play button of 01-scene take 2, no ring',`on a touched page that is out of date after its reload, the focus is on: ${at}`);
   assert.deepEqual(faults,[]);
   console.log(`overview page at 320 px: ${strip.count} scenes reachable in the strip, long title and long server error wrap, a failed star click is said in the live region, the focus stays with the clicked star, ${stars.length} stars with a 44 px touch target`);
 }finally{await browser.close();}
