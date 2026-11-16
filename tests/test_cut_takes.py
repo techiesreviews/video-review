@@ -788,9 +788,21 @@ class SilentDemoTests(unittest.TestCase):
         result = plan_words(words, demos=[(2.5, 3.5), (3.8, 5.0)])
         self.assert_demo_kept(result, 2.5, 3.5)
         self.assert_demo_kept(result, 3.8, 5.0)
-        self.assertEqual([(item['sourceInFrame'], item['sourceOutFrame']) for item in result['cutlist']['segments'][:2]],
-                         [(75, 105), (114, 150)])
+        # Nothing was removed between the two demos, so the 300 ms between them stays: one piece, no jump.
+        self.assertEqual([(item['sourceInFrame'], item['sourceOutFrame']) for item in result['cutlist']['segments'][:1]],
+                         [(75, 150)])
+        self.assertEqual(len(result['cutlist']['segments']), 2)
         self.assertEqual(kept_starts(result, cut_timeline.load_words(words)), {12.0, 12.24, 12.44, 12.64})
+
+    def test_a_demo_that_starts_before_kept_speech_and_ends_after_it_is_one_piece_with_it(self):
+        words = [['Here', 1.0, 1.2], ['is', 1.24, 1.4], ['the', 1.44, 1.6], ['screen.', 1.64, 2.0]] \
+            + take(6.0) + take(12.0)
+        result = plan_words(words, demos=[(0.5, 4.0)])
+        segments = result['cutlist']['segments']
+        self.assertEqual((segments[0]['sourceInFrame'], segments[0]['sourceOutFrame']), (15, 120))
+        self.assertIs(result['paperEdit']['opening'].get('demo'), True)
+        self.assertEqual([(join['why'], join['lastWord'], join['firstWord']) for join in result['paperEdit']['joins']],
+                         [('demo', None, 'This')])
 
     def test_a_demo_marked_right_after_a_removed_word_is_kept_whole_and_flagged_as_a_tight_cut(self):
         words = take(1.0) + take(10.0)

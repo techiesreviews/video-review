@@ -812,12 +812,13 @@ class Cutter:
         pieces = [{'in': start, 'out': end, 'first': joins[number - 1]['after'] if number else kept[0],
                    'last': joins[number]['before'] if number < len(joins) else kept[-1]}
                   for number, (start, end) in enumerate(runs)]
-        for demo in self.demos:
+        for demo in sorted(self.demos):
             start, end = self.demo_frames(demo)
             for run_in, run_out in runs + [(math.inf, math.inf)]:
                 if start < min(run_in, end):
                     low, high = start, min(run_in, end)
-                    before = max((run[1] for run in runs if run[1] <= low), default=None)
+                    # What ends before this part: a run, or a demo piece put back earlier.
+                    before = max((piece['out'] for piece in pieces if piece['out'] <= low), default=None)
                     if before is not None and not self.removed_between(before, low):
                         low = before
                     else:
