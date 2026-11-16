@@ -33,13 +33,16 @@ function Find-ReviewPython {
 }
 
 # The app itself needs only Python. ffprobe (part of ffmpeg) is needed to add a video, so say so before it surprises anyone.
+# media_tools.py looks for it the same way the app does; this note never stops the launch.
 function Test-ReviewTools {
-    $user = [Environment]::GetEnvironmentVariable('Path', 'User')
-    $found = (Get-Command ffprobe.exe -ErrorAction SilentlyContinue) -or ($user -and ($user -split ';' | Where-Object { $_ -and (Test-Path -LiteralPath (Join-Path ([Environment]::ExpandEnvironmentVariables($_)) 'ffprobe.exe')) }))
-    if (-not $found) {
-        Write-Host 'Note: ffprobe (part of ffmpeg) was not found. The page will open, but adding a video will fail until you install it.'
-        Write-Host '      To install it, open PowerShell and run: winget install Gyan.FFmpeg   (then close and reopen this window)'
-    }
+    try {
+        $python = Find-ReviewPython
+        $answer = & $python.Path @($python.Prefix + @((Join-Path $reviewRoot 'media_tools.py'), 'ffprobe'))
+        if ($LASTEXITCODE -ne 0 -and $answer) {
+            Write-Host "Note: $($answer -join ' ')"
+            Write-Host '      The page will open, but adding a video will fail until it is installed.'
+        }
+    } catch { }
 }
 
 try {

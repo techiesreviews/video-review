@@ -34,11 +34,12 @@ import os
 from pathlib import Path
 import re
 import statistics
-import subprocess
 import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+import media_tools  # noqa: E402
 import overview_page  # noqa: E402
 import review_store  # noqa: E402
 import rough_cut  # noqa: E402
@@ -74,8 +75,8 @@ LONG_PAUSE_SECONDS = 2.5
 EDGE_SECONDS = 2.0
 
 
-class ToolMissing(Exception):
-    """ffmpeg or ffprobe is not installed (or not on the path)."""
+# ffmpeg or ffprobe is not installed (or this computer cannot find it); its message says how to install it.
+ToolMissing = media_tools.ToolMissing
 
 
 # The three checks ----------------------------------------------------------------------------------------------
@@ -122,18 +123,25 @@ def pick_favorite(entry):
 
 # The media tools -----------------------------------------------------------------------------------------------
 
-def _run(command, tool):
+# How long one tool may take on one take before the take is left for the next run. Listening to a long take's
+# sound takes seconds; a tool still busy after this has hung on a damaged file.
+PROBE_TIMEOUT_SECONDS = 60
+SILENCE_TIMEOUT_SECONDS = 600
+
+
+def _run(tool, arguments, timeout):
+    """What the tool printed, or None when it hung. A missing tool raises ToolMissing."""
     try:
-        return subprocess.run(command, capture_output=True, text=True, encoding='utf-8', errors='replace')
-    except FileNotFoundError:
-        raise ToolMissing(f'{tool} is not installed (or not on the path); the sound checks need it.') from None
+        return media_tools.run(tool, arguments, timeout=timeout, text=True)
+    except media_tools.ToolTimedOut:
+        return None
 
 
 def probe_media(path):
-    """(length in seconds, has sound) from ffprobe, or None when the file cannot be read (yet)."""
-    result = _run(['ffprobe', '-v', 'error', '-show_entries', 'format=duration:stream=codec_type',
-                   '-of', 'json', str(path)], 'ffprobe')
-    if result.returncode != 0:
+    """(length in seconds, has sound) from ffprobe, or None when the file cannot be read (yet) or ffprobe hangs."""
+    result = _run('ffprobe', ['-v', 'error', '-show_entries', 'format=duration:stream=codec_type',
+                              '-of', 'json', str(path)], PROBE_TIMEOUT_SECONDS)
+    if result is None or result.returncode != 0:
         return None
     try:
         info = json.loads(result.stdout)
@@ -168,13 +176,13 @@ def parse_silence(text, duration):
 
 
 def detect_silence(path, duration):
-    """Silent stretches of the take's first sound track, or None when ffmpeg could not read it.
+    """Silent stretches of the take's first sound track, or None when ffmpeg could not read it or hung.
 
     Only the first sound track is listened to: OBS puts the full mix there. The picture is not decoded."""
-    result = _run(['ffmpeg', '-hide_banner', '-nostats', '-nostdin', '-i', str(path), '-vn', '-map', '0:a:0',
-                   '-af', f'silencedetect=noise={SILENCE_FLOOR_DB}dB:d={SILENCE_MIN_SECONDS}',
-                   '-f', 'null', '-'], 'ffmpeg')
-    if result.returncode != 0:
+    result = _run('ffmpeg', ['-hide_banner', '-nostats', '-nostdin', '-i', str(path), '-vn', '-map', '0:a:0',
+                             '-af', f'silencedetect=noise={SILENCE_FLOOR_DB}dB:d={SILENCE_MIN_SECONDS}',
+                             '-f', 'null', '-'], SILENCE_TIMEOUT_SECONDS)
+    if result is None or result.returncode != 0:
         return None
     return parse_silence(result.stderr, duration)
 
