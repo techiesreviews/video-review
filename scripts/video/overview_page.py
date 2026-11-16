@@ -392,7 +392,7 @@ def _scene_section(scene, text, thumbs, prefix, changed):
                f'<div class="row">{others}</div></details>') if len(takes) > 1 else ''
     return (f'<section class="scene" data-scene="{esc(scene["id"])}">'
             f'<div class="sh"><span class="dotg{"" if takes else " off"}"></span>'
-            f'<b class="stitle">{scene["number"]:02d} · {esc(scene["title"])}</b>{chips}</div>'
+            f'<h2 class="stitle">{scene["number"]:02d} · {esc(scene["title"])}</h2>{chips}</div>'
             f'{body}<div class="row">{record}{cards}{empty}</div>{archive}</section>')
 
 
@@ -556,7 +556,7 @@ PAGE_HEAD = """<!doctype html>
   .cutlabel { color: var(--dim); font-size: 12px; margin: 0 0 16px; }
   .scene { background: var(--panel); border-radius: 12px; padding: 12px; margin: 0 0 10px; }
   .sh { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin: 0 0 10px; }
-  .stitle { font: 700 15px/1.2 system-ui; overflow-wrap: anywhere; }
+  .stitle { font: 700 15px/1.2 system-ui; margin: 0; overflow-wrap: anywhere; }
   .chip { font: 600 11px/1 system-ui; padding: 4px 7px; border-radius: 6px; background: var(--chip); color: var(--muted); }
   .chip.warn { background: oklch(30% 0.07 75); color: var(--warn); }
   .dotg { width: 9px; height: 9px; border-radius: 50%; background: oklch(75% 0.17 150); align-self: center; flex: none; }

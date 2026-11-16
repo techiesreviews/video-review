@@ -78,6 +78,18 @@ try{
   let size=await fits();
   check(size.page<=size.screen,`the page is ${size.page} px wide on a ${size.screen} px screen`);
 
+  // A screen reader jumps from scene to scene by heading (release review SL-3, 2026-11-16): every scene's title is
+  // a level-two heading under the page's one level-one heading, and it looks as it did when it was bold text.
+  const titles=await page.evaluate(()=>[...document.querySelectorAll('.scene')].map(scene=>{
+    const title=scene.querySelector('.stitle'),style=getComputedStyle(title);
+    return {tag:title.tagName,margin:`${style.marginTop} ${style.marginBottom}`,font:`${style.fontWeight} ${style.fontSize}`};
+  }));
+  check(await page.getByRole('heading',{level:1}).count()===1,'the page does not have exactly one level-one heading');
+  check(titles.length===40&&titles.every(title=>title.tag==='H2')&&await page.getByRole('heading',{level:2}).count()===40,
+    'not every scene title is a level-two heading');
+  check(titles.every(title=>title.margin==='0px 0px'&&title.font==='700 15px'),
+    'a scene title is no longer 15 px bold with no room above or below');
+
   // Every scene of the strip can be brought into view, and its number is not cut off.
   const reach=where=>where.evaluate(()=>{
     const cut=document.querySelector('.cut'),box=()=>cut.getBoundingClientRect();
