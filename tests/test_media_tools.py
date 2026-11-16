@@ -239,9 +239,12 @@ class Running(unittest.TestCase):
         self.assertEqual(caught.exception.tool, 'ffmpeg')
 
     def test_a_tool_that_is_there_but_cannot_start_is_named_with_its_path(self):
-        with mock.patch.object(media_tools.subprocess, 'run', side_effect=OSError(193, 'not a valid application')), \
-                self.assertRaisesRegex(media_tools.ToolMissing, r'ffprobe at /tools/ffprobe could not be started \(not a valid application\)'):
+        windows_error = OSError(193, '%1 is not a valid Win32 application.')
+        with mock.patch.object(media_tools.subprocess, 'run', side_effect=windows_error), \
+                self.assertRaises(media_tools.ToolMissing) as caught:
             media_tools.run('ffprobe', [], timeout=1)
+        self.assertIn('ffprobe at /tools/ffprobe could not be started (ffprobe is not a valid Win32 application). ',
+                      str(caught.exception))
 
     def test_a_tool_that_runs_too_long_is_stopped_with_a_clear_error(self):
         with mock.patch.object(media_tools.subprocess, 'run', side_effect=subprocess.TimeoutExpired('x', 5)), \
@@ -306,6 +309,8 @@ class CommandLine(unittest.TestCase):
     def test_the_launcher_asks_the_module(self):
         launcher = (ROOT / 'start-review.ps1').read_text(encoding='utf-8')
         self.assertIn("'media_tools.py'), 'ffprobe'", launcher)
+        # Only an answer from the module is shown; a Python that fails prints nothing, and the note stays away.
+        self.assertIn('$LASTEXITCODE -ne 0 -and $answer', launcher)
         self.assertNotIn('ffprobe.exe', launcher)
 
 
