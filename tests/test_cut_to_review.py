@@ -762,7 +762,8 @@ class UploadFailures(Base):
 
 
 class Killed(BaseException):
-    """The program dies in the middle of a save (power cut, a closed window)."""
+    """The program is stopped in the middle of a save, as Ctrl+C does: Python still unwinds, so the safe save
+    takes its unfinished file away. A power cut leaves that file behind, which has a check of its own below."""
 
 
 class CutShort:
@@ -836,6 +837,18 @@ class InterruptedRecordSave(Base):
                 self.assertEqual(view['videoId'], 'test-video-v1')
                 self.assertEqual([path.name for path in run_dir.glob(cut_to_review.DONE_FILE + '*')],
                                  [cut_to_review.DONE_FILE])
+
+    def test_an_unfinished_save_left_by_a_power_cut_is_ignored(self):
+        # A power cut skips the clean-up, so half a save stays next to the record under its temporary name.
+        data = self.space.root / 'data'
+        with self.assertRaises(Killed):
+            self.upload(self.run_dir, data, die_at=3)
+        leftover = self.run_dir / f'{cut_to_review.DONE_FILE}.999.deadbeef.tmp'
+        leftover.write_text('{"steps": ["register_video"', encoding='utf-8')
+        self.assertEqual(self.upload(self.run_dir, data)[0], 0)
+        self.assertTrue(json.loads((self.run_dir / cut_to_review.DONE_FILE).read_text(encoding='utf-8'))['complete'])
+        manifest = json.loads((data / 'manifest.json').read_text(encoding='utf-8'))
+        self.assertEqual([item['id'] for item in manifest], ['test-video-v1'])
 
 
 class HostedRetry(unittest.TestCase):

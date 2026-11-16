@@ -109,7 +109,7 @@ class SceneCards(unittest.TestCase):
 
     def test_every_stars_name_says_its_scene_its_take_and_what_it_does(self):
         # A screen reader's list of buttons shows only the names: each one says which recording it is about.
-        stars = re.findall(r'<button class="st"[^>]*data-scene="([^"]*)" data-take="(\d)"[^>]*aria-label="([^"]*)"',
+        stars = re.findall(r'<button class="st"[^>]*data-scene="([^"]*)" data-take="(\d+)"[^>]*aria-label="([^"]*)"',
                            render())
         self.assertEqual(stars, [(COSTS, '2', 'Take the star off scene 2, take 2'),
                                  (COSTS, '1', 'Put scene 2, take 1 in rough cut'),
