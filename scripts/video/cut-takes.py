@@ -603,8 +603,8 @@ class Cutter:
                               f'({self.words[last[0]].start:.2f}-{self.words[last[-1]].end:.2f}) '
                               f'{" and ".join(reasons)}. Say if you prefer the last take.')
                     chosen = best
-        start, keeps = self.false_start(takes[chosen], takes, line)
-        keeps = keeps[0]
+        start, rest = self.false_start(takes[chosen], takes, line)
+        keeps = rest[0]
         # Takes are grouped pair by pair, so one that overlaps two parts of a script line brings both into its
         # group: drop() leaves in a take that says more than the take that stays.
         for number, take in enumerate(takes):
@@ -617,13 +617,13 @@ class Cutter:
         if not start:
             return
         # A short start is only listed, here as everywhere ("And then I—"), unless it is the tail of a run of
-        # failed tries: the word before it was removed, so it goes as one passage with that removal.
+        # failed tries: the word before it was removed too.
         in_run = start[0] > 0 and not self.keep[start[0] - 1]
         if len(start) >= SETTINGS['shortStartWords'] or in_run:
             self.drop(start, 'abandoned-start', keeps)
         elif not any(item['code'] == 'possible-restart' and item['start'] <= self.words[start[-1]].end
                      and item['end'] >= self.words[start[0]].start for item in self.flags):
-            self.ask_restart(start, keeps + min(1, len(takes[chosen]) - len(start) - 1))
+            self.ask_restart(start, rest[min(1, len(rest) - 1)])
 
     def false_start(self, take, takes, line):
         """Split a kept take at a long pause when what follows is itself a complete take that opens like another take
@@ -779,7 +779,8 @@ class Cutter:
                 left = [index for index, word in enumerate(self.words)
                         if self.keep[index] and item['start'] - TOLERANCE <= word.start <= item['end']]
                 if left:
-                    flags.append({**item, 'start': round(self.words[left[0]].start, 3), 'text': self.text(left)})
+                    flags.append({**item, 'start': round(self.words[left[0]].start, 3),
+                                  'end': round(self.words[left[-1]].end, 3), 'text': self.text(left)})
             elif item['code'] not in asked or not inside:
                 flags.append(item)
         self.flags = flags

@@ -908,6 +908,14 @@ class OneScriptLineTests(unittest.TestCase):
         remove(cutter, 2, 5)
         cutter.restarted_lines()
         self.assertEqual(cutter.flags, [])
+        # The end moves too when the tail goes.
+        cutter = cut_takes.Cutter(cut_timeline.load_words(said('The camera is easy to use. The end.', 1.0)), FPS,
+                                  'The camera is easy to use. The end.')
+        cutter.flag('take-says-more', 0, 5, 'Left in.')
+        remove(cutter, 3, 5)
+        cutter.restarted_lines()
+        flag, = cutter.flags
+        self.assertEqual((flag['start'], flag['end'], flag['text']), (1.0, 1.86, 'The camera is'))
 
     def test_a_direction_in_brackets_that_runs_over_a_blank_line_or_a_list_is_left_out(self):
         self.assertEqual(cut_takes.script_sentences('Say hello. [B-roll:\n- shot one\n\n- shot two] Then go on.'),
@@ -1267,8 +1275,12 @@ class FarApartTests(unittest.TestCase):
         words = said('This is the tool.', 1.0) + said('This is the tool.', 12.0)
         result = plan_words(words, demos=[(3.0, 10.0)])
         removal, = result['paperEdit']['removed']
-        self.assertLess(removal['silenceBeside'], 3.0)
+        self.assertAlmostEqual(removal['silenceBeside'], 2.84, 2)
         self.assertNotIn('silence beside', cut_takes.render_paper_edit(result['paperEdit']))
+        # Only the demo's own seconds are left out: a shorter demo leaves a silence worth a word.
+        result = plan_words(words, demos=[(3.0, 6.0)])
+        self.assertAlmostEqual(result['paperEdit']['removed'][0]['silenceBeside'], 6.84, 2)
+        self.assertIn('takes out the 6.8 s silence beside it', cut_takes.render_paper_edit(result['paperEdit']))
         # The silence before a removed last take counts too.
         words = said('This is the tool.', 1.0) + said('This is the, um, um, tool.', 12.0)
         result = plan_words(words)

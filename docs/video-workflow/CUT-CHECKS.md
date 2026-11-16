@@ -42,7 +42,7 @@ What it does:
   you see") stay. A sentence begun, dropped and restarted after a pause loses the dropped start; a dropped start
   of fewer than four words ("And then I—", "But I'm—") is only listed, as the Sunday paper edit asks, also in
   front of a take that stays while another take of the line is removed. It goes only as the tail of a run of
-  failed tries: when the word before it is removed too, so the two go as one passage.
+  failed tries: when the word before it is removed too.
 - **The whole run of failed tries.** From the first failed start to just before the take that stays, as one
   passage, never into that take: a breath of under 1.5 s inside a take does not start a new one. A broken-off
   start ("If you could—") before a long pause goes when, with a script, the rest says the whole line. A finished
