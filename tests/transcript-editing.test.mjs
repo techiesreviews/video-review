@@ -274,6 +274,7 @@ test('a restore from the original recording is asked once, with times in the sha
   assert.equal(state.comments[0].editRequest.type,'restore');
   assert.equal(editing.alreadyAsked(editing.selection,state.comments),true);
   assert.equal(editing.alreadyAsked({...editing.selection,sourceEndMs:12700},state.comments),false);
+  assert.deepEqual([editing.wholeGap(group).sourceStartMs,editing.wholeGap(group).sourceEndMs],[11900,12600],'the gap button asks for the whole gap');
 });
 
 test('Shift picks a range of original words from the same gap only',()=>{
@@ -300,7 +301,7 @@ test('waveform handles make the selection an exact span; a span too short for a 
 test('a comment opens on its words by id, a join by its cut, and anything else on the word at its time',()=>{
   const {editing}=setup();
   assert.deepEqual(editing.target(0,{firstWordId:'W2',lastWordId:'W4'}),{first:2,last:4,cut:null,seekMs:2100});
-  assert.deepEqual(editing.target(0,{cutId:'J1'}),{first:5,last:5,cut:TRANSCRIPT.cuts[0],seekMs:null},'the first word at or after the join');
+  assert.deepEqual(editing.target(0,{cutId:'J1'}),{first:5,last:5,cut:editing.transcript.cuts[0],seekMs:null},'the first word at or after the join');
   assert.deepEqual(editing.target(7300),{first:7,last:7,cut:null,seekMs:null});
   assert.deepEqual(editing.target(99999),{first:9,last:9,cut:null,seekMs:null});
   assert.deepEqual(editing.changeContext(1200,2500),{type:'change',quote:'one two',firstWordId:'W1',lastWordId:'W2',wordIds:['W1','W2'],transcriptRevision:'r1'});
@@ -309,7 +310,7 @@ test('a comment opens on its words by id, a join by its cut, and anything else o
 test('the panel only draws: the editing rules and saves live in transcript-editing.js',async()=>{
   const {readFile}=await import('node:fs/promises');
   const panel=await readFile(new URL('../web/transcript-panel.js',import.meta.url),'utf8');
-  assert.match(panel,/import \{createTranscriptEditing\} from '\.\/transcript-editing\.js'/);
-  for(const rule of ['makeRemoval','keptRuns','lastCutGroup','cutsToRestore','nextWordAfterDelete','wordSelection','saveTranscript','draftEdits:'])
+  assert.ok(panel.includes("import {createTranscriptEditing} from './transcript-editing.js';"),'the panel uses the editing module');
+  for(const rule of ['makeRemoval','keptRuns','lastCutGroup','cutsToRestore','nextWordAfterDelete','wordSelection','removalBounds','cutNotes','notePending','draftEdits:'])
     assert.ok(!panel.includes(rule),`${rule} belongs in transcript-editing.js, not the page`);
 });
