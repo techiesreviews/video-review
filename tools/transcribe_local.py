@@ -1,7 +1,7 @@
 """Local Whisper large-v3 on the GPU for one recording. No upload, no credits.
 
 Run through tools/transcribe-local.ps1, which picks the venv that has stable-ts
-and CUDA PyTorch (C:/Users/lexvd/.cache/video-acut-venv).
+and CUDA PyTorch (~/.cache/video-acut-venv, in the user folder).
 
 Writes two files next to each other in --out-dir:
   <name>.large-v3.json   raw stable-ts result (same format as
