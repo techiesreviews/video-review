@@ -4,14 +4,20 @@ Do this before you press record. Takes about 5 minutes.
 
 ## 1. Episode folder
 
-Run once per episode:
+One home per video. Run once per video, with its Orbit card key first:
 
 ```powershell
-.\tools\new-episode.ps1 -Title "Video 02 - Who Changed Your WordPress Site"
+.\tools\new-episode.ps1 -Card VID-7 -Title "Black Friday packs"
 ```
+
+It makes `D:\Published\VID-7 Black Friday packs`. Everything for that video goes in there: the
+OBS recordings, the Resolve project, the renders, the chapters and the Shorts. The `README.md`
+inside says which subfolder holds what.
 
 It prints a path ending in `06 Source recordings\camera recordings`. Copy it.
 Add `-WhatIf` first if you only want to see what it will make.
+
+Older videos keep their folders and names: nothing is renamed or moved.
 
 ## 2. OBS
 

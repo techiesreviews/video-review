@@ -1,35 +1,53 @@
 <#
 .SYNOPSIS
-Creates a new episode folder with the same layout as Video 01 under D:\Published.
+Creates one home folder for a new video under D:\Published, named after its Orbit card,
+for example "VID-7 Black Friday packs". Same layout as Video 01.
+
+.DESCRIPTION
+Everything for that video lives in this one folder: the OBS recordings, the Resolve project,
+the renders, the chapters and the Shorts. The README.md it writes says which subfolder holds what.
+It only adds missing folders: existing folders and files are never renamed, moved or overwritten.
 
 .EXAMPLE
-.\tools\new-episode.ps1 -Title "Video 02 - Who Changed Your WordPress Site"
+.\tools\new-episode.ps1 -Card VID-7 -Title "Black Friday packs"
+Creates D:\Published\VID-7 Black Friday packs.
 
 .EXAMPLE
-.\tools\new-episode.ps1 -Title "Video 02 - Who Changed Your WordPress Site" -WhatIf
+.\tools\new-episode.ps1 -Card VID-7 -Title "Black Friday packs" -WhatIf
 Prints what it would create and changes nothing.
 #>
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
+    [Parameter(Mandatory = $true)][string]$Card,
     [Parameter(Mandatory = $true)][string]$Title,
     [string]$Root = 'D:\Published'
 )
 $ErrorActionPreference = 'Stop'
 
+$Card = $Card.Trim().ToUpperInvariant()
+if ($Card -notmatch '^[A-Z][A-Z0-9]*-[0-9]+$') {
+    throw "Card '$Card' does not look like an Orbit card key (for example VID-7)."
+}
+$Title = $Title.Trim()
+# The key may be typed in the title as well ("VID-7 Black Friday packs"): keep it once, at the front.
+$keyInTitle = '^' + [regex]::Escape($Card) + '(?![0-9])[\s:-]*'
+if ($Title -match $keyInTitle) { $Title = $Title.Substring($Matches[0].Length).Trim() }
 $bad = [IO.Path]::GetInvalidFileNameChars()
-if ($Title.Trim() -eq '' -or $Title.IndexOfAny($bad) -ge 0) {
+if ($Title -eq '' -or $Title.IndexOfAny($bad) -ge 0) {
     throw "Title '$Title' cannot be used as a folder name (no \ / : * ? `" < > |)."
 }
 if (-not (Test-Path -LiteralPath $Root -PathType Container)) {
     throw "Root folder '$Root' does not exist."
 }
 
-$episode = Join-Path $Root $Title.Trim()
+$name = "$Card $Title"
+$episode = Join-Path $Root $name
 $cameraRecordings = Join-Path $episode '06 Source recordings\camera recordings'
 
 # Same top folders and fixed subfolders as Video 01. Dated work folders are made later, per job.
 $folders = @(
     '01 Final',
+    '01 Final\Shorts',
     '02 Publishing',
     '03 Thumbnails and social images',
     '04 Edit project',
@@ -60,8 +78,9 @@ foreach ($f in $folders) {
 $readme = Join-Path $episode 'README.md'
 $created = Get-Date -Format 'yyyy-MM-dd'
 $readmeText = @"
-# $($Title.Trim())
+# $name
 
+- Orbit card: $Card
 - Created: $created
 - Published: (not yet)
 - YouTube: (not yet)
@@ -69,12 +88,14 @@ $readmeText = @"
 
 ## Folders
 
+Everything for this video stays in this one folder.
+
 | Folder | Holds |
 |---|---|
-| 01 Final | 4K master, review copy, SHA256SUMS, render notes |
-| 02 Publishing | YouTube description, upload and social records |
+| 01 Final | renders: 4K master, review copy, SHA256SUMS, render notes; ``Shorts`` holds the 9:16 Shorts |
+| 02 Publishing | YouTube description and chapters, upload and social records |
 | 03 Thumbnails and social images | thumbnails and social images |
-| 04 Edit project | ``a-cut-and-review-records``, ``final-cut-records`` (.drp exports), ``html-reel-plates``, ``referenced-media`` |
+| 04 Edit project | the Resolve project, ``a-cut-and-review-records``, ``final-cut-records`` (.drp exports), ``html-reel-plates``, ``referenced-media`` |
 | 05 Script and notes | script, sources, sponsor notes |
 | 06 Source recordings | ``camera recordings`` (OBS records here; original .mkv files, only copies), dated working folders |
 
