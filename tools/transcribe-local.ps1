@@ -3,7 +3,7 @@
 Transcribes one recording with local Whisper large-v3 on the GPU (no HappyScribe, no credits).
 
 .EXAMPLE
-.\tools\transcribe-local.ps1 "D:\Published\Video 02 - ...\06 Source recordings\camera recordings\take.mkv"
+.\tools\transcribe-local.ps1 "D:\Published\VID-7 Black Friday packs\06 Source recordings\camera recordings\take.mkv"
 
 .EXAMPLE
 .\tools\transcribe-local.ps1 take.mkv -Start 60 -Duration 30 -OutDir $env:TEMP\tx-test
@@ -24,5 +24,8 @@ if (-not (Test-Path -LiteralPath $Python)) {
 $script = Join-Path $PSScriptRoot 'transcribe_local.py'
 $argsList = @($script, $Media, '--start', $Start, '--duration', $Duration)
 if ($OutDir) { $argsList += @('--out-dir', $OutDir) }
+# Whisper's progress bar goes to stderr. With 'Stop', Windows PowerShell 5.1 turns that into an error
+# as soon as the output is redirected (for example to a log file), so only the exit code counts here.
+$ErrorActionPreference = 'Continue'
 & $Python @argsList
 exit $LASTEXITCODE
