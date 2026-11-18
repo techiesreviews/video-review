@@ -11,30 +11,35 @@ Writes two files next to each other in --out-dir:
 """
 import argparse
 import json
-import shutil
-import subprocess
 import sys
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import media_tools  # noqa: E402
+
 SAMPLE_RATE = 16000
+DECODE_TIMEOUT_S = 3600
 
 
 def load_audio(path, start, duration):
     """Decode any media file to 16 kHz mono float32 with ffmpeg."""
     import numpy as np
 
-    ffmpeg = shutil.which('ffmpeg')
-    if not ffmpeg:
-        sys.exit('ffmpeg is not on PATH. Run scripts/video/Use-Tools.ps1 first or install ffmpeg.')
-    cmd = [ffmpeg, '-nostdin', '-hide_banner', '-loglevel', 'error']
+    args = ['-nostdin', '-hide_banner', '-loglevel', 'error']
     if start:
-        cmd += ['-ss', str(start)]
-    cmd += ['-i', str(path)]
+        args += ['-ss', str(start)]
+    args += ['-i', str(path)]
     if duration:
-        cmd += ['-t', str(duration)]
-    cmd += ['-vn', '-ac', '1', '-ar', str(SAMPLE_RATE), '-f', 's16le', '-']
-    raw = subprocess.run(cmd, check=True, capture_output=True).stdout
+        args += ['-t', str(duration)]
+    args += ['-vn', '-ac', '1', '-ar', str(SAMPLE_RATE), '-f', 's16le', '-']
+    try:
+        result = media_tools.run('ffmpeg', args, DECODE_TIMEOUT_S)
+    except media_tools.MediaToolError as error:
+        sys.exit(str(error))
+    if result.returncode != 0:
+        sys.exit(f'ffmpeg could not read {path}: {result.stderr.decode("utf-8", "replace").strip()}')
+    raw = result.stdout
     if not raw:
         sys.exit(f'No audio decoded from {path}')
     return np.frombuffer(raw, np.int16).astype(np.float32) / 32768
