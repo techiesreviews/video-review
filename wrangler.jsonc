@@ -13,5 +13,5 @@
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ReviewSession"] }],
   "routes": [{ "pattern": "video.techies.tools", "custom_domain": true }],
-  "observability": { "enabled": true }
+  "observability": { "enabled": false }
 }
