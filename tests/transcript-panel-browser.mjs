@@ -128,10 +128,40 @@ try{
     await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===1);
     assert.deepEqual(await page.locator('.transcript-join[data-cut-id]').allInnerTexts(),['↔ J5'],`${name}: the join marks follow the saved transcript.`);
     assert.equal(await page.locator('#transcriptSelection').isHidden(),true,`${name}: the bar closes on a join that is gone.`);
-    assert.equal(await page.locator('#transcriptNotice').innerText(),'That join changed elsewhere, so it is no longer selected.');
+    assert.equal(await page.locator('#transcriptNotice').innerText(),'That join changed elsewhere, so it is no longer selected.',`${name}: a short line says why the bar closed.`);
     await word(11).click();
     assert.equal(await page.locator('#transcriptNote').inputValue(),'join note',`${name}: the typed note comes back on the next selection.`);
     await page.locator('#clearTranscriptSelection').click();
+
+    // J5 stays selected with a note while another editor adds J6 and leaves J5 where it was: the marks are drawn again,
+    // and the bar stays open on J5 with its note, next to J5's new mark rather than at the bottom of the text.
+    const restoreBefore=i=>word(i).evaluate(n=>n.previousElementSibling.click());
+    const noteOnJoinWhileSwapped=async (cuts,note)=>{
+      await page.locator('.transcript-join[data-cut-id]').first().click();await page.locator('#transcriptNote').fill(note);
+      const now=JSON.parse(await readFile(join(temp,'transcripts/words.json'),'utf8'));
+      await writeFile(join(temp,'transcripts/words.json'),JSON.stringify({...now,cuts}));
+    };
+    await noteOnJoinWhileSwapped([{id:'J5',atMs:3000},{id:'J6',atMs:6050}],'kept note');
+    await restoreBefore(6);
+    await page.waitForFunction(()=>!document.querySelector('.transcript-word.removed-word'));
+    assert.deepEqual(await page.locator('.transcript-join[data-cut-id]').allInnerTexts(),['↔ J5','↔ J6'],`${name}: the join marks follow the saved transcript.`);
+    assert.equal(await page.locator('#transcriptSelection').isVisible(),true,`${name}: the bar stays open on a join that is still there.`);
+    assert.match(await page.locator('#selectionQuote').innerText(),/^Join J5/,`${name}: the same join stays selected.`);
+    assert.equal(await page.locator('#transcriptNote').inputValue(),'kept note',`${name}: its note stays in the box.`);
+    const nearMark=await page.evaluate(()=>{const bar=document.querySelector('#transcriptSelection').getBoundingClientRect(),mark=document.querySelector('.transcript-join[data-cut-id="J5"]').getBoundingClientRect(),line=parseFloat(getComputedStyle(document.querySelector('#transcriptText')).lineHeight)||24;return Math.min(Math.abs(bar.top-mark.bottom),Math.abs(bar.bottom-mark.top))<=2*line;});
+    assert.equal(nearMark,true,`${name}: the bar sits next to the join's new mark.`);
+    await page.locator('#clearTranscriptSelection').click();
+
+    // Another editor moves J5 to a later word while it is selected: the bar closes, so a note never goes out with the old time.
+    await word(12).click();await page.locator('.bar-delete').click();
+    await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===1);
+    await page.locator('#clearTranscriptSelection').click();
+    await noteOnJoinWhileSwapped([{id:'J5',atMs:4050},{id:'J6',atMs:6050}],'moved note');
+    await restoreBefore(12);
+    await page.waitForFunction(()=>!document.querySelector('.transcript-word.removed-word'));
+    assert.equal(await page.locator('#transcriptSelection').isHidden(),true,`${name}: the bar closes on a join that moved.`);
+    assert.equal(await page.locator('#transcriptNotice').innerText(),'That join changed elsewhere, so it is no longer selected.',`${name}: a short line says why the bar closed.`);
+    await word(11).click();await page.locator('#clearTranscriptSelection').click();
 
     // The words change elsewhere (an agent or another tab) and this page never hears of it. A Delete is refused by the
     // store: the panel loads the newer words, keeps the same words selected with the typed note and the scroll, and says
