@@ -385,7 +385,7 @@ class Main(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             code, out, err, _ = run_main(self.PLACE + ['--frames', folder], FakeTimeline(frames_work=False))
         self.assertNotIn('Not placed', err)
-        self.assertIn('Placed, but the frames could not be saved', err)
+        self.assertIn('Placed, but not all the frames could be saved', err)
         report = json.loads(out)
         self.assertEqual(report['track'], 'V2')
         self.assertIn('render failed', report['frames_error'])
@@ -394,8 +394,10 @@ class Main(unittest.TestCase):
     def test_a_sheet_that_fails_after_the_frames_says_the_pictures_are_not_all_saved(self):
         with tempfile.TemporaryDirectory() as folder:
             code, out, err, _ = run_main(self.PLACE + ['--frames', folder], FakeTimeline(sheet_works=False))
-        self.assertIn('Placed, but the frames could not be saved', err)
-        self.assertIn('sheet render failed', json.loads(out)['frames_error'])
+        self.assertIn('Placed, but not all the frames could be saved', err)
+        report = json.loads(out)
+        self.assertIn('sheet render failed', report['frames_error'])
+        self.assertIn('the single frames are saved', report['frames_error'])
         self.assertEqual(code, 0)
 
     def test_a_windows_machine_without_appdata_gets_a_plain_message(self):
