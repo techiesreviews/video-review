@@ -64,6 +64,11 @@ class Timecodes(unittest.TestCase):
                 motion_place.timecode_to_frame(timecode, fps)
         self.assertEqual(motion_place.timecode_to_frame('00:10:00;00', 29.97), 17982)
 
+    def test_minutes_or_seconds_past_59_are_refused(self):
+        for timecode in ('00:60:00:00', '00:00:60:00', '00:00:60;00'):
+            with self.subTest(timecode=timecode), self.assertRaises(motion_place.PlaceError):
+                motion_place.timecode_to_frame(timecode, 29.97)
+
     def test_a_timecode_that_is_not_four_numbers_is_refused(self):
         with self.assertRaises(motion_place.PlaceError):
             motion_place.timecode_to_frame('1:00:00', 30)
