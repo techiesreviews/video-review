@@ -424,16 +424,26 @@ class Main(unittest.TestCase):
 
     def test_text_too_long_for_the_card_is_refused_before_resolve_is_touched(self):
         # The text does not shrink to fit, so a card that would overflow is never placed and called "Placed".
-        for option in (['--reason', 'x' * 51], ['--tool', 'Microsoft Power Automate Desktop']):
+        # Width, not letter count: 26 wide letters overflow, and a wider score leaves less room.
+        too_long = (['--reason', 'x' * 51], ['--tool', 'Microsoft Power Automate Desktop'], ['--tool', 'W' * 20],
+                    ['--score', '4.5', '--reason', 'Great for quick daily plans, weak on shared tasks.'])
+        for option in too_long:
             with self.subTest(option=option), \
                     mock.patch.object(motion_place.resolve_build, 'connect') as connect, \
                     contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit):
                 motion_place.main(self.PLACE + option)
             connect.assert_not_called()
-            self.assertIn('characters', err.getvalue())
-        code, out, err, _ = run_main(['--tool', 'x' * 26, '--score', '4.5', '--reason', 'y' * 50,
-                                      '--at', '00:00:01:00'], FakeTimeline())
-        self.assertEqual(code, 0)
+            self.assertIn('too long for the card', err.getvalue())
+        fits = (['--tool', 'DaVinci Resolve Studio'], ['--reason', 'Great for quick daily plans, weak on shared tasks.'],
+                ['--tool', 'Notion Calendar', '--score', '4.5', '--reason', 'A clear calendar that still lacks any task view.'])
+        for option in fits:
+            with self.subTest(option=option):
+                code, out, err, _ = run_main(self.PLACE + option, FakeTimeline())
+                self.assertEqual(code, 0, err)
+
+    def test_an_accented_letter_is_as_wide_as_its_plain_letter_and_an_unknown_one_as_the_widest(self):
+        self.assertEqual(motion_place.text_width('Café', 'Bold', 1), motion_place.text_width('Cafe', 'Bold', 1))
+        self.assertEqual(motion_place.text_width('☃', 'Regular', 1), max(motion_place.FONT_WIDTHS['Regular']) / 2048)
 
     def test_a_length_that_is_not_above_zero_is_refused_before_resolve_is_touched(self):
         for seconds in ('0', '-3', 'nan', 'inf'):
