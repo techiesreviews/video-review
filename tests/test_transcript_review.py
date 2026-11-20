@@ -68,6 +68,18 @@ class TranscriptReviewTests(unittest.TestCase):
         self.assertEqual(store.get_transcript(self.data,'v'),before,'the newer words stay saved')
         self.assertEqual(store.MESSAGES['transcriptChanged'],json.loads((Path(__file__).resolve().parents[1]/'web'/'review-rules.json').read_text(encoding='utf-8'))['messages']['transcriptChanged'])
 
+    def test_an_edits_only_save_after_a_shorter_render_is_refused_as_changed_words(self):
+        # The page still holds the old, longer words; the refusal must say the words changed, so the page reloads them,
+        # not that its transcript is longer than the video.
+        old=[{'id':'a','text':'one','startMs':100,'endMs':600},{'id':'b','text':'two','startMs':1500,'endMs':1900}]
+        store.save_transcript(self.data,'v',{'words':old})
+        store.write(self.data/'manifest.json',[{**self.video,'durationMs':1000}])
+        store.save_transcript(self.data,'v',{'words':old[:1],'revision':'r2'})
+        cut={'id':'cut','startMs':200,'endMs':500,'wordIds':['a'],'quote':'one'}
+        with self.assertRaisesRegex(ValueError,'transcript changed'):
+            store.save_transcript(self.data,'v',{'words':old,'draftEdits':[cut]},edits_only=True)
+        self.assertEqual(store.get_transcript(self.data,'v')['revision'],'r2')
+
     def test_an_edits_only_save_writes_only_the_cut_list(self):
         words=[{'id':'a','text':'one','startMs':100,'endMs':600}]
         store.save_transcript(self.data,'v',{'words':words,'revision':'r1','cuts':[{'id':'J1','atMs':700}]})
