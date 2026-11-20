@@ -91,13 +91,20 @@ def timecode_to_frame(timecode, fps):
     return total
 
 
-def frame_to_timecode(frame, fps):
-    """An absolute frame number to non-drop HH:MM:SS:FF, as Resolve's SetCurrentTimecode reads it."""
+def frame_to_timecode(frame, fps, drop=False):
+    """An absolute frame number to HH:MM:SS:FF, or to HH:MM:SS;FF on a drop-frame timeline, as Resolve's
+    SetCurrentTimecode reads it there."""
     base = round(fps)
-    seconds, frames = divmod(int(frame), base)
+    frame = int(frame)
+    if drop:
+        dropped = 2 * base // 30
+        per_minute, per_ten_minutes = base * 60 - dropped, base * 600 - dropped * 9
+        tens, rest = divmod(frame, per_ten_minutes)
+        frame += dropped * 9 * tens + (dropped * ((rest - dropped) // per_minute) if rest > dropped else 0)
+    seconds, frames = divmod(frame, base)
     minutes, seconds = divmod(seconds, 60)
     hours, minutes = divmod(minutes, 60)
-    return f'{hours:02d}:{minutes:02d}:{seconds:02d}:{frames:02d}'
+    return f'{hours:02d}:{minutes:02d}:{seconds:02d}{";" if drop else ":"}{frames:02d}'
 
 
 def snapshot(timeline):
@@ -167,6 +174,10 @@ def place(resolve, template, values, at, seconds, project_name=None):
     if timeline is None:
         raise PlaceError(f'Project "{project.GetName()}" has no timeline open')
     fps = float(timeline.GetSetting('timelineFrameRate'))
+    drop = str(timeline.GetSetting('timelineDropFrameTimecode')).lower() in ('1', 'true')
+    if drop and ';' not in at:
+        raise PlaceError(f'Timeline "{timeline.GetName()}" counts drop-frame timecode; write {at} as Resolve shows '
+                         f'it, with ";" before the frames (for example {at[:8]};{at[9:]})')
     start = timecode_to_frame(at, fps)
     if start < timeline.GetStartFrame():
         raise PlaceError(f'{at} is before the timeline starts ({timeline.GetStartTimecode()})')
@@ -177,7 +188,7 @@ def place(resolve, template, values, at, seconds, project_name=None):
         resolve.OpenPage('edit')
     # Insert where nothing follows: Resolve's title insert is an insert edit that pushes later clips along.
     end_of_timeline = timeline.GetEndFrame()
-    if not timeline.SetCurrentTimecode(frame_to_timecode(end_of_timeline, fps)):
+    if not timeline.SetCurrentTimecode(frame_to_timecode(end_of_timeline, fps, drop)):
         raise PlaceError('Resolve would not move the playhead to the end of the timeline')
     item = timeline.InsertFusionTitleIntoTimeline(TITLE_NAMES[template])
     if item is None:
@@ -257,7 +268,8 @@ def main(argv=None):
     parser.add_argument('--score', help='Score out of 5, for example 4 or 4.5')
     parser.add_argument('--reason', help='One short line on why')
     parser.add_argument('--label', help='Small label above the tool name (the template says VERDICT)')
-    parser.add_argument('--at', required=True, help='Timeline timecode for the card to start, HH:MM:SS:FF')
+    parser.add_argument('--at', required=True, help='Timeline timecode for the card to start, HH:MM:SS:FF '
+                        '(HH:MM:SS;FF on a drop-frame timeline, as Resolve shows it)')
     parser.add_argument('--seconds', type=float, default=5.0, help='How long the card stays (default 5)')
     parser.add_argument('--project', help='Refuse to change anything unless this project is the open one')
     parser.add_argument('--install', action='store_true', help='Copy the template into Resolve first')
