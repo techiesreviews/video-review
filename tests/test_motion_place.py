@@ -267,6 +267,23 @@ class Place(unittest.TestCase):
         self.assertIn('still moved', str(caught.exception))
         self.assertIn('undo in Resolve', str(caught.exception))
 
+    def test_a_card_resolve_will_not_delete_is_never_called_removed(self):
+        timeline = FakeTimeline(push_on_insert=10)
+        timeline.DeleteClips = lambda items, ripple: False
+        with self.assertRaises(motion_place.PlaceError) as caught:
+            motion_place.place(FakeResolve(timeline), 'verdict-card', self.VALUES, '00:00:01:00', 3)
+        self.assertIn('could not be removed', str(caught.exception))
+        self.assertNotIn('was removed', str(caught.exception))
+
+    def test_a_failed_step_with_nothing_moved_removes_the_card_and_keeps_its_reason(self):
+        timeline = FakeTimeline()
+        with mock.patch.object(FakeMacro, 'GetInput', return_value='something else'), \
+                self.assertRaises(motion_place.PlaceError) as caught:
+            motion_place.place(FakeResolve(timeline), 'verdict-card', self.VALUES, '00:00:01:00', 3)
+        self.assertEqual(timeline.deleted, [(('card',), False)])
+        self.assertIn('Resolve kept', str(caught.exception))
+        self.assertNotIn('still moved', str(caught.exception))
+
 
 class Main(unittest.TestCase):
     PLACE = ['--tool', 'Notion Calendar', '--score', '4', '--reason', 'Fast.', '--at', '00:00:01:00']
@@ -283,7 +300,8 @@ class Main(unittest.TestCase):
 
     def test_a_bad_frames_option_is_refused_before_anything_is_placed(self):
         # parser.error exits before main connects to Resolve; a late ValueError would mean the card was placed.
-        for option in (['--frames-crop', '0,0.6,x'], ['--frame-offsets', '0,two']):
+        for option in (['--frames-crop', '0,0.6,x'], ['--frames-crop', '0,0.6,0.6'], ['--frames-crop', '0,0,2,1'],
+                       ['--frame-offsets', '0,two']):
             with self.subTest(option=option), self.assertRaises(SystemExit):
                 run_main(self.PLACE + ['--frames', 'out'] + option, FakeTimeline())
 
