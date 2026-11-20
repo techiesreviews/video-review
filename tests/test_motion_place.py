@@ -44,6 +44,14 @@ class Timecodes(unittest.TestCase):
     def test_frame_back_to_timecode(self):
         self.assertEqual(motion_place.frame_to_timecode(108075, 30), '01:00:02:15')
 
+    def test_frame_back_to_drop_frame_timecode(self):
+        self.assertEqual(motion_place.frame_to_timecode(1800, 29.97, drop=True), '00:01:00;02')
+        self.assertEqual(motion_place.frame_to_timecode(17982, 29.97, drop=True), '00:10:00;00')
+        for fps in (29.97, 59.94):
+            for frame in range(0, 250000, 13):
+                label = motion_place.frame_to_timecode(frame, fps, drop=True)
+                self.assertEqual(motion_place.timecode_to_frame(label, fps), frame, (fps, label))
+
     def test_a_frame_past_the_seconds_rate_is_refused(self):
         with self.assertRaises(motion_place.PlaceError):
             motion_place.timecode_to_frame('01:00:00:30', 30)
@@ -174,6 +182,7 @@ class FakeTimeline:
 
     def __init__(self, push_on_insert=0, frames_work=True):
         self.clips = [FakeClip('interview.mp4', 1, 0, 300, 'v1')]
+        self.settings = {'timelineFrameRate': '30', 'timelineDropFrameTimecode': '0'}
         self.tracks = 1
         self.playhead = None
         self.push_on_insert, self.frames_work = push_on_insert, frames_work
@@ -183,7 +192,7 @@ class FakeTimeline:
         return 'Edit'
 
     def GetSetting(self, key):
-        return {'timelineFrameRate': '30'}[key]
+        return self.settings[key]
 
     def GetStartFrame(self):
         return 0
@@ -195,7 +204,10 @@ class FakeTimeline:
         return max(clip.GetEnd() for clip in self.clips)
 
     def SetCurrentTimecode(self, timecode):
-        self.playhead = motion_place.timecode_to_frame(timecode, 30)
+        # A drop-frame timeline reads every label as drop-frame, whatever separator it has.
+        if self.settings['timelineDropFrameTimecode'] == '1':
+            timecode = timecode[:8] + ';' + timecode[9:]
+        self.playhead = motion_place.timecode_to_frame(timecode, float(self.settings['timelineFrameRate']))
         return True
 
     def GetIsTrackEnabled(self, kind, track):
@@ -286,9 +298,25 @@ class Place(unittest.TestCase):
 
     def test_a_drop_frame_start_is_reported_as_it_was_asked(self):
         timeline = FakeTimeline()
-        timeline.GetSetting = lambda key: {'timelineFrameRate': '29.97'}[key]
+        timeline.settings['timelineFrameRate'] = '29.97'
         report = motion_place.place(FakeResolve(timeline), 'verdict-card', self.VALUES, '00:01:00;02', 3)
         self.assertEqual(report['start'], '00:01:00;02')
+
+    def test_on_a_drop_frame_timeline_the_card_goes_in_at_the_real_end(self):
+        timeline = FakeTimeline()
+        timeline.settings = {'timelineFrameRate': '29.97', 'timelineDropFrameTimecode': '1'}
+        timeline.clips[0].duration = 20000  # 11 minutes, so non-drop and drop-frame labels differ by 20 frames
+        report = motion_place.place(FakeResolve(timeline), 'verdict-card', self.VALUES, '00:01:00;02', 3)
+        self.assertEqual(timeline.playhead, 20000)
+        self.assertEqual((report['track'], timeline.clips[-1].GetStart()), ('V2', 1800))
+
+    def test_on_a_drop_frame_timeline_a_start_written_with_colons_is_refused(self):
+        timeline = FakeTimeline()
+        timeline.settings = {'timelineFrameRate': '29.97', 'timelineDropFrameTimecode': '1'}
+        with self.assertRaises(motion_place.PlaceError) as caught:
+            motion_place.place(FakeResolve(timeline), 'verdict-card', self.VALUES, '00:01:00:02', 3)
+        self.assertIn(';', str(caught.exception))
+        self.assertEqual([clip.uid for clip in timeline.clips], ['v1'])
 
     def test_a_card_that_pushed_clips_along_says_they_are_still_moved(self):
         timeline = FakeTimeline(push_on_insert=10)
