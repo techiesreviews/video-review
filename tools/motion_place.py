@@ -35,6 +35,10 @@ import resolve_build  # noqa: E402
 TEMPLATES = ROOT / 'motion' / 'templates'
 # The template's published controls (InstanceInput names in the .setting) and the option that fills each.
 FIELDS = {'verdict-card': {'ToolName': 'tool', 'Score': 'score', 'Reason': 'reason', 'Label': 'label'}}
+# The most characters each option may have before its text runs under the score: the text does not shrink to fit.
+# The reason fits about 50 (docs/motion-engine.md); the tool name, at 0.046 against the reason's 0.0247 text size,
+# shares the same width with the score, so it fits about 50 * 0.0247 / 0.046, which is 26.
+TEXT_LIMITS = {'verdict-card': {'tool': 26, 'reason': 50}}
 TITLE_NAMES = {'verdict-card': 'Verdict Card'}
 # The MacroOperator's name in the .setting: the tool that carries the published controls.
 MACROS = {'verdict-card': 'VerdictCard'}
@@ -295,6 +299,11 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.score is not None and not (args.score.replace('.', '', 1).isdigit() and float(args.score) <= 5):
         parser.error('--score takes a number from 0 to 5, for example 4 or 4.5')
+    for option, limit in TEXT_LIMITS.get(args.template, {}).items():
+        value = getattr(args, option)
+        if value is not None and len(value) > limit:
+            parser.error(f'--{option} fits {limit} characters on the card ({len(value)} given); '
+                         'the text does not shrink to fit')
     if not (math.isfinite(args.seconds) and args.seconds > 0):
         parser.error('--seconds takes a length above 0, for example 5')
     try:

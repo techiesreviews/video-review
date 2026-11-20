@@ -237,7 +237,8 @@ def save_transcript(directory,video_id,data,edits_only=False):
             if not same_words(saved,result):raise ValueError(MESSAGES['transcriptChanged'])
             result={**saved,'draftEdits':result['draftEdits']}
         write(path,result)
-    if result.get('keepRanges') is not None and result['keepRanges']!=video.get('keepRanges'):
+    # An edits-only save changes no render, as storeTranscript in web/transcript-core.js returns before applyRender.
+    if not edits_only and result.get('keepRanges') is not None and result['keepRanges']!=video.get('keepRanges'):
         update_render(directory,video_id,None,result['keepRanges'])
     return result
 
