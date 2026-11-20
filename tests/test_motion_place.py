@@ -48,6 +48,13 @@ class Timecodes(unittest.TestCase):
         with self.assertRaises(motion_place.PlaceError):
             motion_place.timecode_to_frame('01:00:00:30', 30)
 
+    def test_drop_frame_is_refused_where_it_does_not_exist(self):
+        for timecode, fps in (('01:00:00;00', 25), ('01:00:00;00', 24), ('00:01:00;00', 29.97),
+                              ('00:01:00;03', 59.94)):
+            with self.subTest(timecode=timecode, fps=fps), self.assertRaises(motion_place.PlaceError):
+                motion_place.timecode_to_frame(timecode, fps)
+        self.assertEqual(motion_place.timecode_to_frame('00:10:00;00', 29.97), 17982)
+
     def test_a_timecode_that_is_not_four_numbers_is_refused(self):
         with self.assertRaises(motion_place.PlaceError):
             motion_place.timecode_to_frame('1:00:00', 30)
@@ -265,6 +272,13 @@ class Place(unittest.TestCase):
         timeline.tracks = 2
         report = motion_place.place(FakeResolve(timeline), 'verdict-card', self.VALUES, '00:00:10:00', 3)
         self.assertEqual((report['track'], timeline.tracks), ('V2', 2))
+
+    def test_a_turned_off_v2_is_never_used_for_the_card(self):
+        timeline = FakeTimeline()
+        timeline.tracks = 2
+        timeline.GetIsTrackEnabled = lambda kind, track: track != 2
+        report = motion_place.place(FakeResolve(timeline), 'verdict-card', self.VALUES, '00:00:01:00', 3)
+        self.assertEqual((report['track'], timeline.tracks), ('V3', 3))
 
     def test_a_drop_frame_start_is_reported_as_it_was_asked(self):
         timeline = FakeTimeline()
