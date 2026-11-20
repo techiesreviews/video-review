@@ -159,11 +159,12 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
       join.type='button';join.dataset.cutId=cut.id;join.title='Listen around the join at '+stamp(cut.atMs);join.setAttribute('aria-label',join.title);join.onclick=()=>chooseCut(cut,join);wordNodes[i].before(join,document.createTextNode(' '));
     }
     // A join kept selected through a save (Undo or Restore with a note typed): the bar follows its new mark, or closes
-    // when another editor removed that join, as reselect treats a missing join. Its typed note waits for the next selection.
+    // when another editor removed or moved that join, as reselect treats a missing join. Its typed note waits for the
+    // next selection. A moved join closes too, so a note is never sent with the old time.
     const kept=editing.selection?.cutId;
     if(kept){
-      const node=[...body.querySelectorAll('.transcript-join[data-cut-id]')].find(n=>n.dataset.cutId===kept);
-      if(node)barTarget=node;
+      const cut=cuts.find(c=>c.id===kept),node=[...body.querySelectorAll('.transcript-join[data-cut-id]')].find(n=>n.dataset.cutId===kept);
+      if(node&&cut.atMs+200===editing.selection.endMs)barTarget=node;
       else{const draft=editing.noteId?'':noteBox.value;clear();carriedNote=draft||carriedNote;notice('That join changed elsewhere, so it is no longer selected.');}
     }
   }
