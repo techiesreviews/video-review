@@ -268,7 +268,8 @@ def export_frames(timeline, item, folder, offsets, roi=None):
     result = timeline.ExportThumbnails(cells, {'outputType': 'file', 'filePath': str(sheet), 'maxDimension': 1600,
                                                'quality': 85})
     if not result or not result.get('success'):
-        raise PlaceError(f'Resolve could not export the frames sheet: {result and result.get("error")}')
+        raise PlaceError(f'the single frames are saved in {folder}, but Resolve could not export the frames sheet: '
+                         f'{result and result.get("error")}')
     saved.append(str(sheet))
     return saved
 
@@ -325,7 +326,7 @@ def main(argv=None):
             report['frames_saved'] = export_frames(timeline, item, Path(args.frames), offsets, crop)
         except (PlaceError, OSError) as error:
             report['frames_error'] = str(error)
-            print(f'Placed, but the frames could not be saved: {error}', file=sys.stderr)
+            print(f'Placed, but not all the frames could be saved: {error}', file=sys.stderr)
     print(json.dumps(report, indent=2))
     return 0
 

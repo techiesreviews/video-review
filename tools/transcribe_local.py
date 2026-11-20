@@ -73,7 +73,8 @@ def transcribe(args, raw_path):
     """Whisper on the recording; its raw result is saved at raw_path. The caller holds raw_path's lock.
 
     The result is saved under another name and renamed into place, so raw_path only ever holds a whole result: a save
-    that fails halfway, or a run that is killed, leaves no file there."""
+    that fails halfway, or a run that is killed, leaves no file there. (A run killed during the save itself may leave
+    its <name>.<process number>.saving.json behind; that file is in no later run's way.)"""
     import stable_whisper
     import torch
 
@@ -120,7 +121,8 @@ def main():
     with file_store.locked(file_store.lock_for(raw_path), wait=0, error=SystemExit,
                            busy=f'Another run is writing {raw_path} now. Wait for it to finish; nothing was changed.'):
         if words_path.exists():
-            sys.exit(f'{words_path} already exists. Move it or pick another --out-dir; nothing is overwritten.')
+            sys.exit(f'{words_path} already exists; nothing is overwritten. Move both files for a new transcription, '
+                     'or only the words file to make it again from the raw file, or pick another --out-dir.')
         if raw_path.exists():
             print(f'{raw_path} is there from an earlier run: making the words file from it, no new transcription.',
                   flush=True)
@@ -128,7 +130,7 @@ def main():
             transcribe(args, raw_path)
         try:
             words = review_words(json.loads(file_store.read_text(raw_path)), args.start)
-        except (ValueError, KeyError, TypeError):
+        except (ValueError, KeyError, TypeError, AttributeError):
             sys.exit(f'{raw_path} is not a finished transcript (a run that stopped may have left it). '
                      'Move or delete it, then run again.')
         if not words:

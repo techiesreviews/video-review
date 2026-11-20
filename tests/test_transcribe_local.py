@@ -145,13 +145,24 @@ class Outputs(unittest.TestCase):
             media = Path(folder) / 'replay.mkv'
             media.write_bytes(b'')
             raw = Path(folder) / 'replay.large-v3.json'
-            raw.write_bytes(b'')  # the empty claim an older version left when it was killed
-            model, stop = run_main(media, lambda *args: [0.0])
-            self.assertIsNotNone(stop)
-            self.assertIn('not a finished transcript', str(stop.code))
-            model.transcribe.assert_not_called()
-            self.assertEqual(raw.read_bytes(), b'')
-            self.assertEqual(files_in(folder), ['replay.large-v3.json', 'replay.mkv'])
+            # The empty claim an older version left when it was killed, and a file that is JSON but no transcript.
+            for leftover in (b'', b'{"segments": [1]}'):
+                with self.subTest(leftover=leftover):
+                    raw.write_bytes(leftover)
+                    model, stop = run_main(media, lambda *args: [0.0])
+                    self.assertIsNotNone(stop)
+                    self.assertIn('not a finished transcript', str(stop.code))
+                    model.transcribe.assert_not_called()
+                    self.assertEqual(raw.read_bytes(), leftover)
+                    self.assertEqual(files_in(folder), ['replay.large-v3.json', 'replay.mkv'])
+
+    def test_the_already_exists_message_says_what_moving_each_file_does(self):
+        with tempfile.TemporaryDirectory() as folder:
+            media = Path(folder) / 'replay.mkv'
+            media.write_bytes(b'')
+            (Path(folder) / 'replay.words.json').write_text('earlier run', encoding='utf-8')
+            _, stop = run_main(media, lambda *args: [0.0])
+            self.assertIn('Move both files for a new transcription', str(stop.code))
 
     def test_a_run_writes_both_files(self):
         with tempfile.TemporaryDirectory() as folder:
