@@ -106,6 +106,17 @@ try{
     await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===1);
     assert.deepEqual((await onDisk()).map(e=>e.wordIds),[['W6']],`${name}: trying again saves it.`);
 
+    // Another editor swaps join J1 for J9 on the same words. A Delete still saves, and the join marks follow the saved
+    // transcript: only J9 shows, and clicking it opens J9.
+    const swapped=JSON.parse(await readFile(join(temp,'transcripts/words.json'),'utf8'));
+    await writeFile(join(temp,'transcripts/words.json'),JSON.stringify({...swapped,cuts:[{id:'J9',atMs:3000}]}));
+    await word(9).click();await page.locator('.bar-delete').click();
+    await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===2);
+    assert.deepEqual(await page.locator('.transcript-join[data-cut-id]').allInnerTexts(),['↔ J9'],`${name}: the join marks follow the saved transcript.`);
+    await page.locator('.transcript-join[data-cut-id]').click();
+    assert.match(await page.locator('#selectionQuote').innerText(),/^Join J9/,`${name}: the mark opens the new join.`);
+    await page.locator('#clearTranscriptSelection').click();
+
     // The words change elsewhere (an agent or another tab) and this page never hears of it. A Delete is refused by the
     // store: the panel loads the newer words, keeps the same words selected with the typed note and the scroll, and says
     // so in a short line on the bar, not in a toast. The newer words are never overwritten, and Delete then saves.
