@@ -63,6 +63,19 @@ class Outputs(unittest.TestCase):
             self.assertIsNotNone(stop)
             self.assertEqual(sorted(p.name for p in Path(folder).iterdir()), ['replay.mkv'])
 
+    def test_a_run_that_fails_halfway_through_saving_leaves_nothing_in_the_way_of_a_retry(self):
+        with tempfile.TemporaryDirectory() as folder:
+            media = Path(folder) / 'replay.mkv'
+            media.write_bytes(b'')
+
+            def half_saved(result, path):
+                Path(path).write_text('{"segm', encoding='utf-8')
+                raise OSError(28, 'disk full')
+
+            with mock.patch.object(FakeResult, 'save_as_json', half_saved), self.assertRaises(OSError):
+                run_main(media, lambda *args: [0.0])
+            self.assertEqual(sorted(p.name for p in Path(folder).iterdir()), ['replay.mkv'])
+
     def test_a_run_writes_both_files(self):
         with tempfile.TemporaryDirectory() as folder:
             media = Path(folder) / 'replay.mkv'
