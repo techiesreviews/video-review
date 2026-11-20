@@ -48,6 +48,8 @@ class PlaceError(Exception):
 def resolve_titles_folder(platform=sys.platform, environ=os.environ):
     """Resolve's per-user folder for Fusion title templates (Edit page > Effects > Titles)."""
     if platform == 'win32':
+        if not environ.get('APPDATA'):
+            raise PlaceError('APPDATA is not set, so the Resolve Titles folder cannot be found')
         base = Path(environ['APPDATA']) / 'Blackmagic Design' / 'DaVinci Resolve' / 'Support' / 'Fusion'
     elif platform == 'darwin':
         base = Path.home() / 'Library' / 'Application Support' / 'Blackmagic Design' / 'DaVinci Resolve' / 'Fusion'
@@ -265,8 +267,9 @@ def export_frames(timeline, item, folder, offsets, roi=None):
     cells = [{'frameOffset': first + offset, 'label': f'+{offset} frames'} for offset in offsets]
     result = timeline.ExportThumbnails(cells, {'outputType': 'file', 'filePath': str(sheet), 'maxDimension': 1600,
                                                'quality': 85})
-    if result and result.get('success'):
-        saved.append(str(sheet))
+    if not result or not result.get('success'):
+        raise PlaceError(f'Resolve could not export the frames sheet: {result and result.get("error")}')
+    saved.append(str(sheet))
     return saved
 
 
@@ -313,7 +316,7 @@ def main(argv=None):
         item, timeline = report.pop('_item'), report.pop('_timeline')
         if installed:
             report['installed'] = str(installed)
-    except (PlaceError, resolve_build.ResolveError, OSError, KeyError) as error:  # OSError, KeyError: --install
+    except (PlaceError, resolve_build.ResolveError, OSError) as error:  # OSError: --install
         print(f'Not placed: {error}', file=sys.stderr)
         return 1
     if args.frames:
