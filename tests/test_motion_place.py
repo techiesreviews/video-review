@@ -49,7 +49,8 @@ class Timecodes(unittest.TestCase):
             motion_place.timecode_to_frame('01:00:00:30', 30)
 
     def test_drop_frame_is_refused_where_it_does_not_exist(self):
-        for timecode, fps in (('01:00:00;00', 25), ('01:00:00;00', 24), ('00:01:00;00', 29.97),
+        for timecode, fps in (('01:00:00;00', 25), ('01:00:00;00', 24), ('01:00:00;00', 30),
+                              ('01:00:00;00', 60), ('00:01:00;00', 29.97),
                               ('00:01:00;03', 59.94)):
             with self.subTest(timecode=timecode, fps=fps), self.assertRaises(motion_place.PlaceError):
                 motion_place.timecode_to_frame(timecode, fps)
