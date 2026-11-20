@@ -117,7 +117,7 @@ test('Restore on deleted words brings back each cut they are in; the note closes
 test('a join is selected around its cut point; a note on it goes to the agent with the join id',async()=>{
   const {editing,state,calls}=setup();
   editing.selectCut(TRANSCRIPT.cuts[0]);
-  assert.deepEqual(editing.selection,{startMs:4800,endMs:5200,cutId:'J1',quote:'Join J1'});
+  assert.deepEqual(editing.selection,{startMs:4800,endMs:5200,cutId:'J1',atMs:5000,quote:'Join J1'});
   const sent=await editing.send('Check this join');
   assert.equal(sent.kind,'sent');assert.equal(sent.current,true);
   assert.equal(calls.requests[0].editRequest.type,'change');
