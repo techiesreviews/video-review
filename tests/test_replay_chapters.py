@@ -98,6 +98,18 @@ class Main(unittest.TestCase):
                 run_main([str(words)])
             self.assertEqual(chapters.read_text(encoding='utf-8'), 'other run')
 
+    def test_a_run_that_fails_while_writing_leaves_nothing_in_the_way_of_a_retry(self):
+        with tempfile.TemporaryDirectory() as folder:
+            words = Path(folder) / 'replay.words.json'
+            words.write_text(json.dumps(self.WORDS), encoding='utf-8')
+            with mock.patch.object(replay_chapters.file_store.os, 'fsync',
+                                   side_effect=OSError(28, 'disk full')), self.assertRaises(OSError):
+                run_main([str(words)])
+            self.assertFalse((Path(folder) / 'replay.chapters.txt').exists())
+            run_main([str(words)])
+            self.assertTrue((Path(folder) / 'replay.chapters.txt').read_text(encoding='utf-8').startswith('0:00'))
+            self.assertTrue((Path(folder) / 'replay.clips.json').exists())
+
 
 if __name__ == '__main__':
     unittest.main()
