@@ -132,7 +132,13 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
     for(const id of new Set(back.map(e=>e.commentId).filter(Boolean))){
       if(remaining.some(e=>e.commentId===id))continue;
       // A failed close is reported; it must not hide that the save landed, which the panel shows by loading again.
-      try{await cancelRequest(id);}catch(error){if(!landed)throw error;onError(error);}
+      // Another video opened meanwhile: the save still landed on the old one, and nothing is said over the new one.
+      try{await cancelRequest(id);}
+      catch(error){
+        if(!landed&&!stale(at))throw error;
+        landed??=Object.assign(Error(RELOADED_TEXT),{saved:true,videoId:target.id});
+        if(video?.id===target.id)onError(error);
+      }
       cutNotes.delete(id);
     }
     if(!landed&&stale(at))landed=Object.assign(Error(RELOADED_TEXT),{saved:true,videoId:target.id});

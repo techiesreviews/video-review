@@ -51,13 +51,15 @@ export function normalizeTranscript(data, durationMs=Infinity, videoFps=null) {
  * render or an import came in). */
 export function storeTranscript(state,videoId,data,{editsOnly=false}={}){
   const video=state.videos.find(v=>v.id===videoId);if(!video)throw Error(RULES.messages.unknownVideo);
-  const transcript=normalizeTranscript(data,video.durationMs,video.fps);
   if(editsOnly){
-    // Only the cut list is written, onto the saved transcript, so newer joins or labels stay as they are.
+    // Changed words are checked first: after a shorter render the old words are longer than the video, and the page
+    // must hear that the words changed, so it loads the newer ones. Only the cut list is written, onto the saved
+    // transcript, so newer joins or labels stay as they are.
     const saved=state.transcripts?.[video.id];
-    if(!sameWords(saved,transcript))throw Error(RULES.messages.transcriptChanged);
-    return state.transcripts[video.id]={...saved,draftEdits:transcript.draftEdits};
+    if(!sameWords(saved,data))throw Error(RULES.messages.transcriptChanged);
+    return state.transcripts[video.id]={...saved,draftEdits:normalizeTranscript(data,video.durationMs,video.fps).draftEdits};
   }
+  const transcript=normalizeTranscript(data,video.durationMs,video.fps);
   if(transcript.keepRanges)applyRender(state,video.id,{keepRanges:transcript.keepRanges});
   (state.transcripts||(state.transcripts={}))[video.id]=transcript;return transcript;
 }
