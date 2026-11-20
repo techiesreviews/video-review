@@ -17,6 +17,9 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
+if (-not (Get-Command $Python -ErrorAction SilentlyContinue)) {
+    throw "Python not found at '$Python'. Set VIDEO_ACUT_PYTHON or pass -Python."
+}
 $script = Join-Path $PSScriptRoot 'replay_chapters.py'
 $argsList = @($script, $Words)
 if ($Sections) { $argsList += @('--sections', $Sections) }
