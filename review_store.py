@@ -229,13 +229,15 @@ def save_transcript(directory,video_id,data,edits_only=False):
     words are no longer the ones those cuts were made on (a new render or an import came in meanwhile), so the page never
     writes its old copy over newer words, joins or labels."""
     video=find_video(directory,video_id)
-    result=_clean_transcript(video,data)
     path=transcript_path(directory,video_id);path.parent.mkdir(parents=True,exist_ok=True)
     with locked(path):
         if edits_only:
+            # Changed words are checked first: after a shorter render the old words are longer than the video, and the
+            # page must hear that the words changed, so it loads the newer ones.
             saved=read(path,None)
-            if not same_words(saved,result):raise ValueError(MESSAGES['transcriptChanged'])
-            result={**saved,'draftEdits':result['draftEdits']}
+            if not same_words(saved,data if isinstance(data,dict) else None):raise ValueError(MESSAGES['transcriptChanged'])
+            result={**saved,'draftEdits':_clean_transcript(video,data)['draftEdits']}
+        else:result=_clean_transcript(video,data)
         write(path,result)
     # An edits-only save changes no render, as storeTranscript in web/transcript-core.js returns before applyRender.
     if not edits_only and result.get('keepRanges') is not None and result['keepRanges']!=video.get('keepRanges'):

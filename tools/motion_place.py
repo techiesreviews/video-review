@@ -39,10 +39,13 @@ FIELDS = {'verdict-card': {'ToolName': 'tool', 'Score': 'score', 'Reason': 'reas
 # How much text fits beside the score, as the text does not shrink to fit. Widths come from the font's own letter
 # widths times the text size in the .setting. `room` is in characters of an ordinary reason (`reference`, the
 # template's placeholder) with the template's own score (`score`): about 50 (docs/motion-engine.md). A wider score,
-# such as 4.5, grows leftward and takes its extra width from that room.
+# such as 4.5, grows leftward and takes its extra width from that room. Each field is (style, text size, letter
+# spacing); the small label above the tool name is spaced out by the template's CharacterSpacing and starts where the
+# other lines start, at the score's height, so it gets the same room.
 TEXT_FIT = {'verdict-card': {'room': 50, 'reference': ('One short line on why.', 'Regular', 0.0247),
                              'score': ('4', 'Bold', 0.0856),
-                             'fields': {'tool': ('Bold', 0.046), 'reason': ('Regular', 0.0247)}}}
+                             'fields': {'tool': ('Bold', 0.046, 1), 'reason': ('Regular', 0.0247, 1),
+                                        'label': ('Bold', 0.018, 1.12)}}}
 # Open Sans letter widths (2048 units to the em) for the printable ASCII characters, space to ~, read from the font
 # files that come with Resolve. Bold stands in for the score's Extrabold: its digits are as wide, and only the point
 # in a score like 4.5 is a little wider in Extrabold.
@@ -110,11 +113,11 @@ def text_too_wide(template, values):
     character = text_width(*reference) / len(reference[0])
     room = fit['room'] * character - (text_width(values.get('score') or score[0], *score[1:]) - text_width(*score))
     problems = []
-    for option, (style, size) in fit['fields'].items():
+    for option, (style, size, spacing) in fit['fields'].items():
         text, kept, width = values.get(option) or '', 0, 0
         # Letters fit from the left until one runs past the room; the rest is what to cut.
-        while kept < len(text) and width + text_width(text[kept], style, size) <= room:
-            width += text_width(text[kept], style, size)
+        while kept < len(text) and width + text_width(text[kept], style, size) * spacing <= room:
+            width += text_width(text[kept], style, size) * spacing
             kept += 1
         if kept < len(text):
             problems.append(f'--{option} is too long for the card: shorten it by about {len(text) - kept} '
@@ -359,7 +362,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.score is not None and not (args.score.replace('.', '', 1).isdigit() and float(args.score) <= 5):
         parser.error('--score takes a number from 0 to 5, for example 4 or 4.5')
-    too_wide = text_too_wide(args.template, {'tool': args.tool, 'score': args.score, 'reason': args.reason})
+    too_wide = text_too_wide(args.template, {'tool': args.tool, 'score': args.score, 'reason': args.reason,
+                                             'label': args.label})
     if too_wide:
         parser.error('; '.join(too_wide))
     if not (math.isfinite(args.seconds) and args.seconds > 0):
