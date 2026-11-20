@@ -259,6 +259,19 @@ class Place(unittest.TestCase):
         self.assertEqual(timeline.clips[0].GetStart(), 0)
         self.assertEqual(timeline.deleted, [])
 
+    def test_a_free_v2_is_reused_even_where_the_card_was_first_inserted(self):
+        # The card goes in at the timeline's end on the top track; that spot must not make V2 look busy.
+        timeline = FakeTimeline()
+        timeline.tracks = 2
+        report = motion_place.place(FakeResolve(timeline), 'verdict-card', self.VALUES, '00:00:10:00', 3)
+        self.assertEqual((report['track'], timeline.tracks), ('V2', 2))
+
+    def test_a_drop_frame_start_is_reported_as_it_was_asked(self):
+        timeline = FakeTimeline()
+        timeline.GetSetting = lambda key: {'timelineFrameRate': '29.97'}[key]
+        report = motion_place.place(FakeResolve(timeline), 'verdict-card', self.VALUES, '00:01:00;02', 3)
+        self.assertEqual(report['start'], '00:01:00;02')
+
     def test_a_card_that_pushed_clips_along_says_they_are_still_moved(self):
         timeline = FakeTimeline(push_on_insert=10)
         with self.assertRaises(motion_place.PlaceError) as caught:
