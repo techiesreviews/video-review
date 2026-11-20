@@ -93,7 +93,7 @@ def main():
         raw_path.open('x').close()
     except FileExistsError:
         sys.exit(f'{raw_path} was made by another run meanwhile; it is kept, nothing was overwritten.')
-    saving = raw_path.with_name(f'{raw_path.name}.{os.getpid()}.tmp')
+    saving = raw_path.with_name(f'{raw_path.stem}.{os.getpid()}.saving.json')  # stable-ts adds .json to other names
 
     try:
         import stable_whisper
