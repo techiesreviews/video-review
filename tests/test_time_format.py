@@ -19,6 +19,8 @@ OPTION_NAMES = {'places': 'places', 'nearest': 'nearest', 'hours': 'hours', 'pad
 
 # The two homes of the time formats; every other file must call them.
 HOMES = {'time_format.py', 'web/time-format.js'}
+# Resolve's own HH:MM:SS:FF timecodes, counted in frames of the timeline rather than milliseconds.
+FRAME_TIMECODES = {'tools/motion_place.py'}
 # Hand-made time formatting: milliseconds split into hours and minutes, seconds taken modulo 60, a remainder of 1000
 # milliseconds written out, or a frame number rounded by hand. Each of the copies this replaced matches one of these.
 HAND_MADE = {
@@ -38,8 +40,8 @@ INLINE_SCRIPT = re.compile(r'<script\b[^>]*>(.*?)</script>', re.S)
 def writers():
     """Every source file of the tool (tests, docs and prototypes aside)."""
     files = [*ROOT.glob('*.py'), *ROOT.glob('scripts/video/*.py'), *ROOT.glob('scripts/video/*.mjs'),
-             *ROOT.glob('web/*.js'), *ROOT.glob('web/*.html'), *ROOT.glob('cloud/*.js')]
-    return sorted(path for path in files if path.relative_to(ROOT).as_posix() not in HOMES)
+             *ROOT.glob('web/*.js'), *ROOT.glob('web/*.html'), *ROOT.glob('cloud/*.js'), *ROOT.glob('tools/*.py')]
+    return sorted(path for path in files if path.relative_to(ROOT).as_posix() not in HOMES | FRAME_TIMECODES)
 
 
 def hand_made(text, suffix):

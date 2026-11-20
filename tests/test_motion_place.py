@@ -185,12 +185,12 @@ class FakeTimeline:
     """One 10 s clip on V1 of a 30 fps timeline that starts at frame 0. push_on_insert makes the title insert
     push that clip along, as Resolve's insert edit does when the playhead is not past every clip."""
 
-    def __init__(self, push_on_insert=0, frames_work=True):
+    def __init__(self, push_on_insert=0, frames_work=True, sheet_works=True):
         self.clips = [FakeClip('interview.mp4', 1, 0, 300, 'v1')]
         self.settings = {'timelineFrameRate': '30', 'timelineDropFrameTimecode': '0'}
         self.tracks = 1
         self.playhead = None
-        self.push_on_insert, self.frames_work = push_on_insert, frames_work
+        self.push_on_insert, self.frames_work, self.sheet_works = push_on_insert, frames_work, sheet_works
         self.deleted = []
 
     def GetName(self):
@@ -250,7 +250,7 @@ class FakeTimeline:
         return {'success': self.frames_work, 'error': None if self.frames_work else 'render failed'}
 
     def ExportThumbnails(self, cells, options):
-        return {'success': True}
+        return {'success': self.sheet_works, 'error': None if self.sheet_works else 'sheet render failed'}
 
 
 class FakeResolve:
@@ -390,6 +390,24 @@ class Main(unittest.TestCase):
         self.assertEqual(report['track'], 'V2')
         self.assertIn('render failed', report['frames_error'])
         self.assertEqual(code, 0)
+
+    def test_a_sheet_that_fails_after_the_frames_says_the_pictures_are_not_all_saved(self):
+        with tempfile.TemporaryDirectory() as folder:
+            code, out, err, _ = run_main(self.PLACE + ['--frames', folder], FakeTimeline(sheet_works=False))
+        self.assertIn('Placed, but the frames could not be saved', err)
+        self.assertIn('sheet render failed', json.loads(out)['frames_error'])
+        self.assertEqual(code, 0)
+
+    def test_a_windows_machine_without_appdata_gets_a_plain_message(self):
+        with self.assertRaises(motion_place.PlaceError) as caught:
+            motion_place.resolve_titles_folder('win32', {})
+        self.assertIn('APPDATA is not set', str(caught.exception))
+        with mock.patch.object(motion_place, 'resolve_titles_folder',
+                               side_effect=motion_place.PlaceError('APPDATA is not set')):
+            code, out, err, connect = run_main(self.PLACE + ['--install'], FakeTimeline())
+        self.assertEqual(code, 1)
+        self.assertIn('Not placed: APPDATA is not set', err)
+        connect.assert_not_called()
 
     def test_a_bad_frames_option_is_refused_before_anything_is_placed(self):
         # parser.error exits before main connects to Resolve; a late ValueError would mean the card was placed.
