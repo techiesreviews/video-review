@@ -43,6 +43,18 @@ class Sections(unittest.TestCase):
         self.assertEqual(chapters, [[0, 'Intro']])
         self.assertIn('Pricing plans', err.getvalue())
 
+    def test_sections_past_the_chapter_limit_are_named_not_dropped_silently(self):
+        names = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel', 'india', 'juliet',
+                 'kilo', 'lima', 'mike', 'november', 'oscar', 'papa', 'quebec']
+        sents = [sentence(k * 20000, k * 20000 + 2000, f'Now {name} topic.') for k, name in enumerate(names)]
+        titles = [f'{name.title()} topic' for name in names]
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            chapters = replay_chapters.chapters_from_sections(sents, titles, len(names) * 20000 + 30000)
+        self.assertEqual(len(chapters), replay_chapters.MAX_CHAPTERS)
+        self.assertIn('Papa topic', err.getvalue())
+        self.assertIn('Quebec topic', err.getvalue())
+
 
 class Main(unittest.TestCase):
     WORDS = {'words': [{'id': 'w00001', 'text': 'Hello.', 'startMs': 0, 'endMs': 500},
@@ -68,6 +80,23 @@ class Main(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 run_main([str(words)])
             self.assertEqual(chapters.read_text(encoding='utf-8'), 'mine')
+
+    def test_a_second_run_that_starts_at_the_same_time_never_replaces_the_first_runs_chapters(self):
+        # The other run passes the "already exists" check too, then writes its chapters first.
+        with tempfile.TemporaryDirectory() as folder:
+            words = Path(folder) / 'replay.words.json'
+            words.write_text(json.dumps(self.WORDS), encoding='utf-8')
+            chapters = Path(folder) / 'replay.chapters.txt'
+            real = replay_chapters.chapters_from_silences
+
+            def other_run_writes_first(*args):
+                chapters.write_text('other run', encoding='utf-8')
+                return real(*args)
+
+            with mock.patch.object(replay_chapters, 'chapters_from_silences', other_run_writes_first), \
+                    self.assertRaises(SystemExit):
+                run_main([str(words)])
+            self.assertEqual(chapters.read_text(encoding='utf-8'), 'other run')
 
 
 if __name__ == '__main__':
