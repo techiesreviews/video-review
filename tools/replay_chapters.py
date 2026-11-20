@@ -150,10 +150,10 @@ def clip_candidates(sents):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('words', type=Path, help='<name>.words.json from tools/transcribe-local')
-    ap.add_argument('--sections', type=Path, help='run sheet: one section title per line')
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('words', type=Path, help='<name>.words.json from tools/transcribe-local')
+    parser.add_argument('--sections', type=Path, help='run sheet: one section title per line')
+    args = parser.parse_args()
 
     words = [w for w in json.loads(args.words.read_text(encoding='utf-8'))['words'] if w['text'].strip()]
     if not words:
