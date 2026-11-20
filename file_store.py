@@ -9,6 +9,8 @@ Two rules, for every program (the web server, the MCP server, the take intake an
   write_text(path, text): a temporary file with its own name in the same folder, then a rename into place. A reader
       sees the old file or the new one, never half of it; a failed save leaves the old file and no temporary file;
       and on Windows a rename that a reader blocks for a moment is tried again.
+  write_new_text(path, text): the same save for an output that must never replace a file already there, under
+      the file's lock.
 
 Only the standard library, and locking that works on Linux, macOS and Windows.
 """
@@ -112,6 +114,16 @@ def write_text(path, text):
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise
+
+
+def write_new_text(path, text):
+    """Save a text file that must not be there yet, as write_text does. FileExistsError when it is there, also when
+    another program made it meanwhile; a failed save leaves nothing behind, so a retry is not refused."""
+    path = Path(path)
+    with locked(lock_for(path)):
+        if path.exists():
+            raise FileExistsError(errno.EEXIST, 'already exists', str(path))
+        write_text(path, text)
 
 
 def write_json(path, data):

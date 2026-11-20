@@ -11,11 +11,13 @@ Writes two files next to each other in --out-dir:
 """
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import file_store  # noqa: E402
 import media_tools  # noqa: E402
 
 SAMPLE_RATE = 16000
@@ -91,6 +93,7 @@ def main():
         raw_path.open('x').close()
     except FileExistsError:
         sys.exit(f'{raw_path} was made by another run meanwhile; it is kept, nothing was overwritten.')
+    saving = raw_path.with_name(f'{raw_path.name}.{os.getpid()}.tmp')
 
     try:
         import stable_whisper
@@ -106,8 +109,11 @@ def main():
         print(f'Model {args.model} loaded on {args.device} ({time.time() - t0:.0f} s)', flush=True)
         result = model.transcribe(audio, language=args.language, word_timestamps=True,
                                   verbose=False, fp16=args.device == 'cuda')
-        result.save_as_json(str(raw_path))
+        # Saved beside the claim, then renamed over it: a save that fails halfway leaves no half file.
+        result.save_as_json(str(saving))
+        file_store.retry_on_windows(lambda: os.replace(saving, raw_path))
     except BaseException:
+        saving.unlink(missing_ok=True)
         if raw_path.stat().st_size == 0:  # only the empty claim: a rerun must not find it in the way
             raw_path.unlink()
         raise
@@ -124,9 +130,8 @@ def main():
         'words': words,
         'cuts': [],
     }
-    try:  # mode 'x': another run that wrote the words meanwhile keeps its file
-        with open(words_path, 'x', encoding='utf-8') as f:
-            f.write(json.dumps(transcript, ensure_ascii=False, indent=1))
+    try:  # another run that wrote the words meanwhile keeps its file
+        file_store.write_new_text(words_path, json.dumps(transcript, ensure_ascii=False, indent=1))
     except FileExistsError:
         sys.exit(f'{words_path} was made by another run meanwhile; it is kept. Raw result at {raw_path}')
     print(f'{len(words)} words in {time.time() - t0:.0f} s', flush=True)
