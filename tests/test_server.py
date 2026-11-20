@@ -100,9 +100,10 @@ class ReviewServerTests:
 
     def test_a_body_that_is_not_an_object_gets_a_plain_400(self):
         headers={'Content-Type':'application/json','Origin':self.origin}
-        for path in ('/api/transcript/example-v1','/api/comments','/api/library'):
+        for path in ('/api/transcript/example-v1','/api/comments','/api/library','/api/view','/api/scenes/star'):
             for body in (None,[]):
-                req=Request(self.origin+path,data=json.dumps(body).encode(),headers=headers)
+                origin={'Origin':server.FILE_PAGE_ORIGIN} if path=='/api/scenes/star' else {}
+                req=Request(self.origin+path,data=json.dumps(body).encode(),headers={**headers,**origin})
                 try:urlopen(req,timeout=3)
                 except HTTPError as error:assert error.code==400 and 'JSON object' in json.load(error)['error'],(path,body)
                 else:raise AssertionError(f'{path} took {body!r}')

@@ -454,7 +454,7 @@ class Main(unittest.TestCase):
     def test_a_line_break_in_card_text_is_refused_before_resolve_is_touched(self):
         # Each line has a fixed place on the card, so a second line would run into the line below or above it.
         for option in (['--tool', 'Notion\nCalendar'], ['--reason', 'Fast.\r\nBut weak on tasks.'], ['--label', 'TRIED\tIT'],
-                       ['--reason', 'One line two lines']):
+                       ['--reason', 'One line\u2028two lines']):
             with self.subTest(option=option), \
                     mock.patch.object(motion_place.resolve_build, 'connect') as connect, \
                     contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit):
