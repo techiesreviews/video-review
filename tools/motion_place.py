@@ -106,12 +106,12 @@ def snapshot(timeline):
     return items
 
 
-def free_track(timeline, start, end):
-    """The top video track with nothing in [start, end), or a new track added on top."""
+def free_track(timeline, start, end, card):
+    """The top video track with nothing but the card in [start, end), or a new track added on top."""
     count = timeline.GetTrackCount('video') or 0
     if count >= 1:
         busy = [item for item in timeline.GetItemListInTrack('video', count) or []
-                if item.GetStart() < end and item.GetEnd() > start]
+                if item.GetUniqueId() != card.GetUniqueId() and item.GetStart() < end and item.GetEnd() > start]
         if not busy and count >= 2:
             return count
     if not timeline.AddTrack('video'):
@@ -186,7 +186,7 @@ def place(resolve, template, values, at, seconds, project_name=None):
                              f'duration); asked for {frames}. Drag it longer in Resolve or ask for less.')
         if frames < inserted and not item.SetRightOffset(item.GetRightOffset() + inserted - frames):
             raise PlaceError('Resolve would not trim the card to its length')
-        track = free_track(timeline, start, start + frames)
+        track = free_track(timeline, start, start + frames, item)
         if not item.SetPosition({'trackIndex': track, 'startFrame': start}):
             raise PlaceError(f'Resolve would not move the card to V{track} at {at}')
         if item.GetStart() != start or item.GetTrackTypeAndIndex() != ['video', track]:
@@ -220,7 +220,7 @@ def place(resolve, template, values, at, seconds, project_name=None):
                              'until they are back, then delete the card again.') from error
         raise
     return {'project': project.GetName(), 'timeline': timeline.GetName(), 'track': f'V{track}',
-            'start': frame_to_timecode(start, fps), 'frames': item.GetDuration(), 'fps': fps,
+            'start': at, 'frames': item.GetDuration(), 'fps': fps,
             'controls': filled, 'item': item.GetUniqueId(), '_item': item, '_timeline': timeline}
 
 
