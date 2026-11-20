@@ -234,8 +234,10 @@ def save_transcript(directory,video_id,data,edits_only=False):
         if edits_only:
             # Changed words are checked first: after a shorter render the old words are longer than the video, and the
             # page must hear that the words changed, so it loads the newer ones.
+            if not isinstance(data,dict) or not isinstance(data.get('words'),list):
+                raise ValueError('A word-timed transcript is required')
             saved=read(path,None)
-            if not same_words(saved,data if isinstance(data,dict) else None):raise ValueError(MESSAGES['transcriptChanged'])
+            if not same_words(saved,data):raise ValueError(MESSAGES['transcriptChanged'])
             result={**saved,'draftEdits':_clean_transcript(video,data)['draftEdits']}
         else:result=_clean_transcript(video,data)
         write(path,result)

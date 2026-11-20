@@ -87,7 +87,7 @@ Two things to know:
   30 fps and 333 ms at 24 fps, so it stays under 400 ms at 24 fps and up. At 60 fps it gets twice as fast.
 - **Text doesn't shrink to fit.** The reason fits about 50 characters before it runs under the score, a few
   fewer beside a score like 4.5, and the bigger tool name about half as many. The small label gets the same room
-  at its own size and letter spacing, about 50 capitals. The script measures the text with
+  at its own size and letter spacing: about 45 capitals in a row, or about 50 with spaces between words. The script measures the text with
   the font's own letter widths and refuses text that is too wide before it touches Resolve; keep the reason to
   one short line and shorten a long product name.
 - **Fonts:** the brand fonts Inter and Roboto Mono are not installed on this PC, so the card uses Open Sans,

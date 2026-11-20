@@ -419,6 +419,34 @@ for(const kind of ['Undo','Restore'])test(`an ${kind} whose note fails to close 
   assert.deepEqual(state.transcripts.v.draftEdits,[],'the saved cut stays removed');
 });
 
+test('a note that fails to close after the same video loads again is reported, and the Undo ends as saved',async()=>{
+  const {editing,state,calls,hold}=setup();
+  editing.selectWords(1);await editing.remove({typed:'why'});
+  hold.cancel=held();const wait=hold.cancel;
+  const undo=editing.undo();
+  while(!calls.cancels.length)await new Promise(r=>setTimeout(r));
+  editing.load(storeTranscript(state,VIDEO.id,{...TRANSCRIPT,draftEdits:state.transcripts.v.draftEdits}),state.videos[0]);
+  wait.reject(Error('Network down'));
+  const error=await undo.then(()=>null,error=>error);
+  assert.equal(error?.saved,true);assert.equal(error.videoId,'v');
+  assert.deepEqual(calls.errors,['Network down']);
+});
+
+test('an Undo saved after another video opens, whose note then fails to close, says nothing over the new video',async()=>{
+  const {editing,calls,hold}=setup();
+  editing.selectWords(1);await editing.remove({typed:'why'});
+  hold.save=held();hold.cancel=held();const save=hold.save,close=hold.cancel;
+  const undo=editing.undo();
+  await new Promise(r=>setTimeout(r));
+  editing.load(null,{...VIDEO,id:'w'});
+  save.resolve();
+  while(!calls.cancels.length)await new Promise(r=>setTimeout(r));
+  close.reject(Error('Network down'));
+  const error=await undo.then(()=>null,error=>error);
+  assert.equal(error?.saved,true);assert.equal(error.videoId,'v');
+  assert.deepEqual(calls.errors,[]);
+});
+
 test('an edit-only save writes only the cut list, so a newer revision, label or joins stay',()=>{
   const state={videos:[{...VIDEO}],comments:[]};
   storeTranscript(state,VIDEO.id,TRANSCRIPT);
