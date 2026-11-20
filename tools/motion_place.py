@@ -93,7 +93,8 @@ def text_width(text, style, size):
     any other character outside the tables counts as a full em, wider than every letter in them."""
     widths, typographic = FONT_WIDTHS[style], TYPOGRAPHIC_WIDTHS[style]
     total = 0
-    for char in unicodedata.normalize('NFKD', text):
+    # NFD only splits off accents; NFKD would also turn a full-width letter into its narrow one.
+    for char in unicodedata.normalize('NFD', text):
         if unicodedata.combining(char):
             continue
         total += widths[ord(char) - 32] if 32 <= ord(char) < 127 else typographic.get(char, 2048)
@@ -110,10 +111,11 @@ def text_too_wide(template, values):
     room = fit['room'] * character - (text_width(values.get('score') or score[0], *score[1:]) - text_width(*score))
     problems = []
     for option, (style, size) in fit['fields'].items():
-        text = values.get(option) or ''
-        kept = len(text)
-        while kept and text_width(text[:kept], style, size) > room:
-            kept -= 1
+        text, kept, width = values.get(option) or '', 0, 0
+        # Letters fit from the left until one runs past the room; the rest is what to cut.
+        while kept < len(text) and width + text_width(text[kept], style, size) <= room:
+            width += text_width(text[kept], style, size)
+            kept += 1
         if kept < len(text):
             problems.append(f'--{option} is too long for the card: shorten it by about {len(text) - kept} '
                             f'letter{"s" if len(text) - kept > 1 else ""}, as the text does not shrink to fit')
