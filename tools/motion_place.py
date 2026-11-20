@@ -81,7 +81,7 @@ def timecode_to_frame(timecode, fps):
         raise PlaceError(f'Timecode "{timecode}" has frame {frames}, but the timeline has {base} per second')
     total = ((hours * 60 + minutes) * 60 + seconds) * base + frames
     if drop:
-        if base not in (30, 60):
+        if base not in (30, 60) or abs(fps - base * 1000 / 1001) > 0.01:
             raise PlaceError(f'Timecode "{timecode}" is drop-frame, which only exists at 29.97 or 59.94 fps')
         dropped = 2 * base // 30
         if seconds == 0 and frames < dropped and minutes % 10:
