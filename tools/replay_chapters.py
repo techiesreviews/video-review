@@ -74,7 +74,12 @@ def chapters_from_sections(sents, titles, end_ms):
                 continue
             window = set(tokens(' '.join(x['text'] for x in sents[i:i + 2])))
             if len(want & window) >= need:
-                hit = s['startMs'] if want & set(tokens(s['text'])) else sents[i + 1]['startMs']
+                start = s['startMs'] if want & set(tokens(s['text'])) else sents[i + 1]['startMs']
+                # A match only in the next sentence can fall in the last 10 s, and YouTube drops every
+                # chapter when one is shorter than that.
+                if start > end_ms - MIN_CHAPTER_MS:
+                    continue
+                hit = start
                 break
         if hit is None:
             print(f'warning: no transcript match for section "{title}", skipped', file=sys.stderr)
@@ -159,6 +164,8 @@ def main():
     end_ms = words[-1]['endMs']
     if args.sections:
         titles = [t.strip() for t in args.sections.read_text(encoding='utf-8').splitlines() if t.strip()]
+        if not titles:
+            sys.exit(f'{args.sections} has no section titles; the run sheet needs one title per line.')
         chapters = chapters_from_sections(sents, titles, end_ms)
     else:
         chapters = chapters_from_silences(sents, end_ms)

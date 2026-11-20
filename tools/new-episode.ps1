@@ -7,6 +7,7 @@ for example "VID-7 Black Friday packs". Same layout as Video 01.
 Everything for that video lives in this one folder: the OBS recordings, the Resolve project,
 the renders, the chapters and the Shorts. The README.md it writes says which subfolder holds what.
 It only adds missing folders: existing folders and files are never renamed, moved or overwritten.
+If the card already has a folder under another title, it stops and names that folder.
 
 .EXAMPLE
 .\tools\new-episode.ps1 -Card VID-7 -Title "Black Friday packs"
@@ -42,6 +43,12 @@ if (-not (Test-Path -LiteralPath $Root -PathType Container)) {
 
 $name = "$Card $Title"
 $episode = Join-Path $Root $name
+# One home per video: a folder for this card under another title (a typo, a renamed video) is that home.
+# The space after the key keeps VID-70 from matching VID-7.
+$otherHome = @(Get-ChildItem -LiteralPath $Root -Directory -Filter "$Card *" | Where-Object { $_.Name -ne $name })
+if ($otherHome.Count -gt 0) {
+    throw "$Card already has a home: '$($otherHome[0].FullName)'. Use that folder, or rename it to '$name' first."
+}
 $cameraRecordings = Join-Path $episode '06 Source recordings\camera recordings'
 
 # Same top folders and fixed subfolders as Video 01. Dated work folders are made later, per job.
