@@ -10,7 +10,8 @@ const stamp=ms=>clock(ms,{places:3,hours:false});
 function element(tag,cls,text){const node=document.createElement(tag);if(cls)node.className=cls;if(text!=null)node.textContent=text;return node;}
 
 export function createTranscriptPanel({media,seek,playContext,request,updateRequest,cancelRequest=async()=>{},showError,pause=()=>{},cutsOn=()=>true,notify=()=>{},togglePlay=()=>{},agentConnected=async()=>false}){
-  let wordNodes=[],highlighted=-1,videoId=null,loadToken=0,dragAnchor=null,dragEnd=null,dragMoved=false,suppressClick=false,pendingFocus=null;
+  // drawnJoins: the joins the marks on screen were drawn from (drawJoins).
+  let drawnJoins=null,wordNodes=[],highlighted=-1,videoId=null,loadToken=0,dragAnchor=null,dragEnd=null,dragMoved=false,suppressClick=false,pendingFocus=null;
   const body=$('#transcriptText');
   let backendRef=null,videoRef=null,barTarget=null,dragPoint=null,scrollFrame=null;
   let pauseNodes=[],currentNode=null,auditionRange=null,pauseThreshold=450;
@@ -102,7 +103,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     clear();body.replaceChildren();wordNodes=[];pauseNodes=[];currentNode=null;highlighted=-1;
     const transcript=editing.transcript;
     if(!transcript){body.append(element('p','transcript-empty','No transcript attached to this version yet. Import its word-timed JSON, or ask your connected agent to attach the HappyScribe words.'));return;}
-    const cuts=[...transcript.cuts].sort((a,b)=>a.atMs-b.atMs);let cutIndex=0,count=0,paragraph=null;
+    let count=0,paragraph=null;drawnJoins=null;
     for(let i=0;i<transcript.words.length;i++){
       const word=transcript.words[i],previous=transcript.words[i-1];
       if(!paragraph||count>=38||(previous&&word.startMs-previous.endMs>650)){
@@ -115,10 +116,6 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
         pause.onclick=()=>choosePause(previous,word,pause);
         pauseNodes.push(pause);
         paragraph.append(pause,document.createTextNode(' '));
-      }
-      while(cutIndex<cuts.length&&cuts[cutIndex].atMs<=word.startMs){
-        const cut=cuts[cutIndex++],join=element('button','transcript-join'+(cut.risk?' risky':''),'↔ '+cut.id);
-        join.type='button';join.dataset.cutId=cut.id;join.title='Listen around the join at '+stamp(cut.atMs);join.setAttribute('aria-label',join.title);join.onclick=()=>chooseCut(cut,join);paragraph.append(join,document.createTextNode(' '));
       }
       const node=element('span','transcript-word',word.text);node.dataset.index=i;node.tabIndex=i===0?0:-1;node.setAttribute('role','button');node.setAttribute('aria-label',`${word.text}, ${stamp(word.startMs)}`);node.title=stamp(word.startMs);
       node.onclick=e=>{if(suppressClick)return;if(e.shiftKey&&editing.anchor!=null){window.getSelection()?.removeAllRanges();choose(editing.anchor,i);return;}if(window.getSelection()?.toString()&&body.contains(window.getSelection().anchorNode))return;editing.anchor=i;choose(i);seek(word.startMs);};
@@ -149,10 +146,24 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   $('#clearTranscriptSelection').onclick=()=>{window.getSelection()?.removeAllRanges();clear();};
   // The transcript always shows every original word (Lex, 2026-11-08). Deleted words stay where they were, struck through
   // and dimmed, with a Restore mark before each cut; playback and the exported cut list still skip them.
+  // The join marks, each before the first word at or after it. A save can bring back joins another editor changed on
+  // the same words, so they are drawn again whenever the transcript's joins differ from the ones on screen.
+  function drawJoins(){
+    const cuts=editing.transcript?.cuts||[],key=JSON.stringify(cuts);if(key===drawnJoins)return;drawnJoins=key;
+    for(const join of body.querySelectorAll('.transcript-join[data-cut-id]')){if(join.nextSibling?.nodeType===Node.TEXT_NODE)join.nextSibling.remove();join.remove();}
+    let i=0;
+    for(const cut of [...cuts].sort((a,b)=>a.atMs-b.atMs)){
+      while(i<wordNodes.length&&editing.transcript.words[i].startMs<cut.atMs)i++;
+      if(i===wordNodes.length)break;
+      const join=element('button','transcript-join'+(cut.risk?' risky':''),'↔ '+cut.id);
+      join.type='button';join.dataset.cutId=cut.id;join.title='Listen around the join at '+stamp(cut.atMs);join.setAttribute('aria-label',join.title);join.onclick=()=>chooseCut(cut,join);wordNodes[i].before(join,document.createTextNode(' '));
+    }
+  }
   function refreshCuts(){
     const transcript=editing.transcript,edits=editing.edits(),gone=deletedIds(edits),busy=editing.busy;
     for(const button of body.querySelectorAll('.restore-cut'))button.remove();
     for(const block of body.querySelectorAll('.source-removal'))block.remove();
+    drawJoins();
     for(let i=0;i<wordNodes.length;i++){const word=transcript.words[i],removed=gone.has(word.id);wordNodes[i].classList.toggle('removed-word',removed);wordNodes[i].setAttribute('aria-label',`${removed?'Deleted: ':''}${word.text}, ${stamp(word.startMs)}`);}
     const ranges=removedRanges(edits);
     for(const gap of pauseNodes){const a=Number(gap.dataset.startMs),b=Number(gap.dataset.endMs),cut=ranges.reduce((n,[x,y])=>n+Math.max(0,Math.min(b,y)-Math.max(a,x)),0),seconds=ms=>(ms/1000).toFixed(1);gap.classList.toggle('removed-pause',cut>0);gap.textContent=cut>0?`${seconds(b-a)} → ${seconds(b-a-cut)} s pause`:`${seconds(b-a)} s pause`;}

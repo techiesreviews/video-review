@@ -153,6 +153,8 @@ class Handler(BaseHTTPRequestHandler):
             limit=8*1024*1024 if self.path.startswith('/api/transcript/') else 65536
             if size<=0 or size>limit:raise ValueError('Invalid request size')
             cmd=json.loads(self.rfile.read(size))
+            # Every request below reads fields from the body, so null or a list gets a plain 400, not a dropped connection.
+            if not isinstance(cmd,dict):raise ValueError('The request must be a JSON object')
             if self.path=='/api/scenes/star':return self.star(cmd)
             if self.path=='/api/library':
                 if cmd.get('action')=='remove':store.archive_video(DATA,cmd['videoId'])

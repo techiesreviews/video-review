@@ -90,7 +90,8 @@ Two things to know:
   at its own size and letter spacing: about 45 capitals in a row, or about 50 with spaces between words.
   The script measures the text with the font's own letter widths and refuses text that is too wide before it
   touches Resolve; keep the reason to
-  one short line and shorten a long product name.
+  one short line and shorten a long product name. Text with a line break or tab is refused too, as each line has a
+  fixed place on the card.
 - **Fonts:** the brand fonts Inter and Roboto Mono are not installed on this PC, so the card uses Open Sans,
   which comes with Resolve. Once Inter is installed, change `Font = "Open Sans"` to `Font = "Inter"` in the
   template.

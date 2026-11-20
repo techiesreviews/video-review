@@ -105,7 +105,7 @@ def text_width(text, style, size):
 
 
 def text_too_wide(template, values):
-    """A plain message for each option whose text would run under the score, or an empty list."""
+    """A plain message for each option whose text would run under the score or onto another line, or an empty list."""
     fit = TEXT_FIT.get(template)
     if not fit:
         return []
@@ -115,6 +115,10 @@ def text_too_wide(template, values):
     problems = []
     for option, (style, size, spacing) in fit['fields'].items():
         text, kept, width = values.get(option) or '', 0, 0
+        # Each line has a fixed place on the card, so a pasted line break would run into the line below or above.
+        if any(unicodedata.category(char) in ('Cc', 'Zl', 'Zp') for char in text):
+            problems.append(f'--{option} must stay on one line: remove its line breaks or tabs')
+            continue
         # Letters fit from the left until one runs past the room; the rest is what to cut.
         while kept < len(text) and width + text_width(text[kept], style, size) * spacing <= room:
             width += text_width(text[kept], style, size) * spacing
