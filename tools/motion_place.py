@@ -209,10 +209,12 @@ def place(resolve, template, values, at, seconds, project_name=None):
         if moved:
             raise PlaceError(f'Other clips changed while placing the card: {sorted(moved)[:4]}')
     except Exception as error:
-        timeline.DeleteClips([item], False)
+        reason = str(error).rstrip('.')
+        if not timeline.DeleteClips([item], False):
+            raise PlaceError(f'{reason}. The card could not be removed; delete it in Resolve.') from error
         if snapshot(timeline) != before:
-            raise PlaceError(f'{error}. The card was removed, but other clips are still moved: undo in Resolve '
-                             '(Ctrl+Z) to put them back.') from error
+            raise PlaceError(f'{reason}. The card was removed, but other clips are still moved: undo in Resolve '
+                             'until they are back, then delete the card again.') from error
         raise
     return {'project': project.GetName(), 'timeline': timeline.GetName(), 'track': f'V{track}',
             'start': frame_to_timecode(start, fps), 'frames': item.GetDuration(), 'fps': fps,
@@ -264,7 +266,10 @@ def main(argv=None):
     try:
         offsets = [int(x) for x in args.frame_offsets.split(',') if x.strip()]
         crop = [float(x) for x in args.frames_crop.split(',')] if args.frames_crop else None
+        crop_ok = crop is None or (len(crop) == 4 and all(0 <= x <= 1 for x in crop))
     except ValueError:
+        crop_ok = False
+    if not crop_ok:
         parser.error('--frame-offsets takes whole numbers and --frames-crop four fractions, both comma-separated')
     try:
         installed = install_template(args.template) if args.install else None
