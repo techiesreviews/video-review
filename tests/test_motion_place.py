@@ -309,6 +309,56 @@ class Main(unittest.TestCase):
         with self.assertRaises(SystemExit):
             run_main(['--tool', 'X', '--score', '7', '--reason', 'Y', '--at', '00:00:01:00'], FakeTimeline())
 
+    def test_a_length_that_is_not_above_zero_is_refused_before_resolve_is_touched(self):
+        for seconds in ('0', '-3', 'nan', 'inf'):
+            with self.subTest(seconds=seconds), \
+                    mock.patch.object(motion_place.resolve_build, 'connect') as connect, \
+                    contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                motion_place.main(self.PLACE + ['--seconds', seconds])
+            connect.assert_not_called()
+
+
+class FakeProjectManager:
+    """A Resolve whose open project is `current`, with `timelines` timelines; records project switches."""
+    def __init__(self, current, timelines):
+        self.current, self.timelines, self.switches = current, timelines, []
+
+    def GetProjectManager(self):
+        return self
+
+    def GetCurrentProject(self):
+        return self
+
+    def GetName(self):
+        return self.current
+
+    def GetTimelineCount(self):
+        return self.timelines
+
+    def GetProjectListInCurrentFolder(self):
+        return []
+
+    def LoadProject(self, name):
+        self.switches.append(('load', name))
+
+    def CreateProject(self, name):
+        self.switches.append(('create', name))
+
+
+class OpenTestProject(unittest.TestCase):
+    def test_an_untitled_project_with_a_timeline_is_never_switched_away_from(self):
+        resolve = FakeProjectManager('Untitled Project', timelines=1)
+        with self.assertRaises(motion_place.PlaceError) as caught:
+            motion_place.open_test_project(resolve, 'ZZ Motion proof - throwaway')
+        self.assertIn('Untitled Project', str(caught.exception))
+        self.assertEqual(resolve.switches, [])
+
+    def test_an_empty_untitled_project_may_be_switched_away_from(self):
+        resolve = FakeProjectManager('Untitled Project', timelines=0)
+        with self.assertRaises(motion_place.PlaceError):  # the fake creates nothing, so the next check stops it
+            motion_place.open_test_project(resolve, 'ZZ Motion proof - throwaway')
+        self.assertEqual(resolve.switches, [('create', 'ZZ Motion proof - throwaway')])
+
 
 if __name__ == '__main__':
     unittest.main()
