@@ -66,15 +66,15 @@ def review_words(result, offset_s):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('media', type=Path, help='recording (.mkv, .mp4, .wav, ...)')
-    ap.add_argument('--out-dir', type=Path, help='default: next to the recording')
-    ap.add_argument('--start', type=float, default=0.0, help='seconds into the recording to start')
-    ap.add_argument('--duration', type=float, default=0.0, help='seconds to transcribe (0 = to the end)')
-    ap.add_argument('--model', default='large-v3')
-    ap.add_argument('--language', default='en')
-    ap.add_argument('--device', default='cuda')
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('media', type=Path, help='recording (.mkv, .mp4, .wav, ...)')
+    parser.add_argument('--out-dir', type=Path, help='default: next to the recording')
+    parser.add_argument('--start', type=float, default=0.0, help='seconds into the recording to start')
+    parser.add_argument('--duration', type=float, default=0.0, help='seconds to transcribe (0 = to the end)')
+    parser.add_argument('--model', default='large-v3')
+    parser.add_argument('--language', default='en')
+    parser.add_argument('--device', default='cuda')
+    args = parser.parse_args()
 
     if not args.media.is_file():
         sys.exit(f'Not a file: {args.media}')
