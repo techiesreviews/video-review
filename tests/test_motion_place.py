@@ -455,6 +455,9 @@ class Main(unittest.TestCase):
         self.assertEqual(motion_place.text_width('Café', 'Bold', 1), motion_place.text_width('Cafe', 'Bold', 1))
         self.assertEqual(motion_place.text_width('☃', 'Regular', 1), 1)
         self.assertEqual(motion_place.text_width('—', 'Regular', 1), 1)
+        self.assertEqual(motion_place.text_width('ｉ', 'Regular', 1), 1, 'a full-width letter stays full width')
+        self.assertEqual(len(motion_place.text_too_wide('verdict-card', {'reason': 'ｉ' * 60})), 1)
+        self.assertEqual(motion_place.text_width('…', 'Regular', 1), 1593 / 2048)
         self.assertLess(motion_place.text_width('’', 'Regular', 1), motion_place.text_width('m', 'Regular', 1) / 2)
 
     def test_a_length_that_is_not_above_zero_is_refused_before_resolve_is_touched(self):
