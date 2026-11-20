@@ -292,6 +292,23 @@ test('an Undo whose save reaches the store after a recut is refused there, so th
   assert.deepEqual(calls.cancels,[],'the cut was not brought back, so its note stays open');
 });
 
+test('an Undo whose save reaches the store after a shorter render is refused as changed words, so the page reloads them',async()=>{
+  const {editing,state,calls,hold}=setup();
+  editing.selectWords(1);await editing.remove();
+  hold.save=held();const wait=hold.save;
+  const undo=editing.undo();
+  await new Promise(r=>setTimeout(r));
+  // The new render is 8 s long, so the old words run past its end; another tab saved its transcript.
+  state.videos[0].durationMs=8000;
+  storeTranscript(state,VIDEO.id,{revision:'r2',words:TEXT.slice(2).map((_,i)=>word(i+2,2000)),cuts:[]});
+  wait.resolve();
+  const error=await undo.then(()=>null,error=>error);
+  assert.match(error?.message,/transcript changed/);
+  assert.equal(error.refused,true,'the panel loads the newer words');
+  assert.equal(state.transcripts.v.revision,'r2');
+  assert.deepEqual(calls.cancels,[]);
+});
+
 test('a Delete whose save reaches the store after a recut is refused there, and its note is closed',async()=>{
   const {editing,state,calls,hold}=setup();
   editing.selectWords(1);
@@ -385,6 +402,21 @@ for(const kind of ['Undo','Restore'])test(`an ${kind} whose note is still closin
   assert.equal(error?.saved,true,'no result for the panel to seek or select with');
   assert.equal(error.videoId,'v');
   assert.deepEqual(state.transcripts.v.draftEdits,[]);
+});
+
+for(const kind of ['Undo','Restore'])test(`an ${kind} whose note fails to close after another video opens ends as saved, with nothing said over the new video`,async()=>{
+  const {editing,state,calls,hold}=setup();
+  editing.selectWords(1);await editing.remove({typed:'why'});
+  hold.cancel=held();const wait=hold.cancel;
+  const back=kind==='Undo'?editing.undo():editing.restore([editing.edits()[0].id]);
+  while(!calls.cancels.length)await new Promise(r=>setTimeout(r));
+  editing.load(null,{...VIDEO,id:'w'});
+  wait.reject(Error('Network down'));
+  const error=await back.then(()=>null,error=>error);
+  assert.equal(error?.saved,true,'the panel treats it as saved on the old video');
+  assert.equal(error.videoId,'v');
+  assert.deepEqual(calls.errors,[],'no error over the new video');
+  assert.deepEqual(state.transcripts.v.draftEdits,[],'the saved cut stays removed');
 });
 
 test('an edit-only save writes only the cut list, so a newer revision, label or joins stay',()=>{

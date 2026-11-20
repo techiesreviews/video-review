@@ -451,6 +451,23 @@ class Main(unittest.TestCase):
         self.assertEqual(fits('verdict-card', {'reason': reason + 'i'}), [])
         self.assertEqual(len(fits('verdict-card', {'reason': reason + 'mm'})), 1)
 
+    def test_a_label_too_wide_for_the_card_is_refused_before_resolve_is_touched(self):
+        # The small label sits above the score, letter-spaced, so it gets the same room with its own size and spacing.
+        with mock.patch.object(motion_place.resolve_build, 'connect') as connect, \
+                contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit):
+            motion_place.main(self.PLACE + ['--label', 'THE FINAL VERDICT AFTER A FULL WEEK OF TESTING WITH THE TEAM'])
+        connect.assert_not_called()
+        self.assertIn('--label is too long for the card', err.getvalue())
+        fits = motion_place.text_too_wide
+        for label in ('VERDICT', 'TRIED IT', 'AFTER A FULL WEEK WITH THE TEAM'):
+            with self.subTest(label=label):
+                self.assertEqual(fits('verdict-card', {'label': label}), [])
+        # The spacing counts: as wide as the room with plain letters, the spaced label is a few letters over.
+        widest = 'W' * 40
+        while motion_place.text_width(widest, 'Bold', 0.018) > motion_place.text_width('W' * 13, 'Bold', 0.046):
+            widest = widest[:-1]
+        self.assertEqual(len(fits('verdict-card', {'label': widest})), 1)
+
     def test_an_accented_letter_is_as_wide_as_its_plain_letter_and_an_unknown_one_as_a_full_em(self):
         self.assertEqual(motion_place.text_width('Café', 'Bold', 1), motion_place.text_width('Cafe', 'Bold', 1))
         self.assertEqual(motion_place.text_width('☃', 'Regular', 1), 1)
