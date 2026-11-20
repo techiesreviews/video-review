@@ -6,14 +6,15 @@ running with Preferences > System > General > External scripting using set to Lo
   python tools/motion_place.py --tool "Notion Calendar" --score 4 --reason "Fast, but no tasks." --at 01:00:12:00
 
 What it does, in order:
-  1. Copies motion/templates/<template>.setting into Resolve's Titles folder when that copy is missing or older.
+  1. Copies motion/templates/<template>.setting into Resolve's Titles folder when that copy is missing or different.
   2. Checks the current project and timeline (--project makes it refuse any other project).
-  3. Picks a video track that is empty for the card's whole time range (the top one, else a new track on top).
+  3. Picks a video track that is empty for the card's whole time range (the top one if it is above V1, else a new
+     track on top).
   4. Inserts the title at the very end of the timeline, where Resolve's insert pushes nothing along, trims it to
      --seconds, then moves it to the chosen track and time.
   5. Sets the text through the template's own controls, so it stays editable in Resolve's Inspector.
   6. Compares every other clip on the timeline before and after; if anything else moved, it removes the card
-     again and stops.
+     again and stops, and says so when the other clips are still moved (undo in Resolve puts them back).
 
 --test-project NAME creates (or opens) a throwaway project for trying templates. The name must contain
 "throwaway", so it can never open one of Lex's real projects.
@@ -173,8 +174,8 @@ def place(resolve, template, values, at, seconds, project_name=None):
         raise PlaceError('Resolve would not move the playhead to the end of the timeline')
     item = timeline.InsertFusionTitleIntoTimeline(TITLE_NAMES[template])
     if item is None:
-        raise PlaceError(f'Resolve has no title called "{TITLE_NAMES[template]}". Run once with --install '
-                         'or restart Resolve after installing the template.')
+        raise PlaceError(f'Resolve has no title called "{TITLE_NAMES[template]}". Run once with --install; '
+                         'if it is still missing after that, restart Resolve.')
     try:
         inserted = item.GetDuration()
         if frames > inserted:
@@ -207,8 +208,11 @@ def place(resolve, template, values, at, seconds, project_name=None):
         moved = before.symmetric_difference(after)
         if moved:
             raise PlaceError(f'Other clips changed while placing the card: {sorted(moved)[:4]}')
-    except Exception:
+    except Exception as error:
         timeline.DeleteClips([item], False)
+        if snapshot(timeline) != before:
+            raise PlaceError(f'{error}. The card was removed, but other clips are still moved: undo in Resolve '
+                             '(Ctrl+Z) to put them back.') from error
         raise
     return {'project': project.GetName(), 'timeline': timeline.GetName(), 'track': f'V{track}',
             'start': frame_to_timecode(start, fps), 'frames': item.GetDuration(), 'fps': fps,
@@ -255,8 +259,13 @@ def main(argv=None):
     parser.add_argument('--frame-offsets', default='0,2,4,6,8,30', help='Which frames from the card start')
     parser.add_argument('--frames-crop', help='Crop the saved frames: x,y,width,height as fractions, e.g. 0,0.6,0.6,0.4')
     args = parser.parse_args(argv)
-    if args.score is not None and not args.score.replace('.', '', 1).isdigit():
-        parser.error('--score takes a number, for example 4 or 4.5')
+    if args.score is not None and not (args.score.replace('.', '', 1).isdigit() and float(args.score) <= 5):
+        parser.error('--score takes a number from 0 to 5, for example 4 or 4.5')
+    try:
+        offsets = [int(x) for x in args.frame_offsets.split(',') if x.strip()]
+        crop = [float(x) for x in args.frames_crop.split(',')] if args.frames_crop else None
+    except ValueError:
+        parser.error('--frame-offsets takes whole numbers and --frames-crop four fractions, both comma-separated')
     try:
         installed = install_template(args.template) if args.install else None
         resolve = resolve_build.connect()
@@ -269,13 +278,16 @@ def main(argv=None):
         item, timeline = report.pop('_item'), report.pop('_timeline')
         if installed:
             report['installed'] = str(installed)
-        if args.frames:
-            offsets = [int(x) for x in args.frame_offsets.split(',') if x.strip()]
-            crop = [float(x) for x in args.frames_crop.split(',')] if args.frames_crop else None
-            report['frames_saved'] = export_frames(timeline, item, Path(args.frames), offsets, crop)
     except (PlaceError, resolve_build.ResolveError) as error:
         print(f'Not placed: {error}', file=sys.stderr)
         return 1
+    if args.frames:
+        # The card is on the timeline by now, so a failure here must not read as "Not placed".
+        try:
+            report['frames_saved'] = export_frames(timeline, item, Path(args.frames), offsets, crop)
+        except (PlaceError, OSError) as error:
+            report['frames_error'] = str(error)
+            print(f'Placed, but the frames could not be saved: {error}', file=sys.stderr)
     print(json.dumps(report, indent=2))
     return 0
 

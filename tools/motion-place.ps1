@@ -4,8 +4,9 @@ Puts a Techies verdict card on the timeline that is open in DaVinci Resolve Stud
 
 .DESCRIPTION
 Resolve must be open, with Preferences > System > General > External scripting using set to Local.
-The card goes on the top video track that is free at that time (or a new track on top). Nothing else on the
-timeline moves. The text stays editable in Resolve: select the card, then Inspector > Video.
+The card goes on the top video track if it is above V1 and free at that time (or a new track on top). If any
+other clip moves, the script removes the card and stops. The text stays editable in Resolve: select the card,
+then Inspector > Video.
 
 .EXAMPLE
 .\tools\motion-place.ps1 -Tool "Notion Calendar" -Score 4 -Reason "Fast and clean, but tasks need a second app." -At 01:00:12:00

@@ -33,9 +33,10 @@ Resolve has to be open with the edit's project and timeline loaded. Then:
 ```
 
 - The card starts at that timeline timecode and stays 5 seconds (`-Seconds 3` for shorter).
-- It goes on the top video track if that track is free for the whole time. Otherwise it gets a new track on
-  top. Clips already on the timeline never move: the script compares every clip before and after, and if
-  anything changed it removes the card again and stops.
+- It goes on the top video track if that track is above V1 and free for the whole time. Otherwise it gets a
+  new track on top. Clips already on the timeline should never move: the script compares every clip before
+  and after, and if anything changed it removes the card again and stops. If other clips are still moved
+  after that, it says so; press undo in Resolve to put them back.
 - `-Project "VID-7 Black Friday packs"` makes it refuse to touch any other project.
 - `-Label "TRIED IT"` changes the small orange word above the tool name (it says VERDICT by default).
 - To change the text afterwards, select the card in Resolve and open Inspector > Video. You'll see the
