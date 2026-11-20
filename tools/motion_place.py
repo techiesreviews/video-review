@@ -44,7 +44,8 @@ TEXT_FIT = {'verdict-card': {'room': 50, 'reference': ('One short line on why.',
                              'score': ('4', 'Bold', 0.0856),
                              'fields': {'tool': ('Bold', 0.046), 'reason': ('Regular', 0.0247)}}}
 # Open Sans letter widths (2048 units to the em) for the printable ASCII characters, space to ~, read from the font
-# files that come with Resolve. Bold stands in for the score's Extrabold, whose digits are as wide.
+# files that come with Resolve. Bold stands in for the score's Extrabold: its digits are as wide, and only the point
+# in a score like 4.5 is a little wider in Extrabold.
 FONT_WIDTHS = {
     'Regular': (532, 541, 816, 1323, 1171, 1693, 1492, 449, 604, 604, 1128, 1171, 530, 659, 538, 751, 1171, 1171, 1171,
                 1171, 1171, 1171, 1171, 1171, 1171, 1171, 538, 538, 1171, 1171, 1171, 884, 1836, 1295, 1323, 1290, 1486,
@@ -58,6 +59,11 @@ FONT_WIDTHS = {
              1366, 1278, 1186, 678, 846, 678, 1171, 842, 741, 1237, 1296, 1053, 1296, 1210, 793, 1157, 1346, 625, 625,
              1270, 625, 2011, 1346, 1268, 1296, 1296, 930, 1018, 889, 1346, 1165, 1753, 1184, 1165, 999, 807, 1128,
              807, 1171),
+}
+# The typographic characters text pasted from a document often has: ‘ ’ “ ” – — …
+TYPOGRAPHIC_WIDTHS = {
+    'Regular': {'‘': 347, '’': 347, '“': 714, '”': 714, '–': 1024, '—': 2048, '…': 1593},
+    'Bold': {'‘': 444, '’': 444, '“': 911, '”': 911, '–': 1024, '—': 2048, '…': 1751},
 }
 TITLE_NAMES = {'verdict-card': 'Verdict Card'}
 # The MacroOperator's name in the .setting: the tool that carries the published controls.
@@ -84,13 +90,13 @@ def resolve_titles_folder(platform=sys.platform, environ=os.environ):
 
 def text_width(text, style, size):
     """How wide text is on the card, in em units times its text size. An accented letter counts as its plain letter;
-    any other character outside the table counts as the widest letter, so it can never slip past the check."""
-    widths = FONT_WIDTHS[style]
+    any other character outside the tables counts as a full em, wider than every letter in them."""
+    widths, typographic = FONT_WIDTHS[style], TYPOGRAPHIC_WIDTHS[style]
     total = 0
     for char in unicodedata.normalize('NFKD', text):
         if unicodedata.combining(char):
             continue
-        total += widths[ord(char) - 32] if 32 <= ord(char) < 127 else max(widths)
+        total += widths[ord(char) - 32] if 32 <= ord(char) < 127 else typographic.get(char, 2048)
     return total / 2048 * size
 
 
@@ -104,11 +110,13 @@ def text_too_wide(template, values):
     room = fit['room'] * character - (text_width(values.get('score') or score[0], *score[1:]) - text_width(*score))
     problems = []
     for option, (style, size) in fit['fields'].items():
-        if values.get(option) and text_width(values[option], style, size) > room:
-            problems.append(f'--{option} is too long for the card: it takes about '
-                            f'{round(text_width(values[option], style, size) / character)} of the '
-                            f'{math.floor(room / character)} characters of room beside the score, and the text '
-                            'does not shrink to fit')
+        text = values.get(option) or ''
+        kept = len(text)
+        while kept and text_width(text[:kept], style, size) > room:
+            kept -= 1
+        if kept < len(text):
+            problems.append(f'--{option} is too long for the card: shorten it by about {len(text) - kept} '
+                            f'letter{"s" if len(text) - kept > 1 else ""}, as the text does not shrink to fit')
     return problems
 
 
