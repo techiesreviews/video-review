@@ -152,6 +152,25 @@ try{
     assert.equal(nearMark,true,`${name}: the bar sits next to the join's new mark.`);
     await page.locator('#clearTranscriptSelection').click();
 
+    // The same, with the join's range changed by hand in the waveform's end box first while another editor swaps J6 for
+    // J7: J5 did not move, so the bar stays open.
+    await word(13).click();await page.locator('.bar-delete').click();
+    await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===1);
+    await page.locator('#clearTranscriptSelection').click();
+    await page.locator('.transcript-join[data-cut-id]').first().click();
+    const span=async()=>page.locator('#waveformCutLength').textContent(),wasSpan=await span();
+    await page.locator('#waveformOut').evaluate(n=>{n.value=(Number(n.value)+0.1).toFixed(3);n.dispatchEvent(new Event('change'));});
+    assert.notEqual(await span(),wasSpan,`${name}: the join's range is changed by hand.`);
+    await page.locator('#transcriptNote').fill('nudged note');
+    const nudged=JSON.parse(await readFile(join(temp,'transcripts/words.json'),'utf8'));
+    await writeFile(join(temp,'transcripts/words.json'),JSON.stringify({...nudged,cuts:[{id:'J5',atMs:3000},{id:'J7',atMs:7050}]}));
+    await restoreBefore(13);
+    await page.waitForFunction(()=>!document.querySelector('.transcript-word.removed-word'));
+    assert.equal(await page.locator('#transcriptSelection').isVisible(),true,`${name}: a nudged join that did not move keeps the bar open.`);
+    assert.match(await page.locator('#selectionQuote').innerText(),/^Join J5/,`${name}: the same join stays selected.`);
+    assert.equal(await page.locator('#transcriptNotice').innerText(),'',`${name}: nothing says the join changed.`);
+    await page.locator('#clearTranscriptSelection').click();
+
     // Another editor moves J5 to a later word while it is selected: the bar closes, so a note never goes out with the old time.
     await word(12).click();await page.locator('.bar-delete').click();
     await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===1);
@@ -161,7 +180,9 @@ try{
     await page.waitForFunction(()=>!document.querySelector('.transcript-word.removed-word'));
     assert.equal(await page.locator('#transcriptSelection').isHidden(),true,`${name}: the bar closes on a join that moved.`);
     assert.equal(await page.locator('#transcriptNotice').innerText(),'That join changed elsewhere, so it is no longer selected.',`${name}: a short line says why the bar closed.`);
-    await word(11).click();await page.locator('#clearTranscriptSelection').click();
+    await word(11).click();
+    assert.equal(await page.locator('#transcriptNote').inputValue(),'moved note',`${name}: the typed note comes back on the next selection.`);
+    await page.locator('#clearTranscriptSelection').click();
 
     // The words change elsewhere (an agent or another tab) and this page never hears of it. A Delete is refused by the
     // store: the panel loads the newer words, keeps the same words selected with the typed note and the scroll, and says
