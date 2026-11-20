@@ -55,6 +55,7 @@ export function storeTranscript(state,videoId,data,{editsOnly=false}={}){
     // Changed words are checked first: after a shorter render the old words are longer than the video, and the page
     // must hear that the words changed, so it loads the newer ones. Only the cut list is written, onto the saved
     // transcript, so newer joins or labels stay as they are.
+    if(!Array.isArray(data?.words))throw Error('A word-timed transcript is required');
     const saved=state.transcripts?.[video.id];
     if(!sameWords(saved,data))throw Error(RULES.messages.transcriptChanged);
     return state.transcripts[video.id]={...saved,draftEdits:normalizeTranscript(data,video.durationMs,video.fps).draftEdits};

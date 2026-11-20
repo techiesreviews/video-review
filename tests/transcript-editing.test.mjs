@@ -467,6 +467,7 @@ test('an edit-only save is refused by the browser store when the saved words dif
   const moved={...TRANSCRIPT,words:TRANSCRIPT.words.map(w=>w.id==='W3'?{...w,text:'tree'}:w)};
   assert.throws(()=>storeTranscript(state,VIDEO.id,moved,{editsOnly:true}),/transcript changed/);
   assert.equal(state.transcripts.v.draftEdits.length,1);
+  assert.throws(()=>storeTranscript(state,VIDEO.id,{draftEdits:[edit]},{editsOnly:true}),/word-timed transcript is required/,'as review_store says it');
 });
 
 test('a note opened from a comment saves its typing after a pause, and leaving it saves at once',async()=>{
