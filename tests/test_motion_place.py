@@ -441,9 +441,21 @@ class Main(unittest.TestCase):
                 code, out, err, _ = run_main(self.PLACE + option, FakeTimeline())
                 self.assertEqual(code, 0, err)
 
-    def test_an_accented_letter_is_as_wide_as_its_plain_letter_and_an_unknown_one_as_the_widest(self):
+    def test_the_edge_of_the_room_and_how_much_to_cut(self):
+        fits = motion_place.text_too_wide
+        self.assertEqual(fits('verdict-card', {'tool': 'W' * 13}), [])
+        self.assertEqual(fits('verdict-card', {'tool': 'W' * 14}),
+                         ['--tool is too long for the card: shorten it by about 1 letter, as the text does not shrink to fit'])
+        self.assertIn('by about 7 letters', fits('verdict-card', {'tool': 'W' * 20})[0])
+        reason = 'Great for quick daily plans, weak on shared tasks.'
+        self.assertEqual(fits('verdict-card', {'reason': reason + 'i'}), [])
+        self.assertEqual(len(fits('verdict-card', {'reason': reason + 'mm'})), 1)
+
+    def test_an_accented_letter_is_as_wide_as_its_plain_letter_and_an_unknown_one_as_a_full_em(self):
         self.assertEqual(motion_place.text_width('Café', 'Bold', 1), motion_place.text_width('Cafe', 'Bold', 1))
-        self.assertEqual(motion_place.text_width('☃', 'Regular', 1), max(motion_place.FONT_WIDTHS['Regular']) / 2048)
+        self.assertEqual(motion_place.text_width('☃', 'Regular', 1), 1)
+        self.assertEqual(motion_place.text_width('—', 'Regular', 1), 1)
+        self.assertLess(motion_place.text_width('’', 'Regular', 1), motion_place.text_width('m', 'Regular', 1) / 2)
 
     def test_a_length_that_is_not_above_zero_is_refused_before_resolve_is_touched(self):
         for seconds in ('0', '-3', 'nan', 'inf'):
