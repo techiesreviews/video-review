@@ -76,6 +76,8 @@ def timecode_to_frame(timecode, fps):
     if len(parts) != 4 or not all(p.isdigit() for p in parts):
         raise PlaceError(f'Timecode "{timecode}" is not HH:MM:SS:FF')
     hours, minutes, seconds, frames = map(int, parts)
+    if minutes > 59 or seconds > 59:
+        raise PlaceError(f'Timecode "{timecode}" has more than 59 minutes or seconds')
     base = round(fps)
     if frames >= base:
         raise PlaceError(f'Timecode "{timecode}" has frame {frames}, but the timeline has {base} per second')

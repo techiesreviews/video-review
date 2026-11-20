@@ -42,7 +42,8 @@ Resolve has to be open with the edit's project and timeline loaded. Then:
 - To change the text afterwards, select the card in Resolve and open Inspector > Video. You'll see the
   fields "Tool name", "Score (out of 5)", "Reason (one line)" and "Label".
 
-An AI agent does the same with `python tools/motion_place.py --tool ... --score ... --reason ... --at ...`.
+An AI agent does the same with `python tools/motion_place.py --install --tool ... --score ... --reason ... --at ...`
+(`--install` copies the template into Resolve first, as the PowerShell command always does).
 It can add `--frames <folder>` to save pictures of the result, so it can check its own work. That is how the
 pictures above were made.
 
