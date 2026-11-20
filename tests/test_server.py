@@ -98,6 +98,15 @@ class ReviewServerTests:
         else:raise AssertionError('An edits-only save wrote old words over new ones')
         with self.request('/api/transcript/example-v1') as response:assert json.load(response)['words'][0]['startMs']==120
 
+    def test_a_body_that_is_not_an_object_gets_a_plain_400(self):
+        headers={'Content-Type':'application/json','Origin':self.origin}
+        for path in ('/api/transcript/example-v1','/api/comments','/api/library'):
+            for body in (None,[]):
+                req=Request(self.origin+path,data=json.dumps(body).encode(),headers=headers)
+                try:urlopen(req,timeout=3)
+                except HTTPError as error:assert error.code==400 and 'JSON object' in json.load(error)['error'],(path,body)
+                else:raise AssertionError(f'{path} took {body!r}')
+
     def test_a_full_transcript_read_back_by_the_page_takes_an_edits_only_save(self):
         # Original words with an empty label, joins and a source mapping, as the page reads them and sends them back.
         headers={'Content-Type':'application/json','Origin':self.origin}

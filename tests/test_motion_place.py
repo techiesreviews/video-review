@@ -451,6 +451,17 @@ class Main(unittest.TestCase):
         self.assertEqual(fits('verdict-card', {'reason': reason + 'i'}), [])
         self.assertEqual(len(fits('verdict-card', {'reason': reason + 'mm'})), 1)
 
+    def test_a_line_break_in_card_text_is_refused_before_resolve_is_touched(self):
+        # Each line has a fixed place on the card, so a second line would run into the line below or above it.
+        for option in (['--tool', 'Notion\nCalendar'], ['--reason', 'Fast.\r\nBut weak on tasks.'], ['--label', 'TRIED\tIT'],
+                       ['--reason', 'One line two lines']):
+            with self.subTest(option=option), \
+                    mock.patch.object(motion_place.resolve_build, 'connect') as connect, \
+                    contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit):
+                motion_place.main(self.PLACE + option)
+            connect.assert_not_called()
+            self.assertIn(f'{option[0]} must stay on one line', err.getvalue())
+
     def test_a_label_too_wide_for_the_card_is_refused_before_resolve_is_touched(self):
         # The small label sits above the score, letter-spaced, so it gets the same room with its own size and spacing.
         with mock.patch.object(motion_place.resolve_build, 'connect') as connect, \
