@@ -114,7 +114,11 @@ def main():
         'words': words,
         'cuts': [],
     }
-    words_path.write_text(json.dumps(transcript, ensure_ascii=False, indent=1), encoding='utf-8')
+    try:  # mode 'x': another run that wrote the words meanwhile keeps its file
+        with open(words_path, 'x', encoding='utf-8') as f:
+            f.write(json.dumps(transcript, ensure_ascii=False, indent=1))
+    except FileExistsError:
+        sys.exit(f'{words_path} was made by another run meanwhile; it is kept. Raw result at {raw_path}')
     print(f'{len(words)} words in {time.time() - t0:.0f} s', flush=True)
     print(f'Raw:   {raw_path}')
     print(f'Words: {words_path}')

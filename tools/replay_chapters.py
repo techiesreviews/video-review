@@ -86,6 +86,8 @@ def chapters_from_sections(sents, titles, end_ms):
             continue
         chapters.append([hit, title])
         after = hit
+    for _, title in chapters[MAX_CHAPTERS:]:
+        print(f'warning: more than {MAX_CHAPTERS} chapters; section "{title}" left out', file=sys.stderr)
     return chapters[:MAX_CHAPTERS]
 
 
@@ -170,12 +172,18 @@ def main():
     else:
         chapters = chapters_from_silences(sents, end_ms)
 
-    chapters_path.write_text(''.join(f'{stamp(t)} {title}\n' for t, title in chapters), encoding='utf-8')
-    clips = clip_candidates(sents)
-    clips_path.write_text(json.dumps({
-        'source': args.words.name,
-        'note': 'Candidates only. Lex approves each clip before anything is cut.',
-        'clips': clips}, ensure_ascii=False, indent=1), encoding='utf-8')
+    # Mode 'x' fails if another run made the file since the check above, so neither run replaces the other's.
+    try:
+        with open(chapters_path, 'x', encoding='utf-8') as f:
+            f.write(''.join(f'{stamp(t)} {title}\n' for t, title in chapters))
+        clips = clip_candidates(sents)
+        with open(clips_path, 'x', encoding='utf-8') as f:
+            f.write(json.dumps({
+                'source': args.words.name,
+                'note': 'Candidates only. Lex approves each clip before anything is cut.',
+                'clips': clips}, ensure_ascii=False, indent=1))
+    except FileExistsError as error:
+        sys.exit(f'{error.filename} was made by another run meanwhile; it is kept, nothing was overwritten.')
 
     print(f'{len(chapters)} chapters -> {chapters_path}')
     if len(chapters) < 3:
