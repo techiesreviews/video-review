@@ -14,6 +14,8 @@ import transcribe_local  # noqa: E402
 
 class FakeResult:
     def save_as_json(self, path):
+        if not path.lower().endswith('.json'):  # as stable-ts does
+            path += '.json'
         Path(path).write_text('{"segments": [{"words": [{"word": "Hi.", "start": 0, "end": 0.5}]}]}',
                               encoding='utf-8')
 
