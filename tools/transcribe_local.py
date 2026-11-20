@@ -86,21 +86,31 @@ def main():
     for p in (raw_path, words_path):
         if p.exists():
             sys.exit(f'{p} already exists. Move it or pick another --out-dir; nothing is overwritten.')
+    # Claim the raw file now (stable-ts saves over whatever is there): a run started meanwhile stops here.
+    try:
+        raw_path.open('x').close()
+    except FileExistsError:
+        sys.exit(f'{raw_path} was made by another run meanwhile; it is kept, nothing was overwritten.')
 
-    import stable_whisper
-    import torch
+    try:
+        import stable_whisper
+        import torch
 
-    if args.device == 'cuda' and not torch.cuda.is_available():
-        sys.exit('CUDA is not available in this Python. Use the video-acut venv or pass --device cpu (slow).')
+        if args.device == 'cuda' and not torch.cuda.is_available():
+            sys.exit('CUDA is not available in this Python. Use the video-acut venv or pass --device cpu (slow).')
 
-    t0 = time.time()
-    audio = load_audio(args.media, args.start, args.duration)
-    print(f'Audio: {len(audio) / SAMPLE_RATE:.1f} s decoded', flush=True)
-    model = stable_whisper.load_model(args.model, device=args.device)
-    print(f'Model {args.model} loaded on {args.device} ({time.time() - t0:.0f} s)', flush=True)
-    result = model.transcribe(audio, language=args.language, word_timestamps=True,
-                              verbose=False, fp16=args.device == 'cuda')
-    result.save_as_json(str(raw_path))
+        t0 = time.time()
+        audio = load_audio(args.media, args.start, args.duration)
+        print(f'Audio: {len(audio) / SAMPLE_RATE:.1f} s decoded', flush=True)
+        model = stable_whisper.load_model(args.model, device=args.device)
+        print(f'Model {args.model} loaded on {args.device} ({time.time() - t0:.0f} s)', flush=True)
+        result = model.transcribe(audio, language=args.language, word_timestamps=True,
+                                  verbose=False, fp16=args.device == 'cuda')
+        result.save_as_json(str(raw_path))
+    except BaseException:
+        if raw_path.stat().st_size == 0:  # only the empty claim: a rerun must not find it in the way
+            raw_path.unlink()
+        raise
 
     raw = json.loads(raw_path.read_text(encoding='utf-8'))
     words = review_words(raw, args.start)
