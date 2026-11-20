@@ -197,6 +197,9 @@ class FakeTimeline:
         self.playhead = motion_place.timecode_to_frame(timecode, 30)
         return True
 
+    def GetIsTrackEnabled(self, kind, track):
+        return True
+
     def GetTrackCount(self, kind):
         return self.tracks if kind == 'video' else 0
 

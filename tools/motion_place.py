@@ -81,7 +81,11 @@ def timecode_to_frame(timecode, fps):
         raise PlaceError(f'Timecode "{timecode}" has frame {frames}, but the timeline has {base} per second')
     total = ((hours * 60 + minutes) * 60 + seconds) * base + frames
     if drop:
+        if base not in (30, 60):
+            raise PlaceError(f'Timecode "{timecode}" is drop-frame, which only exists at 29.97 or 59.94 fps')
         dropped = 2 * base // 30
+        if seconds == 0 and frames < dropped and minutes % 10:
+            raise PlaceError(f'Timecode "{timecode}" is a label drop-frame skips; use ;{dropped:02d} instead')
         all_minutes = hours * 60 + minutes
         total -= dropped * (all_minutes - all_minutes // 10)
     return total
@@ -107,12 +111,12 @@ def snapshot(timeline):
 
 
 def free_track(timeline, start, end, card):
-    """The top video track with nothing but the card in [start, end), or a new track added on top."""
+    """The top video track, if turned on and with nothing but the card in [start, end), or a new track added on top."""
     count = timeline.GetTrackCount('video') or 0
-    if count >= 1:
+    if count >= 2 and timeline.GetIsTrackEnabled('video', count):
         busy = [item for item in timeline.GetItemListInTrack('video', count) or []
                 if item.GetUniqueId() != card.GetUniqueId() and item.GetStart() < end and item.GetEnd() > start]
-        if not busy and count >= 2:
+        if not busy:
             return count
     if not timeline.AddTrack('video'):
         raise PlaceError('Resolve would not add a video track for the card')
