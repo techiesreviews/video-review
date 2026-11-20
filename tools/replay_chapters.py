@@ -18,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import file_store  # noqa: E402
+from time_format import clock  # noqa: E402
 
 MIN_CHAPTER_MS = 10_000
 MAX_CHAPTERS = 15
@@ -53,12 +54,6 @@ def sentences(words):
                         'complete': cur[-1]['text'].rstrip().endswith(('.', '?', '!'))})
             cur = []
     return out
-
-
-def stamp(ms):
-    s = int(ms // 1000)
-    h, m, s = s // 3600, s // 60 % 60, s % 60
-    return f'{h}:{m:02d}:{s:02d}' if h else f'{m}:{s:02d}'
 
 
 def short_title(text, n=5):
@@ -145,7 +140,7 @@ def clip_candidates(sents):
         if len(picked) == CLIP_COUNT:
             break
     picked.sort(key=lambda c: c['startMs'])
-    return [{'n': k + 1, 'status': 'candidate', 'start': stamp(c['startMs']), 'end': stamp(c['endMs']),
+    return [{'n': k + 1, 'status': 'candidate', 'start': clock(c['startMs']), 'end': clock(c['endMs']),
              'durationS': round((c['endMs'] - c['startMs']) / 1000, 1), **c} for k, c in enumerate(picked)]
 
 
@@ -182,7 +177,7 @@ def main():
         'clips': clips}, ensure_ascii=False, indent=1)
     # write_new_text refuses a file another run made since the check above, so neither run replaces the other's.
     try:
-        file_store.write_new_text(chapters_path, ''.join(f'{stamp(t)} {title}\n' for t, title in chapters))
+        file_store.write_new_text(chapters_path, ''.join(f'{clock(t)} {title}\n' for t, title in chapters))
         try:
             file_store.write_new_text(clips_path, clips_text)
         except BaseException:
