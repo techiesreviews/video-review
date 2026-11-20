@@ -117,7 +117,7 @@ def text_too_wide(template, values):
         text, kept, width = values.get(option) or '', 0, 0
         # Each line has a fixed place on the card, so a pasted line break would run into the line below or above.
         if any(unicodedata.category(char) in ('Cc', 'Zl', 'Zp') for char in text):
-            problems.append(f'--{option} must stay on one line: remove its line breaks or tabs')
+            problems.append(f'--{option} must stay on one line: remove its line breaks, tabs or other control characters')
             continue
         # Letters fit from the left until one runs past the room; the rest is what to cut.
         while kept < len(text) and width + text_width(text[kept], style, size) * spacing <= room:

@@ -158,6 +158,14 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
       const join=element('button','transcript-join'+(cut.risk?' risky':''),'↔ '+cut.id);
       join.type='button';join.dataset.cutId=cut.id;join.title='Listen around the join at '+stamp(cut.atMs);join.setAttribute('aria-label',join.title);join.onclick=()=>chooseCut(cut,join);wordNodes[i].before(join,document.createTextNode(' '));
     }
+    // A join kept selected through a save (Undo or Restore with a note typed): the bar follows its new mark, or closes
+    // when another editor removed that join, as reselect treats a missing join. Its typed note waits for the next selection.
+    const kept=editing.selection?.cutId;
+    if(kept){
+      const node=[...body.querySelectorAll('.transcript-join[data-cut-id]')].find(n=>n.dataset.cutId===kept);
+      if(node)barTarget=node;
+      else{const draft=editing.noteId?'':noteBox.value;clear();carriedNote=draft||carriedNote;notice('That join changed elsewhere, so it is no longer selected.');}
+    }
   }
   function refreshCuts(){
     const transcript=editing.transcript,edits=editing.edits(),gone=deletedIds(edits),busy=editing.busy;
