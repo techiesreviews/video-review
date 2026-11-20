@@ -225,6 +225,12 @@ class FakeTimeline:
         self.tracks += 1
         return True
 
+    def DeleteTrack(self, kind, track):
+        if kind != 'video' or track != self.tracks or self.GetItemListInTrack(kind, track):
+            return False
+        self.tracks -= 1
+        return True
+
     def GetItemListInTrack(self, kind, track):
         return [clip for clip in self.clips if kind == 'video' and clip.track == track]
 
@@ -303,7 +309,7 @@ class Place(unittest.TestCase):
 
     def test_a_drop_frame_start_is_reported_as_it_was_asked(self):
         timeline = FakeTimeline()
-        timeline.settings['timelineFrameRate'] = '29.97'
+        timeline.settings = {'timelineFrameRate': '29.97', 'timelineDropFrameTimecode': '1'}
         report = motion_place.place(FakeResolve(timeline), 'verdict-card', self.VALUES, '00:01:00;02', 3)
         self.assertEqual(report['start'], '00:01:00;02')
 
@@ -314,6 +320,21 @@ class Place(unittest.TestCase):
         report = motion_place.place(FakeResolve(timeline), 'verdict-card', self.VALUES, '00:01:00;02', 3)
         self.assertEqual(timeline.playhead, 20000)
         self.assertEqual((report['track'], timeline.clips[-1].GetStart()), ('V2', 1800))
+
+    def test_on_a_non_drop_29_97_timeline_a_start_written_with_a_semicolon_is_refused(self):
+        timeline = FakeTimeline()
+        timeline.settings['timelineFrameRate'] = '29.97'
+        with self.assertRaises(motion_place.PlaceError) as caught:
+            motion_place.place(FakeResolve(timeline), 'verdict-card', self.VALUES, '00:10:00;00', 3)
+        self.assertIn('00:10:00:00', str(caught.exception))
+        self.assertEqual([clip.uid for clip in timeline.clips], ['v1'])
+
+    def test_a_track_added_for_a_card_that_then_fails_is_removed_too(self):
+        timeline = FakeTimeline()
+        with mock.patch.object(FakeTitle, 'SetPosition', return_value=False), \
+                self.assertRaises(motion_place.PlaceError):
+            motion_place.place(FakeResolve(timeline), 'verdict-card', self.VALUES, '00:00:01:00', 3)
+        self.assertEqual(([clip.uid for clip in timeline.clips], timeline.tracks), (['v1'], 1))
 
     def test_on_a_drop_frame_timeline_a_start_written_with_colons_is_refused(self):
         timeline = FakeTimeline()
@@ -351,6 +372,14 @@ class Place(unittest.TestCase):
 
 class Main(unittest.TestCase):
     PLACE = ['--tool', 'Notion Calendar', '--score', '4', '--reason', 'Fast.', '--at', '00:00:01:00']
+
+    def test_a_template_that_cannot_be_installed_says_not_placed_without_a_traceback(self):
+        with mock.patch.object(motion_place, 'install_template', side_effect=OSError('read-only')):
+            code, out, err, connect = run_main(self.PLACE + ['--install'], FakeTimeline())
+        self.assertEqual(code, 1)
+        self.assertIn('Not placed', err)
+        self.assertIn('read-only', err)
+        connect.assert_not_called()
 
     def test_frames_that_fail_after_placing_still_say_the_card_is_placed(self):
         with tempfile.TemporaryDirectory() as folder:
