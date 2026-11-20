@@ -177,9 +177,10 @@ def place(resolve, template, values, at, seconds, project_name=None):
         raise PlaceError(f'Project "{project.GetName()}" has no timeline open')
     fps = float(timeline.GetSetting('timelineFrameRate'))
     drop = str(timeline.GetSetting('timelineDropFrameTimecode')).lower() in ('1', 'true')
-    if drop and ';' not in at:
-        raise PlaceError(f'Timeline "{timeline.GetName()}" counts drop-frame timecode; write {at} as Resolve shows '
-                         f'it, with ";" before the frames (for example {at[:8]};{at[9:]})')
+    if drop != (';' in at):
+        kind, mark = ('drop-frame', ';') if drop else ('non-drop timecode', ':')
+        raise PlaceError(f'Timeline "{timeline.GetName()}" counts {kind}; write {at} as Resolve shows it, with '
+                         f'"{mark}" before the frames (for example {at[:8]}{mark}{at[9:]})')
     start = timecode_to_frame(at, fps)
     if start < timeline.GetStartFrame():
         raise PlaceError(f'{at} is before the timeline starts ({timeline.GetStartTimecode()})')
@@ -196,6 +197,7 @@ def place(resolve, template, values, at, seconds, project_name=None):
     if item is None:
         raise PlaceError(f'Resolve has no title called "{TITLE_NAMES[template]}". Run once with --install; '
                          'if it is still missing after that, restart Resolve.')
+    added_track = None
     try:
         inserted = item.GetDuration()
         if frames > inserted:
@@ -203,7 +205,9 @@ def place(resolve, template, values, at, seconds, project_name=None):
                              f'duration); asked for {frames}. Drag it longer in Resolve or ask for less.')
         if frames < inserted and not item.SetRightOffset(item.GetRightOffset() + inserted - frames):
             raise PlaceError('Resolve would not trim the card to its length')
+        tracks_before = timeline.GetTrackCount('video')
         track = free_track(timeline, start, start + frames, item)
+        added_track = track if track > tracks_before else None
         if not item.SetPosition({'trackIndex': track, 'startFrame': start}):
             raise PlaceError(f'Resolve would not move the card to V{track} at {at}')
         if item.GetStart() != start or item.GetTrackTypeAndIndex() != ['video', track]:
@@ -235,6 +239,9 @@ def place(resolve, template, values, at, seconds, project_name=None):
         if snapshot(timeline) != before:
             raise PlaceError(f'{reason}. The card was removed, but other clips are still moved: undo in Resolve '
                              'until they are back, then delete the card again.') from error
+        if added_track and not timeline.DeleteTrack('video', added_track):
+            raise PlaceError(f'{reason}. The card was removed; the empty track V{added_track} made for it is '
+                             'still there, delete it in Resolve.') from error
         raise
     return {'project': project.GetName(), 'timeline': timeline.GetName(), 'track': f'V{track}',
             'start': at, 'frames': item.GetDuration(), 'fps': fps,
@@ -306,7 +313,7 @@ def main(argv=None):
         item, timeline = report.pop('_item'), report.pop('_timeline')
         if installed:
             report['installed'] = str(installed)
-    except (PlaceError, resolve_build.ResolveError) as error:
+    except (PlaceError, resolve_build.ResolveError, OSError, KeyError) as error:  # OSError, KeyError: --install
         print(f'Not placed: {error}', file=sys.stderr)
         return 1
     if args.frames:
