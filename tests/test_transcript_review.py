@@ -79,6 +79,21 @@ class TranscriptReviewTests(unittest.TestCase):
         self.assertEqual((stored['revision'],stored['label'],[c['id'] for c in stored['cuts']]),('r2','Corrected',['J9']))
         self.assertEqual([e['id'] for e in stored['draftEdits']],['cut'])
 
+    def test_an_edits_only_save_never_puts_back_an_older_render(self):
+        # A render recorded after the transcript changes the manifest and comments but not the transcript file;
+        # a Delete on the page then saves its cuts only and must leave that render as it is.
+        store.write(self.data/'manifest.json',[{**self.video,'path':str(Path(self.temp.name)/'v.mp4')}])
+        words=[{'id':'a','text':'one','startMs':100,'endMs':600}]
+        store.save_transcript(self.data,'v',{'words':words,'fps':30,'keepRanges':[[300,360]]})
+        store.apply(self.data,{'action':'add','videoId':'v','startMs':1500,'endMs':1800,'text':'Keep this'})
+        store.update_render(self.data,'v',None,[[600,660]])
+        video=store.find_video(self.data,'v');moved=[c['startMs'] for c in store.comments(self.data)]
+        cut={'id':'cut','startMs':200,'endMs':500,'wordIds':['a'],'quote':'one'}
+        store.save_transcript(self.data,'v',{'words':words,'fps':30,'keepRanges':[[300,360]],'draftEdits':[cut]},edits_only=True)
+        self.assertEqual(store.find_video(self.data,'v')['keepRanges'],video['keepRanges'])
+        self.assertEqual([c['startMs'] for c in store.comments(self.data)],moved)
+        self.assertEqual([e['id'] for e in store.get_transcript(self.data,'v')['draftEdits']],['cut'])
+
     def test_render_retimes_comments_and_preserves_original_anchors(self):
         _,c=store.apply(self.data,{'action':'add','videoId':'v','startMs':1500,'endMs':1800,'text':'Keep this'})
         store.rebase_comments(self.data,self.video,[[330,360]],1000)

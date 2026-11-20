@@ -422,6 +422,19 @@ class Main(unittest.TestCase):
         with self.assertRaises(SystemExit):
             run_main(['--tool', 'X', '--score', '7', '--reason', 'Y', '--at', '00:00:01:00'], FakeTimeline())
 
+    def test_text_too_long_for_the_card_is_refused_before_resolve_is_touched(self):
+        # The text does not shrink to fit, so a card that would overflow is never placed and called "Placed".
+        for option in (['--reason', 'x' * 51], ['--tool', 'Microsoft Power Automate Desktop']):
+            with self.subTest(option=option), \
+                    mock.patch.object(motion_place.resolve_build, 'connect') as connect, \
+                    contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit):
+                motion_place.main(self.PLACE + option)
+            connect.assert_not_called()
+            self.assertIn('characters', err.getvalue())
+        code, out, err, _ = run_main(['--tool', 'x' * 26, '--score', '4.5', '--reason', 'y' * 50,
+                                      '--at', '00:00:01:00'], FakeTimeline())
+        self.assertEqual(code, 0)
+
     def test_a_length_that_is_not_above_zero_is_refused_before_resolve_is_touched(self):
         for seconds in ('0', '-3', 'nan', 'inf'):
             with self.subTest(seconds=seconds), \
