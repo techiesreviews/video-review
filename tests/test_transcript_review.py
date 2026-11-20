@@ -79,6 +79,13 @@ class TranscriptReviewTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'transcript changed'):
             store.save_transcript(self.data,'v',{'words':old,'draftEdits':[cut]},edits_only=True)
         self.assertEqual(store.get_transcript(self.data,'v')['revision'],'r2')
+        # On the same words, the cut list is still checked against the video, and a broken body says so.
+        words=old[:1]
+        with self.assertRaisesRegex(ValueError,'outside'):
+            store.save_transcript(self.data,'v',{'words':words,'revision':'r2','draftEdits':[{**cut,'endMs':1500}]},edits_only=True)
+        self.assertEqual(store.get_transcript(self.data,'v').get('draftEdits'),[])
+        with self.assertRaisesRegex(ValueError,'word-timed transcript is required'):
+            store.save_transcript(self.data,'v',{'draftEdits':[cut]},edits_only=True)
 
     def test_an_edits_only_save_writes_only_the_cut_list(self):
         words=[{'id':'a','text':'one','startMs':100,'endMs':600}]

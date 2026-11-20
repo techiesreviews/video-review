@@ -462,11 +462,12 @@ class Main(unittest.TestCase):
         for label in ('VERDICT', 'TRIED IT', 'AFTER A FULL WEEK WITH THE TEAM'):
             with self.subTest(label=label):
                 self.assertEqual(fits('verdict-card', {'label': label}), [])
-        # The spacing counts: as wide as the room with plain letters, the spaced label is a few letters over.
-        widest = 'W' * 40
-        while motion_place.text_width(widest, 'Bold', 0.018) > motion_place.text_width('W' * 13, 'Bold', 0.046):
-            widest = widest[:-1]
-        self.assertEqual(len(fits('verdict-card', {'label': widest})), 1)
+        # The spacing counts: a label that fits the room with plain letters is refused once it is spaced out.
+        fit = motion_place.TEXT_FIT['verdict-card']
+        room = fit['room'] * motion_place.text_width(*fit['reference']) / len(fit['reference'][0])
+        plain = 'W' * int(room / motion_place.text_width('W', 'Bold', 0.018))
+        self.assertLessEqual(motion_place.text_width(plain, 'Bold', 0.018), room)
+        self.assertEqual(len(fits('verdict-card', {'label': plain})), 1)
 
     def test_an_accented_letter_is_as_wide_as_its_plain_letter_and_an_unknown_one_as_a_full_em(self):
         self.assertEqual(motion_place.text_width('Café', 'Bold', 1), motion_place.text_width('Cafe', 'Bold', 1))
