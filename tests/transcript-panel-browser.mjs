@@ -113,8 +113,24 @@ try{
     await word(9).click();await page.locator('.bar-delete').click();
     await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===2);
     assert.deepEqual(await page.locator('.transcript-join[data-cut-id]').allInnerTexts(),['↔ J9'],`${name}: the join marks follow the saved transcript.`);
+    const before6=await word(6).evaluate(n=>{const out=[];for(let x=n,k=0;x&&k<3;x=x.previousElementSibling,k++)out.unshift(x.classList[0]);return out;});
+    assert.deepEqual(before6,['transcript-join','restore-cut','transcript-word'],`${name}: the redrawn join sits before the deleted word's Restore mark.`);
     await page.locator('.transcript-join[data-cut-id]').click();
     assert.match(await page.locator('#selectionQuote').innerText(),/^Join J9/,`${name}: the mark opens the new join.`);
+
+    // J9 stays selected with a note typed while another editor swaps it for J5, and a Restore brings J5 back with the
+    // save: the bar does not stay on a join that is gone. It closes with a short line, and the typed note waits for the
+    // next selection.
+    await page.locator('#transcriptNote').fill('join note');
+    const again=JSON.parse(await readFile(join(temp,'transcripts/words.json'),'utf8'));
+    await writeFile(join(temp,'transcripts/words.json'),JSON.stringify({...again,cuts:[{id:'J5',atMs:3000}]}));
+    await word(9).evaluate(n=>n.previousElementSibling.click());
+    await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===1);
+    assert.deepEqual(await page.locator('.transcript-join[data-cut-id]').allInnerTexts(),['↔ J5'],`${name}: the join marks follow the saved transcript.`);
+    assert.equal(await page.locator('#transcriptSelection').isHidden(),true,`${name}: the bar closes on a join that is gone.`);
+    assert.equal(await page.locator('#transcriptNotice').innerText(),'That join changed elsewhere, so it is no longer selected.');
+    await word(11).click();
+    assert.equal(await page.locator('#transcriptNote').inputValue(),'join note',`${name}: the typed note comes back on the next selection.`);
     await page.locator('#clearTranscriptSelection').click();
 
     // The words change elsewhere (an agent or another tab) and this page never hears of it. A Delete is refused by the
