@@ -85,9 +85,10 @@ Two things to know:
   behaviour, the before-and-after check stops the script.
 - **The entrance length is set in frames**: 8 frames, a fade with a short rise and no bounce. That is 267 ms at
   30 fps and 333 ms at 24 fps, so it stays under 400 ms at 24 fps and up. At 60 fps it gets twice as fast.
-- **Text doesn't shrink to fit.** The reason fits about 50 characters before it runs under the score, and the
-  tool name about 26. The script refuses longer text before it touches Resolve; keep the reason to one short
-  line and shorten a long product name.
+- **Text doesn't shrink to fit.** The reason fits about 50 characters before it runs under the score, a few
+  less beside a score like 4.5, and the bigger tool name about half as many. The script measures the text with
+  the font's own letter widths and refuses text that is too wide before it touches Resolve; keep the reason to
+  one short line and shorten a long product name.
 - **Fonts:** the brand fonts Inter and Roboto Mono are not installed on this PC, so the card uses Open Sans,
   which comes with Resolve. Once Inter is installed, change `Font = "Open Sans"` to `Font = "Inter"` in the
   template.

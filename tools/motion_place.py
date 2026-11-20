@@ -27,6 +27,7 @@ import os
 from pathlib import Path
 import shutil
 import sys
+import unicodedata
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'scripts' / 'video'))
@@ -35,10 +36,29 @@ import resolve_build  # noqa: E402
 TEMPLATES = ROOT / 'motion' / 'templates'
 # The template's published controls (InstanceInput names in the .setting) and the option that fills each.
 FIELDS = {'verdict-card': {'ToolName': 'tool', 'Score': 'score', 'Reason': 'reason', 'Label': 'label'}}
-# The most characters each option may have before its text runs under the score: the text does not shrink to fit.
-# The reason fits about 50 (docs/motion-engine.md); the tool name, at 0.046 against the reason's 0.0247 text size,
-# shares the same width with the score, so it fits about 50 * 0.0247 / 0.046, which is 26.
-TEXT_LIMITS = {'verdict-card': {'tool': 26, 'reason': 50}}
+# How much text fits beside the score, as the text does not shrink to fit. Widths come from the font's own letter
+# widths times the text size in the .setting. `room` is in characters of an ordinary reason (`reference`, the
+# template's placeholder) with the template's own score (`score`): about 50 (docs/motion-engine.md). A wider score,
+# such as 4.5, grows leftward and takes its extra width from that room.
+TEXT_FIT = {'verdict-card': {'room': 50, 'reference': ('One short line on why.', 'Regular', 0.0247),
+                             'score': ('4', 'Bold', 0.0856),
+                             'fields': {'tool': ('Bold', 0.046), 'reason': ('Regular', 0.0247)}}}
+# Open Sans letter widths (2048 units to the em) for the printable ASCII characters, space to ~, read from the font
+# files that come with Resolve. Bold stands in for the score's Extrabold, whose digits are as wide.
+FONT_WIDTHS = {
+    'Regular': (532, 541, 816, 1323, 1171, 1693, 1492, 449, 604, 604, 1128, 1171, 530, 659, 538, 751, 1171, 1171, 1171,
+                1171, 1171, 1171, 1171, 1171, 1171, 1171, 538, 538, 1171, 1171, 1171, 884, 1836, 1295, 1323, 1290, 1486,
+                1138, 1057, 1489, 1510, 572, 550, 1254, 1069, 1842, 1542, 1593, 1232, 1593, 1264, 1123, 1128, 1493,
+                1221, 1891, 1183, 1145, 1172, 670, 751, 670, 1171, 897, 568, 1138, 1253, 981, 1253, 1150, 689, 1112,
+                1256, 517, 517, 1076, 517, 1896, 1256, 1232, 1253, 1253, 837, 976, 730, 1256, 1023, 1587, 1072, 1026,
+                960, 768, 1125, 768, 1171),
+    'Bold': (532, 586, 967, 1323, 1171, 1845, 1536, 545, 694, 694, 1116, 1171, 584, 659, 584, 846, 1171, 1171, 1171, 1171,
+             1171, 1171, 1171, 1171, 1171, 1171, 584, 584, 1171, 1171, 1171, 977, 1837, 1413, 1376, 1305, 1516, 1147,
+             1124, 1483, 1567, 678, 678, 1360, 1157, 1931, 1665, 1630, 1286, 1630, 1352, 1128, 1186, 1548, 1331, 1980,
+             1366, 1278, 1186, 678, 846, 678, 1171, 842, 741, 1237, 1296, 1053, 1296, 1210, 793, 1157, 1346, 625, 625,
+             1270, 625, 2011, 1346, 1268, 1296, 1296, 930, 1018, 889, 1346, 1165, 1753, 1184, 1165, 999, 807, 1128,
+             807, 1171),
+}
 TITLE_NAMES = {'verdict-card': 'Verdict Card'}
 # The MacroOperator's name in the .setting: the tool that carries the published controls.
 MACROS = {'verdict-card': 'VerdictCard'}
@@ -60,6 +80,36 @@ def resolve_titles_folder(platform=sys.platform, environ=os.environ):
     else:
         base = Path.home() / '.local' / 'share' / 'DaVinciResolve' / 'Fusion'
     return base / 'Templates' / 'Edit' / 'Titles' / TITLE_FOLDER
+
+
+def text_width(text, style, size):
+    """How wide text is on the card, in em units times its text size. An accented letter counts as its plain letter;
+    any other character outside the table counts as the widest letter, so it can never slip past the check."""
+    widths = FONT_WIDTHS[style]
+    total = 0
+    for char in unicodedata.normalize('NFKD', text):
+        if unicodedata.combining(char):
+            continue
+        total += widths[ord(char) - 32] if 32 <= ord(char) < 127 else max(widths)
+    return total / 2048 * size
+
+
+def text_too_wide(template, values):
+    """A plain message for each option whose text would run under the score, or an empty list."""
+    fit = TEXT_FIT.get(template)
+    if not fit:
+        return []
+    reference, score = fit['reference'], fit['score']
+    character = text_width(*reference) / len(reference[0])
+    room = fit['room'] * character - (text_width(values.get('score') or score[0], *score[1:]) - text_width(*score))
+    problems = []
+    for option, (style, size) in fit['fields'].items():
+        if values.get(option) and text_width(values[option], style, size) > room:
+            problems.append(f'--{option} is too long for the card: it takes about '
+                            f'{round(text_width(values[option], style, size) / character)} of the '
+                            f'{math.floor(room / character)} characters of room beside the score, and the text '
+                            'does not shrink to fit')
+    return problems
 
 
 def install_template(template, folder=None):
@@ -299,11 +349,9 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.score is not None and not (args.score.replace('.', '', 1).isdigit() and float(args.score) <= 5):
         parser.error('--score takes a number from 0 to 5, for example 4 or 4.5')
-    for option, limit in TEXT_LIMITS.get(args.template, {}).items():
-        value = getattr(args, option)
-        if value is not None and len(value) > limit:
-            parser.error(f'--{option} fits {limit} characters on the card ({len(value)} given); '
-                         'the text does not shrink to fit')
+    too_wide = text_too_wide(args.template, {'tool': args.tool, 'score': args.score, 'reason': args.reason})
+    if too_wide:
+        parser.error('; '.join(too_wide))
     if not (math.isfinite(args.seconds) and args.seconds > 0):
         parser.error('--seconds takes a length above 0, for example 5')
     try:
