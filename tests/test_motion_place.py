@@ -3,11 +3,15 @@
 The Resolve part (placing the card) was proved by hand on a throwaway project; see docs/motion-engine.md.
 These checks keep the template and the script in step, and keep two faults found on the way from coming back.
 """
+import contextlib
+import io
+import json
 from pathlib import Path
 import re
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'tools'))
@@ -85,11 +89,207 @@ class Template(unittest.TestCase):
         self.assertLessEqual(max(keys) / 24, 0.4)
 
     def test_the_entrance_never_overshoots(self):
-        # No bounce: every handle stays at or below the end value of its curve.
-        for spline in re.findall(r'KeyFrames = \{(.*?)\n\t{5}\},', TEMPLATE, re.S):
+        # No bounce: every handle stays at or below the end value of its curve. Both curves rise today; a falling
+        # curve (an exit fade, say) would need the opposite comparison.
+        splines = re.findall(r'KeyFrames = \{(.*?)\n\t{5}\},', TEMPLATE, re.S)
+        self.assertTrue(splines)
+        for spline in splines:
             end = float(re.findall(r'\[\d+\] = \{ ([\d.]+)', spline)[-1])
             for handle in re.findall(r'[LR]H = \{ [\d.]+, ([\d.]+) \}', spline):
                 self.assertLessEqual(float(handle), end)
+
+
+class FakeClip:
+    def __init__(self, name, track, start, duration, uid):
+        self.name, self.track, self.start, self.duration, self.uid = name, track, start, duration, uid
+
+    def GetName(self):
+        return self.name
+
+    def GetStart(self):
+        return self.start
+
+    def GetEnd(self):
+        return self.start + self.duration
+
+    def GetDuration(self):
+        return self.duration
+
+    def GetUniqueId(self):
+        return self.uid
+
+
+class FakeMacro:
+    def __init__(self):
+        self.inputs = {}
+
+    def SetInput(self, control, value):
+        self.inputs[control] = value
+
+    def GetInput(self, control):
+        return self.inputs.get(control)
+
+
+class FakeTitle(FakeClip):
+    """A Fusion title as Resolve inserts it: 150 frames (5 s at 30 fps) at the playhead, on the top track."""
+
+    def __init__(self, track, start):
+        super().__init__('Verdict Card', track, start, 150, 'card')
+        self.right = 0
+        self.macro = FakeMacro()
+
+    def GetRightOffset(self):
+        return self.right
+
+    def SetRightOffset(self, offset):
+        self.duration -= offset - self.right
+        self.right = offset
+        return True
+
+    def SetPosition(self, position):
+        self.track, self.start = position['trackIndex'], position['startFrame']
+        return True
+
+    def GetTrackTypeAndIndex(self):
+        return ['video', self.track]
+
+    def GetFusionCompByIndex(self, index):
+        return self
+
+    def FindTool(self, name):
+        return self.macro
+
+
+class FakeTimeline:
+    """One 10 s clip on V1 of a 30 fps timeline that starts at frame 0. push_on_insert makes the title insert
+    push that clip along, as Resolve's insert edit does when the playhead is not past every clip."""
+
+    def __init__(self, push_on_insert=0, frames_work=True):
+        self.clips = [FakeClip('interview.mp4', 1, 0, 300, 'v1')]
+        self.tracks = 1
+        self.playhead = None
+        self.push_on_insert, self.frames_work = push_on_insert, frames_work
+        self.deleted = []
+
+    def GetName(self):
+        return 'Edit'
+
+    def GetSetting(self, key):
+        return {'timelineFrameRate': '30'}[key]
+
+    def GetStartFrame(self):
+        return 0
+
+    def GetStartTimecode(self):
+        return '00:00:00:00'
+
+    def GetEndFrame(self):
+        return max(clip.GetEnd() for clip in self.clips)
+
+    def SetCurrentTimecode(self, timecode):
+        self.playhead = motion_place.timecode_to_frame(timecode, 30)
+        return True
+
+    def GetTrackCount(self, kind):
+        return self.tracks if kind == 'video' else 0
+
+    def AddTrack(self, kind):
+        self.tracks += 1
+        return True
+
+    def GetItemListInTrack(self, kind, track):
+        return [clip for clip in self.clips if kind == 'video' and clip.track == track]
+
+    def InsertFusionTitleIntoTimeline(self, name):
+        for clip in self.clips:
+            clip.start += self.push_on_insert
+        title = FakeTitle(self.tracks, self.playhead)
+        self.clips.append(title)
+        return title
+
+    def DeleteClips(self, items, ripple):
+        self.deleted.append((tuple(item.uid for item in items), ripple))
+        self.clips = [clip for clip in self.clips if clip not in items]
+        return True
+
+    def ExportFrame(self, frame, options):
+        return {'success': self.frames_work, 'error': None if self.frames_work else 'render failed'}
+
+    def ExportThumbnails(self, cells, options):
+        return {'success': True}
+
+
+class FakeResolve:
+    def __init__(self, timeline):
+        self.timeline = timeline
+
+    def GetProjectManager(self):
+        return self
+
+    def GetCurrentProject(self):
+        return self
+
+    def GetName(self):
+        return 'ZZ Motion proof - throwaway'
+
+    def GetCurrentTimeline(self):
+        return self.timeline
+
+    def GetCurrentPage(self):
+        return 'edit'
+
+
+def run_main(argv, timeline):
+    """main(argv) against a fake Resolve: (exit code, stdout, stderr, connect mock)."""
+    out, err = io.StringIO(), io.StringIO()
+    with mock.patch.object(motion_place.resolve_build, 'connect', return_value=FakeResolve(timeline)) as connect, \
+            mock.patch.object(motion_place.resolve_build, 'check_studio'), \
+            contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        code = motion_place.main(argv)
+    return code, out.getvalue(), err.getvalue(), connect
+
+
+class Place(unittest.TestCase):
+    VALUES = {'tool': 'Notion Calendar', 'score': '4', 'reason': 'Fast.', 'label': None}
+
+    def test_places_the_card_on_a_new_track_without_moving_the_clip(self):
+        timeline = FakeTimeline()
+        report = motion_place.place(FakeResolve(timeline), 'verdict-card', self.VALUES, '00:00:01:00', 3)
+        self.assertEqual((report['track'], report['frames']), ('V2', 90))
+        self.assertEqual(timeline.clips[0].GetStart(), 0)
+        self.assertEqual(timeline.deleted, [])
+
+    def test_a_card_that_pushed_clips_along_says_they_are_still_moved(self):
+        timeline = FakeTimeline(push_on_insert=10)
+        with self.assertRaises(motion_place.PlaceError) as caught:
+            motion_place.place(FakeResolve(timeline), 'verdict-card', self.VALUES, '00:00:01:00', 3)
+        self.assertEqual(timeline.deleted, [(('card',), False)])
+        self.assertIn('still moved', str(caught.exception))
+        self.assertIn('undo in Resolve', str(caught.exception))
+
+
+class Main(unittest.TestCase):
+    PLACE = ['--tool', 'Notion Calendar', '--score', '4', '--reason', 'Fast.', '--at', '00:00:01:00']
+
+    def test_frames_that_fail_after_placing_still_say_the_card_is_placed(self):
+        with tempfile.TemporaryDirectory() as folder:
+            code, out, err, _ = run_main(self.PLACE + ['--frames', folder], FakeTimeline(frames_work=False))
+        self.assertNotIn('Not placed', err)
+        self.assertIn('Placed, but the frames could not be saved', err)
+        report = json.loads(out)
+        self.assertEqual(report['track'], 'V2')
+        self.assertIn('render failed', report['frames_error'])
+        self.assertEqual(code, 0)
+
+    def test_a_bad_frames_option_is_refused_before_anything_is_placed(self):
+        # parser.error exits before main connects to Resolve; a late ValueError would mean the card was placed.
+        for option in (['--frames-crop', '0,0.6,x'], ['--frame-offsets', '0,two']):
+            with self.subTest(option=option), self.assertRaises(SystemExit):
+                run_main(self.PLACE + ['--frames', 'out'] + option, FakeTimeline())
+
+    def test_a_score_above_5_is_refused(self):
+        with self.assertRaises(SystemExit):
+            run_main(['--tool', 'X', '--score', '7', '--reason', 'Y', '--at', '00:00:01:00'], FakeTimeline())
 
 
 if __name__ == '__main__':
