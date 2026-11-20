@@ -22,6 +22,7 @@ What it does, in order:
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -126,7 +127,9 @@ def open_test_project(resolve, name, media=None, media_from=0.0):
     project = manager.GetCurrentProject()
     if project is None or project.GetName() != name:
         current = project.GetName() if project else ''
-        if current and not resolve_build.UNTITLED.fullmatch(current) and 'throwaway' not in current.lower():
+        # An Untitled project with a timeline may hold unsaved work, so it counts as real (as in resolve_build).
+        empty_untitled = resolve_build.UNTITLED.fullmatch(current) and not project.GetTimelineCount()
+        if current and not empty_untitled and 'throwaway' not in current.lower():
             raise PlaceError(f'"{current}" is open in Resolve. Close it yourself first; this script never '
                              'switches away from a real project.')
         project = (manager.LoadProject(name) if name in (manager.GetProjectListInCurrentFolder() or []) else None) \
@@ -263,6 +266,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.score is not None and not (args.score.replace('.', '', 1).isdigit() and float(args.score) <= 5):
         parser.error('--score takes a number from 0 to 5, for example 4 or 4.5')
+    if not (math.isfinite(args.seconds) and args.seconds > 0):
+        parser.error('--seconds takes a length above 0, for example 5')
     try:
         offsets = [int(x) for x in args.frame_offsets.split(',') if x.strip()]
         crop = [float(x) for x in args.frames_crop.split(',')] if args.frames_crop else None
