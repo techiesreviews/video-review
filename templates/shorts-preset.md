@@ -35,7 +35,7 @@
 
 - Top 200 px: YouTube's title and status bar. Cards start at y 205.
 - Bottom 480 px (y above 1440 only): channel name, description, subscribe button. Captions sit at y 1190–1304.
-- Right 140 px: like, comment and share buttons. Open point: the v5 caption box is 880 px wide with 100 px each side, so its right edge sits 40 px inside the button column. Check on a phone; if it clashes, use an 800 px box.
+- Right 140 px: like, comment and share buttons. Open point: the v5 caption box is 880 px wide with 100 px each side, so its right edge sits 40 px inside the button column. The hook card (860 px at x 110) ends 30 px inside it too. Check both on a phone; if they clash, use an 800 px caption box and an 820 px card.
 
 ## Ending
 

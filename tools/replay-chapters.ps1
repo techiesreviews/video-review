@@ -20,5 +20,8 @@ $ErrorActionPreference = 'Stop'
 $script = Join-Path $PSScriptRoot 'replay_chapters.py'
 $argsList = @($script, $Words)
 if ($Sections) { $argsList += @('--sections', $Sections) }
+# Windows PowerShell 5.1 turns redirected stderr into a terminating error under 'Stop'; Python writes a
+# warning there for every run-sheet line it cannot find, which is normal.
+$ErrorActionPreference = 'Continue'
 & $Python @argsList
 exit $LASTEXITCODE
