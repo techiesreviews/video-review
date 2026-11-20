@@ -56,7 +56,8 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
     return selection;
   }
   function selectCut(cut){
-    selection={startMs:Math.max(0,cut.atMs-200),endMs:cut.atMs+200,cutId:cut.id,quote:'Join '+cut.id};
+    // atMs is the join's time when it was chosen, kept when the handles change the range, so a redraw can tell a moved join.
+    selection={startMs:Math.max(0,cut.atMs-200),endMs:cut.atMs+200,cutId:cut.id,atMs:cut.atMs,quote:'Join '+cut.id};
     return selection;
   }
   function selectPause(previous,next){

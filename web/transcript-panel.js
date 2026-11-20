@@ -164,7 +164,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     const kept=editing.selection?.cutId;
     if(kept){
       const cut=cuts.find(c=>c.id===kept),node=[...body.querySelectorAll('.transcript-join[data-cut-id]')].find(n=>n.dataset.cutId===kept);
-      if(node&&cut.atMs+200===editing.selection.endMs)barTarget=node;
+      if(node&&cut.atMs===editing.selection.atMs)barTarget=node;
       else{const draft=editing.noteId?'':noteBox.value;clear();carriedNote=draft||carriedNote;notice('That join changed elsewhere, so it is no longer selected.');}
     }
   }
