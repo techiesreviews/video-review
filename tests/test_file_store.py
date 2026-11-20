@@ -167,6 +167,22 @@ class WriteText(unittest.TestCase):
             file_store.write_text(self.path, 'two')
         self.assertEqual(len(set(names)), 2)
 
+    def test_a_new_file_is_never_saved_over_one_that_is_there(self):
+        self.path.write_text('theirs', encoding='utf-8')
+        with self.assertRaises(FileExistsError):
+            file_store.write_new_text(self.path, 'mine')
+        self.assertEqual(self.path.read_text(encoding='utf-8'), 'theirs')
+        self.assertEqual(self.leftovers(), [])
+
+    def test_a_failed_new_file_leaves_nothing_in_the_way_of_a_retry(self):
+        with mock.patch.object(file_store.os, 'fsync', side_effect=OSError(errno.ENOSPC, 'disk full')):
+            with self.assertRaises(OSError):
+                file_store.write_new_text(self.path, 'mine')
+        self.assertFalse(self.path.exists())
+        self.assertEqual(self.leftovers(), [])
+        file_store.write_new_text(self.path, 'mine')
+        self.assertEqual(self.path.read_text(encoding='utf-8'), 'mine')
+
     def test_a_missing_file_reads_as_the_default_and_a_broken_one_raises(self):
         self.assertEqual(file_store.read_json(self.path, []), [])
         self.path.write_text('{nope', encoding='utf-8')
