@@ -46,12 +46,29 @@ export function normalizeTranscript(data, durationMs=Infinity, videoFps=null) {
 }
 
 /** Saves a transcript in the browser's review state. A new source mapping in it moves the video's comments to their
- * places in the new mapping, as saving a transcript in the local app does. */
-export function storeTranscript(state,videoId,data){
+ * places in the new mapping, as saving a transcript in the local app does. editsOnly: a save of its preview cuts only,
+ * written onto the saved transcript, and refused when the saved words are no longer the ones they were made on (a new
+ * render or an import came in). */
+export function storeTranscript(state,videoId,data,{editsOnly=false}={}){
   const video=state.videos.find(v=>v.id===videoId);if(!video)throw Error(RULES.messages.unknownVideo);
+  if(editsOnly){
+    // Changed words are checked first: after a shorter render the old words are longer than the video, and the page
+    // must hear that the words changed, so it loads the newer ones. Only the cut list is written, onto the saved
+    // transcript, so newer joins or labels stay as they are.
+    if(!Array.isArray(data?.words))throw Error('A word-timed transcript is required');
+    const saved=state.transcripts?.[video.id];
+    if(!sameWords(saved,data))throw Error(RULES.messages.transcriptChanged);
+    return state.transcripts[video.id]={...saved,draftEdits:normalizeTranscript(data,video.durationMs,video.fps).draftEdits};
+  }
   const transcript=normalizeTranscript(data,video.durationMs,video.fps);
   if(transcript.keepRanges)applyRender(state,video.id,{keepRanges:transcript.keepRanges});
   (state.transcripts||(state.transcripts={}))[video.id]=transcript;return transcript;
+}
+/** True when the saved transcript has the words (ids, text and times) and the source mapping transcript was made on,
+ *  as review_store.same_words checks it. */
+export function sameWords(saved,transcript){
+  const words=t=>Array.isArray(t?.words)?JSON.stringify([t.words.map(w=>[w?.id,w?.text,w?.startMs,w?.endMs]),t.keepRanges??null]):null;
+  return words(saved)!==null&&words(saved)===words(transcript);
 }
 
 // Removed source ranges use the recording clock; preview cuts use the review clock.

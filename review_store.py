@@ -223,8 +223,39 @@ def add_local_video(directory,path,title=''):
 def same_file(manifest,media):
     return next((x for x in manifest if Path(x['path']).resolve()==media),None)
 
-def save_transcript(directory,video_id,data):
+def save_transcript(directory,video_id,data,edits_only=False):
+    """Saves a word-timed transcript for a video. edits_only: a save of its preview cuts only, as the page sends after a
+    Delete, Undo or Restore. Only its cut list is written, onto the saved transcript, and it is refused when the saved
+    words are no longer the ones those cuts were made on (a new render or an import came in meanwhile), so the page never
+    writes its old copy over newer words, joins or labels."""
     video=find_video(directory,video_id)
+    path=transcript_path(directory,video_id);path.parent.mkdir(parents=True,exist_ok=True)
+    with locked(path):
+        if edits_only:
+            # Changed words are checked first: after a shorter render the old words are longer than the video, and the
+            # page must hear that the words changed, so it loads the newer ones.
+            if not isinstance(data,dict) or not isinstance(data.get('words'),list):
+                raise ValueError('A word-timed transcript is required')
+            saved=read(path,None)
+            if not same_words(saved,data):raise ValueError(MESSAGES['transcriptChanged'])
+            result={**saved,'draftEdits':_clean_transcript(video,data)['draftEdits']}
+        else:result=_clean_transcript(video,data)
+        write(path,result)
+    # An edits-only save changes no render, as storeTranscript in web/transcript-core.js returns before applyRender.
+    if not edits_only and result.get('keepRanges') is not None and result['keepRanges']!=video.get('keepRanges'):
+        update_render(directory,video_id,None,result['keepRanges'])
+    return result
+
+def same_words(saved,transcript):
+    """True when the saved transcript has the words (ids, text and times) and the source mapping transcript was made on,
+    as web/transcript-core.js sameWords checks it."""
+    def words(t):
+        if not isinstance(t,dict) or not isinstance(t.get('words'),list):return None
+        return [[w.get('id'),w.get('text'),w.get('startMs'),w.get('endMs')] if isinstance(w,dict) else None for w in t['words']],t.get('keepRanges')
+    return words(saved) is not None and words(saved)==words(transcript)
+
+def _clean_transcript(video,data):
+    """The transcript as it is saved, checked against the video; a ValueError says what is wrong."""
     if not isinstance(data,dict) or not isinstance(data.get('words'),list) or not 0<len(data['words'])<=50000:
         raise ValueError('A word-timed transcript is required')
     previous=-1;ids=set();words=[]
@@ -281,10 +312,6 @@ def save_transcript(directory,video_id,data):
         if not isinstance(ranges,list) or not ranges or not all(isinstance(r,list) and len(r)==2 and all(isinstance(x,(int,float)) and not isinstance(x,bool) and math.isfinite(x) for x in r) and 0<=r[0]<r[1] for r in ranges):raise ValueError('Invalid transcript source mapping')
         if abs(sum(b-a for a,b in ranges)/fps*1000-video['durationMs'])>1000/fps:raise ValueError('The source mapping belongs to a different cut')
         result['keepRanges']=ranges;result['fps']=fps
-    path=transcript_path(directory,video_id);path.parent.mkdir(parents=True,exist_ok=True)
-    with locked(path):write(path,result)
-    if result.get('keepRanges') is not None and result['keepRanges']!=video.get('keepRanges'):
-        update_render(directory,video_id,None,result['keepRanges'])
     return result
 
 def apply(directory,cmd):

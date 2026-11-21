@@ -84,6 +84,43 @@ class ReviewServerTests:
         else:raise AssertionError('A transcript from a longer cut was accepted')
         with self.request('/api/transcript/example-v1') as response:assert json.load(response)==saved
 
+    def test_the_page_s_edits_only_save_is_refused_once_the_words_changed(self):
+        headers={'Content-Type':'application/json','Origin':self.origin}
+        words=[{'id':'W1','text':'Finish','startMs':100,'endMs':500}]
+        with self.request('/api/transcript/example-v1',{'words':words,'revision':'r1'},headers):pass
+        cut={'id':'c','startMs':100,'endMs':500,'wordIds':['W1'],'quote':'Finish'}
+        with self.request('/api/transcript/example-v1',{'words':words,'revision':'r1','draftEdits':[cut],'editsOnly':True},headers) as response:
+            assert json.load(response)['draftEdits'][0]['id']=='c'
+        newer=[{'id':'W1','text':'Finish','startMs':120,'endMs':500}]
+        with self.request('/api/transcript/example-v1',{'words':newer,'revision':'r1'},headers):pass
+        try:self.request('/api/transcript/example-v1',{'words':words,'revision':'r1','draftEdits':[cut],'editsOnly':True},headers)
+        except HTTPError as error:assert error.code==400 and 'transcript changed' in json.load(error)['error']
+        else:raise AssertionError('An edits-only save wrote old words over new ones')
+        with self.request('/api/transcript/example-v1') as response:assert json.load(response)['words'][0]['startMs']==120
+
+    def test_a_body_that_is_not_an_object_gets_a_plain_400(self):
+        headers={'Content-Type':'application/json','Origin':self.origin}
+        for path in ('/api/transcript/example-v1','/api/comments','/api/library','/api/view','/api/scenes/star'):
+            for body in (None,[]):
+                origin={'Origin':server.FILE_PAGE_ORIGIN} if path=='/api/scenes/star' else {}
+                req=Request(self.origin+path,data=json.dumps(body).encode(),headers={**headers,**origin})
+                try:urlopen(req,timeout=3)
+                except HTTPError as error:assert error.code==400 and 'JSON object' in json.load(error)['error'],(path,body)
+                else:raise AssertionError(f'{path} took {body!r}')
+
+    def test_a_full_transcript_read_back_by_the_page_takes_an_edits_only_save(self):
+        # Original words with an empty label, joins and a source mapping, as the page reads them and sends them back.
+        headers={'Content-Type':'application/json','Origin':self.origin}
+        words=[{'id':'W1','text':'Finish','startMs':100,'endMs':500}]
+        full={'words':words,'revision':None,'cuts':[{'id':'J1','atMs':700}],'keepRanges':[[0,1800]],'fps':30,
+              'original':{'durationMs':65000,'label':'','words':words}}
+        with self.request('/api/transcript/example-v1',full,headers):pass
+        with self.request('/api/transcript/example-v1') as response:page=json.load(response)
+        page['label']='Word-timed transcript';page['revision']='imported';page['original']['label']='Original recording'
+        cut={'id':'c','startMs':100,'endMs':500,'wordIds':['W1'],'quote':'Finish'}
+        with self.request('/api/transcript/example-v1',{**page,'draftEdits':[cut],'editsOnly':True},headers) as response:
+            assert json.load(response)['draftEdits'][0]['id']=='c'
+
     def test_agent_status_is_true_only_while_the_agent_is_alive(self):
         seen=self.data/'agent-seen.json'
         seen.unlink(missing_ok=True)

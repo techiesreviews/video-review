@@ -94,7 +94,7 @@ class Handler(BaseHTTPRequestHandler):
             key=route[7:];item=next((x for x in store.videos(DATA) if x['id']==key),None)
             if not item:return self.send_error(404)
             path=Path(item['path'])
-        elif route in ['/','/index.html','/app.js','/backend.js','/review-core.js','/transcript-core.js','/transcript-panel.js','/edit-bar-core.js','/cut-core.js','/cut-playback.js','/join-fade.js','/waveform-core.js','/waveform-panel.js','/library-panel.js','/time-format.js','/cut-preferences.json','/review-rules.json','/style.css']:
+        elif route in ['/','/index.html','/app.js','/backend.js','/review-core.js','/transcript-core.js','/transcript-panel.js','/transcript-editing.js','/edit-bar-core.js','/cut-core.js','/cut-playback.js','/join-fade.js','/waveform-core.js','/waveform-panel.js','/library-panel.js','/time-format.js','/cut-preferences.json','/review-rules.json','/style.css']:
             path=WEB/('index.html' if route=='/' else route[1:])
         else:return self.send_error(404)
         if not path.is_file():return self.send_error(404)
@@ -153,6 +153,8 @@ class Handler(BaseHTTPRequestHandler):
             limit=8*1024*1024 if self.path.startswith('/api/transcript/') else 65536
             if size<=0 or size>limit:raise ValueError('Invalid request size')
             cmd=json.loads(self.rfile.read(size))
+            # Every request below reads fields from the body, so null or a list gets a plain 400, not a dropped connection.
+            if not isinstance(cmd,dict):raise ValueError('The request must be a JSON object')
             if self.path=='/api/scenes/star':return self.star(cmd)
             if self.path=='/api/library':
                 if cmd.get('action')=='remove':store.archive_video(DATA,cmd['videoId'])
@@ -163,7 +165,7 @@ class Handler(BaseHTTPRequestHandler):
                 else:raise ValueError('Unknown library action')
                 return self.send_json({'ok':True})
             if self.path.startswith('/api/transcript/'):
-                return self.send_json(store.save_transcript(DATA,self.path[len('/api/transcript/'):],cmd))
+                return self.send_json(store.save_transcript(DATA,self.path[len('/api/transcript/'):],cmd,edits_only=cmd.get('editsOnly') is True))
             if self.path=='/api/view':store.set_view(DATA,cmd);return self.send_json({'ok':True})
             # The browser always speaks as the reviewer; only the MCP server writes as the AI.
             if cmd.get('action') in ['add','reply']:cmd['author']=store.RULES['pageAuthor']
