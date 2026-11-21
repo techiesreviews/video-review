@@ -376,6 +376,10 @@ def main(argv=None):
     parser.add_argument('--frame-offsets', default='0,2,4,6,8,30', help='Which frames from the card start')
     parser.add_argument('--frames-crop', help='Crop the saved frames: x,y,width,height as fractions, e.g. 0,0.6,0.6,0.4')
     args = parser.parse_args(argv)
+    # The card gets the text exactly as it was measured: whole letters, so a decomposed Korean name arrives joined.
+    for option in ('tool', 'score', 'reason', 'label'):
+        if getattr(args, option) is not None:
+            setattr(args, option, unicodedata.normalize('NFC', getattr(args, option)))
     if args.score is not None and not (args.score.replace('.', '', 1).isdigit() and float(args.score) <= 5):
         parser.error('--score takes a number from 0 to 5, for example 4 or 4.5')
     too_wide = text_too_wide(args.template, {'tool': args.tool, 'score': args.score, 'reason': args.reason,

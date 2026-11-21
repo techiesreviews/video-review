@@ -532,6 +532,12 @@ class Main(unittest.TestCase):
         code, out, err, _ = run_main(['--tool', '네이버 클로바노트', '--score', '4', '--reason', 'Fast.',
                                       '--at', '00:00:01:00'], FakeTimeline())
         self.assertEqual(code, 0, err)
+        # The card gets the joined syllables it was measured with, not the decomposed letter parts.
+        timeline = FakeTimeline()
+        code, out, err, _ = run_main(['--tool', unicodedata.normalize('NFD', '네이버 클로바노트'), '--at', '00:00:01:00'],
+                                     timeline)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(timeline.clips[-1].macro.inputs['ToolName'], '네이버 클로바노트')
 
     def test_a_length_that_is_not_above_zero_is_refused_before_resolve_is_touched(self):
         for seconds in ('0', '-3', 'nan', 'inf'):
