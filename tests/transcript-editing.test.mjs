@@ -125,6 +125,26 @@ test('a join is selected around its cut point; a note on it goes to the agent wi
   assert.equal(state.comments[0].editRequest.startFrame,144,'the shared rules turned the time into a frame');
 });
 
+test('Enter on a kept join that moved elsewhere sends nothing while Undo or Restore is still closing the cut note',async()=>{
+  for(const action of ['undo','restore']){
+    const {editing,state,calls,hold}=setup();
+    editing.selectWords(1);await editing.remove();
+    const [cut]=editing.edits();
+    editing.selectCut(TRANSCRIPT.cuts[0]);
+    // Another editor moves J1 from 5 s to 6 s; the store keeps that join when this page saves its cut list.
+    state.transcripts.v={...state.transcripts.v,cuts:[{id:'J1',atMs:6000}]};
+    const closing=held();hold.cancel=closing;
+    const running=action==='undo'?editing.undo({keep:true}):editing.restore([cut.id],{keep:true});
+    while(!calls.cancels.length)await new Promise(next=>setImmediate(next));
+    assert.equal(editing.transcript.cuts[0].atMs,6000,`${action}: the saved transcript with the moved join is loaded`);
+    const requests=calls.requests.length;
+    const sent=await editing.send('Check this join');
+    assert.equal(sent,null,`${action}: Enter does not send`);
+    assert.equal(calls.requests.length,requests,`${action}: no request uses the join's old time`);
+    closing.resolve();await running;
+  }
+});
+
 test('a pause selection cuts only the gap, inside its edges',async()=>{
   const {editing}=setup();
   editing.selectPause(TRANSCRIPT.words[3],TRANSCRIPT.words[4]);
