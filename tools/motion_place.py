@@ -69,6 +69,8 @@ TYPOGRAPHIC_WIDTHS = {
     'Bold': {'‘': 444, '’': 444, '“': 911, '”': 911, '–': 1024, '—': 2048, '…': 1751},
 }
 TITLE_NAMES = {'verdict-card': 'Verdict Card'}
+# The frame the card's entrance fade ends on (its last keyframe in the .setting); a shorter card is never fully seen.
+ENTRANCE_FRAMES = {'verdict-card': 8}
 # The MacroOperator's name in the .setting: the tool that carries the published controls.
 MACROS = {'verdict-card': 'VerdictCard'}
 TITLE_FOLDER = 'Techies'
@@ -96,11 +98,14 @@ def text_width(text, style, size):
     any other character outside the tables counts as a full em, wider than every letter in them."""
     widths, typographic = FONT_WIDTHS[style], TYPOGRAPHIC_WIDTHS[style]
     total = 0
-    # NFD only splits off accents; NFKD would also turn a full-width letter into its narrow one.
-    for char in unicodedata.normalize('NFD', text):
-        if unicodedata.combining(char):
+    # Each letter as typed counts once, measured by the first part of its NFD form: that strips an accent, while a
+    # Korean syllable (which NFD splits into 2 or 3 letter parts) stays one full em. NFKD would also turn a
+    # full-width letter into its narrow one.
+    for char in unicodedata.normalize('NFC', text):
+        base = unicodedata.normalize('NFD', char)[0]
+        if unicodedata.combining(base):
             continue
-        total += widths[ord(char) - 32] if 32 <= ord(char) < 127 else typographic.get(char, 2048)
+        total += widths[ord(base) - 32] if 32 <= ord(base) < 127 else typographic.get(base, 2048)
     return total / 2048 * size
 
 
@@ -114,7 +119,9 @@ def text_too_wide(template, values):
     room = fit['room'] * character - (text_width(values.get('score') or score[0], *score[1:]) - text_width(*score))
     problems = []
     for option, (style, size, spacing) in fit['fields'].items():
-        text, kept, width = values.get(option) or '', 0, 0
+        # Whole letters, as text_width counts them: a Korean name pasted in decomposed form (a macOS file name, say)
+        # is joined back into syllables, so the letters to cut are syllables too.
+        text, kept, width = unicodedata.normalize('NFC', values.get(option) or ''), 0, 0
         # Each line has a fixed place on the card, so a pasted line break would run into the line below or above.
         if any(unicodedata.category(char) in ('Cc', 'Zl', 'Zp') for char in text):
             problems.append(f'--{option} must stay on one line: remove its line breaks, tabs or other control characters')
@@ -258,6 +265,11 @@ def place(resolve, template, values, at, seconds, project_name=None):
     if start < timeline.GetStartFrame():
         raise PlaceError(f'{at} is before the timeline starts ({timeline.GetStartTimecode()})')
     frames = max(1, round(seconds * fps))
+    shortest = ENTRANCE_FRAMES[template] + 1
+    if frames < shortest:
+        raise PlaceError(f'{seconds:g} s is {frames} frame{"s" if frames > 1 else ""} at {fps:g} fps, too short to show '
+                         f'the card: it fades in over its first {shortest - 1} frames. Ask for at least '
+                         f'{math.ceil(round(shortest / fps * 100, 6)) / 100:g} s; nothing was changed')
     before = snapshot(timeline)
 
     if resolve.GetCurrentPage() not in ('edit', 'cut'):
@@ -364,6 +376,10 @@ def main(argv=None):
     parser.add_argument('--frame-offsets', default='0,2,4,6,8,30', help='Which frames from the card start')
     parser.add_argument('--frames-crop', help='Crop the saved frames: x,y,width,height as fractions, e.g. 0,0.6,0.6,0.4')
     args = parser.parse_args(argv)
+    # The card gets the text exactly as it was measured: whole letters, so a decomposed Korean name arrives joined.
+    for option in ('tool', 'score', 'reason', 'label'):
+        if getattr(args, option) is not None:
+            setattr(args, option, unicodedata.normalize('NFC', getattr(args, option)))
     if args.score is not None and not (args.score.replace('.', '', 1).isdigit() and float(args.score) <= 5):
         parser.error('--score takes a number from 0 to 5, for example 4 or 4.5')
     too_wide = text_too_wide(args.template, {'tool': args.tool, 'score': args.score, 'reason': args.reason,

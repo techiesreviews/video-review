@@ -211,10 +211,15 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
   }
 
   /** Enter in the note box: updates the comment it was opened from, or sends a new request to the agent. current: the
-   *  same selection is still chosen, so the box may be emptied. Null while another note is sending. */
+   *  same selection is still chosen, so the box may be emptied. Null while another note is sending, or for a new note
+   *  on a join that moved or went since it was chosen. */
   async function send(text){
     const said=String(text).trim();
     if(!said||!selection||sending)return null;
+    // A join that moved or went since it was chosen (an Undo or Restore loaded another editor's change, and may still
+    // be closing its cut's note): a new note must not ask about its old time. The panel closes the bar when it draws
+    // the joins again, and keeps the typed note for the next selection.
+    if(!note.id&&selection.cutId!=null&&transcript.cuts?.find(c=>c.id===selection.cutId)?.atMs!==selection.atMs)return null;
     sending=true;cancelNoteTimer?.();cancelNoteTimer=null;pendingNote=null;
     const chosen=selection;
     try{

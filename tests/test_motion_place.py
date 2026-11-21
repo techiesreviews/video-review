@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import sys
 import tempfile
+import unicodedata
 import unittest
 from unittest import mock
 
@@ -108,6 +109,10 @@ class Template(unittest.TestCase):
         keys = [int(frame) for frame in re.findall(r'\[(\d+)\] = \{', TEMPLATE)]
         self.assertTrue(keys)
         self.assertLessEqual(max(keys) / 24, 0.4)
+
+    def test_the_script_knows_how_long_the_entrance_takes(self):
+        keys = [int(frame) for frame in re.findall(r'\[(\d+)\] = \{', TEMPLATE)]
+        self.assertEqual(motion_place.ENTRANCE_FRAMES['verdict-card'], max(keys))
 
     def test_the_entrance_never_overshoots(self):
         # No bounce: every handle stays at or below the end value of its curve. Both curves rise today; a falling
@@ -369,6 +374,30 @@ class Place(unittest.TestCase):
         self.assertIn('Resolve kept', str(caught.exception))
         self.assertNotIn('still moved', str(caught.exception))
 
+    def test_a_card_too_short_to_finish_its_entrance_is_refused_before_it_is_inserted(self):
+        # The card fades in over its first 8 frames, so at 30 fps 0.03 s is one fully transparent frame.
+        for seconds in (0.03, 8 / 30):
+            with self.subTest(seconds=seconds):
+                timeline = FakeTimeline()
+                with self.assertRaises(motion_place.PlaceError) as caught:
+                    motion_place.place(FakeResolve(timeline), 'verdict-card', self.VALUES, '00:00:01:00', seconds)
+                self.assertIn('too short to show the card', str(caught.exception))
+                self.assertIn('at least 0.3 s', str(caught.exception))
+                self.assertEqual(len(timeline.clips), 1, 'nothing was inserted')
+        report = motion_place.place(FakeResolve(FakeTimeline()), 'verdict-card', self.VALUES, '00:00:01:00', 0.3)
+        self.assertEqual(report['frames'], 9, 'the last frame shows the card fully faded in')
+        # The length the refusal suggests is always long enough, at every common frame rate.
+        for rate, drop in (('23.976', '0'), ('24', '0'), ('25', '0'), ('29.97', '1'), ('50', '0'), ('59.94', '1'), ('60', '0')):
+            with self.subTest(fps=rate):
+                timeline = FakeTimeline()
+                timeline.settings.update(timelineFrameRate=rate, timelineDropFrameTimecode=drop)
+                at = '00:00:01;00' if drop == '1' else '00:00:01:00'
+                with self.assertRaises(motion_place.PlaceError) as caught:
+                    motion_place.place(FakeResolve(timeline), 'verdict-card', self.VALUES, at, 0.03)
+                suggested = float(re.search(r'at least ([\d.]+) s', str(caught.exception)).group(1))
+                report = motion_place.place(FakeResolve(timeline), 'verdict-card', self.VALUES, at, suggested)
+                self.assertGreaterEqual(report['frames'], 9)
+
 
 class Main(unittest.TestCase):
     PLACE = ['--tool', 'Notion Calendar', '--score', '4', '--reason', 'Fast.', '--at', '00:00:01:00']
@@ -488,6 +517,27 @@ class Main(unittest.TestCase):
         self.assertEqual(len(motion_place.text_too_wide('verdict-card', {'reason': 'ｉ' * 60})), 1)
         self.assertEqual(motion_place.text_width('…', 'Regular', 1), 1593 / 2048)
         self.assertLess(motion_place.text_width('’', 'Regular', 1), motion_place.text_width('m', 'Regular', 1) / 2)
+
+    def test_a_korean_or_other_non_latin_letter_counts_once_as_a_full_em(self):
+        # NFD splits a Korean syllable into 2 or 3 letter parts; the syllable is still one letter on the card.
+        self.assertEqual(motion_place.text_width('각', 'Bold', 1), 1)
+        self.assertEqual(motion_place.text_width('한', 'Regular', 1), 1)
+        self.assertEqual(motion_place.text_width('Café', 'Bold', 1), motion_place.text_width('Cafe', 'Bold', 1))
+        for tool in ('네이버 클로바노트', 'Телемост', 'ノーション'):
+            with self.subTest(tool=tool):
+                self.assertEqual(motion_place.text_too_wide('verdict-card', {'tool': tool}), [])
+        # The same name pasted in decomposed form (as a macOS file name has it) is measured as whole syllables too.
+        self.assertEqual(motion_place.text_too_wide('verdict-card', {'tool': unicodedata.normalize('NFD', '네이버 클로바노트')}), [])
+        self.assertIn('by about 2 letters', motion_place.text_too_wide('verdict-card', {'tool': unicodedata.normalize('NFD', '가' * 14)})[0])
+        code, out, err, _ = run_main(['--tool', '네이버 클로바노트', '--score', '4', '--reason', 'Fast.',
+                                      '--at', '00:00:01:00'], FakeTimeline())
+        self.assertEqual(code, 0, err)
+        # The card gets the joined syllables it was measured with, not the decomposed letter parts.
+        timeline = FakeTimeline()
+        code, out, err, _ = run_main(['--tool', unicodedata.normalize('NFD', '네이버 클로바노트'), '--at', '00:00:01:00'],
+                                     timeline)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(timeline.clips[-1].macro.inputs['ToolName'], '네이버 클로바노트')
 
     def test_a_length_that_is_not_above_zero_is_refused_before_resolve_is_touched(self):
         for seconds in ('0', '-3', 'nan', 'inf'):
