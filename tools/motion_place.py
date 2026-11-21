@@ -119,7 +119,9 @@ def text_too_wide(template, values):
     room = fit['room'] * character - (text_width(values.get('score') or score[0], *score[1:]) - text_width(*score))
     problems = []
     for option, (style, size, spacing) in fit['fields'].items():
-        text, kept, width = values.get(option) or '', 0, 0
+        # Whole letters, as text_width counts them: a Korean name pasted in decomposed form (a macOS file name, say)
+        # is joined back into syllables, so the letters to cut are syllables too.
+        text, kept, width = unicodedata.normalize('NFC', values.get(option) or ''), 0, 0
         # Each line has a fixed place on the card, so a pasted line break would run into the line below or above.
         if any(unicodedata.category(char) in ('Cc', 'Zl', 'Zp') for char in text):
             problems.append(f'--{option} must stay on one line: remove its line breaks, tabs or other control characters')

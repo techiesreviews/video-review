@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import sys
 import tempfile
+import unicodedata
 import unittest
 from unittest import mock
 
@@ -385,6 +386,17 @@ class Place(unittest.TestCase):
                 self.assertEqual(len(timeline.clips), 1, 'nothing was inserted')
         report = motion_place.place(FakeResolve(FakeTimeline()), 'verdict-card', self.VALUES, '00:00:01:00', 0.3)
         self.assertEqual(report['frames'], 9, 'the last frame shows the card fully faded in')
+        # The length the refusal suggests is always long enough, at every common frame rate.
+        for rate, drop in (('23.976', '0'), ('24', '0'), ('25', '0'), ('29.97', '1'), ('50', '0'), ('59.94', '1'), ('60', '0')):
+            with self.subTest(fps=rate):
+                timeline = FakeTimeline()
+                timeline.settings.update(timelineFrameRate=rate, timelineDropFrameTimecode=drop)
+                at = '00:00:01;00' if drop == '1' else '00:00:01:00'
+                with self.assertRaises(motion_place.PlaceError) as caught:
+                    motion_place.place(FakeResolve(timeline), 'verdict-card', self.VALUES, at, 0.03)
+                suggested = float(re.search(r'at least ([\d.]+) s', str(caught.exception)).group(1))
+                report = motion_place.place(FakeResolve(timeline), 'verdict-card', self.VALUES, at, suggested)
+                self.assertGreaterEqual(report['frames'], 9)
 
 
 class Main(unittest.TestCase):
@@ -514,6 +526,9 @@ class Main(unittest.TestCase):
         for tool in ('네이버 클로바노트', 'Телемост', 'ノーション'):
             with self.subTest(tool=tool):
                 self.assertEqual(motion_place.text_too_wide('verdict-card', {'tool': tool}), [])
+        # The same name pasted in decomposed form (as a macOS file name has it) is measured as whole syllables too.
+        self.assertEqual(motion_place.text_too_wide('verdict-card', {'tool': unicodedata.normalize('NFD', '네이버 클로바노트')}), [])
+        self.assertIn('by about 2 letters', motion_place.text_too_wide('verdict-card', {'tool': unicodedata.normalize('NFD', '가' * 14)})[0])
         code, out, err, _ = run_main(['--tool', '네이버 클로바노트', '--score', '4', '--reason', 'Fast.',
                                       '--at', '00:00:01:00'], FakeTimeline())
         self.assertEqual(code, 0, err)
