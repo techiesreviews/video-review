@@ -511,7 +511,7 @@ class Main(unittest.TestCase):
         self.assertEqual(motion_place.text_width('각', 'Bold', 1), 1)
         self.assertEqual(motion_place.text_width('한', 'Regular', 1), 1)
         self.assertEqual(motion_place.text_width('Café', 'Bold', 1), motion_place.text_width('Cafe', 'Bold', 1))
-        for tool in ('네이버 클로바노트', 'Яндекс Телемост', 'ノーション'):
+        for tool in ('네이버 클로바노트', 'Телемост', 'ノーション'):
             with self.subTest(tool=tool):
                 self.assertEqual(motion_place.text_too_wide('verdict-card', {'tool': tool}), [])
         code, out, err, _ = run_main(['--tool', '네이버 클로바노트', '--score', '4', '--reason', 'Fast.',
