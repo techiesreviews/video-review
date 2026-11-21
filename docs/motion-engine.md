@@ -79,7 +79,7 @@ Two things to know:
   General, set to Local) is a Studio setting. The free version only runs scripts from its own Workspace >
   Scripts menu. Lex has Studio, and the setting is already on.
 - **A card is 5 seconds at most when placed by script.** That is Resolve's standard length for titles. Shorter
-  works. For longer, drag the card's end in Resolve, or raise the standard length in Resolve's preferences.
+  works, down to the minimum below. For longer, drag the card's end in Resolve, or raise the standard length in Resolve's preferences.
 - **A card is at least 9 frames**, so it finishes its entrance and is seen fully at least once (0.3 seconds at
   30 fps). A shorter `--seconds` is refused before anything is placed.
 - **Resolve's own "insert title" command pushes later clips along the track.** The script gets around this: it

@@ -211,7 +211,8 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
   }
 
   /** Enter in the note box: updates the comment it was opened from, or sends a new request to the agent. current: the
-   *  same selection is still chosen, so the box may be emptied. Null while another note is sending. */
+   *  same selection is still chosen, so the box may be emptied. Null while another note is sending, or for a new note
+   *  on a join that moved or went since it was chosen. */
   async function send(text){
     const said=String(text).trim();
     if(!said||!selection||sending)return null;
