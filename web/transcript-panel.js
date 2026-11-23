@@ -361,6 +361,12 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   // render() leaves the cut controls alone when there is no transcript, so they are hidden first; drawing words shows them again.
   function show(transcript,v){$('#cutPreviewBar').hidden=true;waveform.setCuts([]);editing.load(transcript,v);$('#transcriptSummary').textContent=transcript?`${transcript.words.length} words · ${transcript.label} · timings approximate`:'Use your existing HappyScribe word timings';render();}
   const panel={
+    async refreshAgentStatus(){
+      const message=$('#barStatus').textContent;
+      if(![sentLine(null),sentLine(false),sentLine(true)].includes(message))return;
+      const status=await agentConnected();
+      if($('#barStatus').textContent===message&&sentLine(status)!==message)barStatus(sentLine(status));
+    },
     async load(v,backend){
       const token=++loadToken;if(v?.id!==videoId)carriedNote='';backendRef=backend;videoRef=v;videoId=v?.id;notice();editing.load(null,v);pendingFocus=null;waveform.load(v);$('#cutPreviewBar').hidden=true;$('#transcriptSummary').textContent=v?'Loading transcript…':'Open a video to read its transcript.';render();
       if(!v)return;

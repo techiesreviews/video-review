@@ -19,15 +19,16 @@ function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className
 function download(name,data){const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=el('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 
 let previewStop=null;
-const transcriptPanel=createTranscriptPanel({media:video,seek:ms=>{if(video.readyState>=1)seek(ms);else pendingSeek=ms;},pause:()=>video.pause(),playContext:(start,end)=>{seek(start);previewStop=end;video.play().catch(error=>showToastError(error.message));},showError:showToastError,cutsOn:()=>cutsOn,notify:text=>toast(text),togglePlay:()=>togglePlay(),agentConnected:async()=>{try{return !!(await backend.agentConnected?.());}catch{return false;}},
-  request:async selection=>{if(!active)return;video.pause();const videoId=active.id,createdAt=new Date().toISOString();setSaveState('Saving…');const list=await backend.apply({action:'add',videoId,startMs:selection.startMs,endMs:selection.endMs,text:selection.text,editRequest:selection.editRequest,createdAt});setNotes(list);if(filter!=='open')setFilter('open');setSaveState(savedLabel());return list.findLast(n=>n.videoId===videoId&&n.createdAt===createdAt&&n.text===selection.text);},
+const transcriptPanel=createTranscriptPanel({media:video,seek:ms=>{if(video.readyState>=1)seek(ms);else pendingSeek=ms;},pause:()=>video.pause(),playContext:(start,end)=>{seek(start);previewStop=end;video.play().catch(error=>showToastError(error.message));},showError:showToastError,cutsOn:()=>cutsOn,notify:text=>toast(text),togglePlay:()=>togglePlay(),agentConnected:async()=>{try{return await backend.agentConnected?.()??null;}catch{return null;}},
+  request:async selection=>{if(!active)return;video.pause();const videoId=active.id,createdAt=new Date().toISOString();setSaveState('Saving…');try{const list=await backend.apply({action:'add',videoId,startMs:selection.startMs,endMs:selection.endMs,text:selection.text,editRequest:selection.editRequest,createdAt});setNotes(list);if(filter!=='open')setFilter('open');setSaveState(savedLabel());return list.findLast(n=>n.videoId===videoId&&n.createdAt===createdAt&&n.text===selection.text);}catch(error){setSaveState('Not saved');throw error;}},
   updateRequest:async(id,text)=>{const list=await backend.apply({action:'update',id,text});setNotes(list);setSaveState(savedLabel());return list.find(n=>n.id===id);},
   cancelRequest:async id=>{setNotes(await backend.apply({action:'reply',id,author:'you',text:'Undid this preview removal; keep the passage.',status:'done'}));}});
 const libraryPanel=createLibraryPanel({getBackend:()=>backend,showError:showToastError,
   open:async(id,atMs)=>{await selectVideo(id);if(atMs!=null){if(video.readyState>=1)seek(atMs);else pendingSeek=atMs;}},
   add:chooseVideoForBackend,
-  remove:async(id,title)=>{if(!confirm(`Remove “${title}” from the library? The recording and review notes are kept in Removed videos.`))return false;await backend.removeVideo(id);await loadNotes();toast('Removed from the library.',async()=>{await backend.restoreVideo(id);await loadNotes();selectVideo(id);});return true;},
-  restore:async id=>{await backend.restoreVideo(id);await loadNotes();selectVideo(id);toast('Video and review notes restored.');}});
+  remove:async(id,title)=>{if(!confirm(`Remove “${title}” from the library? The recording and review notes are kept in Removed videos.`))return false;await backend.removeVideo(id);await loadNotes();toast('Removed from the library.',()=>restoreLibraryVideo(id));return true;},
+  restore:async id=>{await restoreLibraryVideo(id);toast('Video and review notes restored.');}});
+async function restoreLibraryVideo(id){await backend.restoreVideo(id);await loadNotes();if(!videos.some(v=>v.id===id))throw Error('Video restored, but review updates are unavailable.');await selectVideo(id);}
 
 // The cuts switch: on plays the removals skipped, off plays the original. The clocks always read the review file's own time.
 let cutsOn=true;try{cutsOn=localStorage.getItem('techies-review-cuts')!=='off';}catch{}
@@ -114,7 +115,31 @@ async function reply(n,text){try{setNotes(await backend.apply({action:'reply',id
 function aiActivity(before,after){const old=new Map(before.map(n=>[n.id,n]));let replies=0,resolved=0,added=0,first=null;for(const n of after){const prev=old.get(n.id);if(!prev){if(n.author==='ai'){added++;first??=n;}continue;}const fresh=thread(n).filter(r=>r.author==='ai').length-thread(prev).filter(r=>r.author==='ai').length;if(fresh>0){replies++;first??=n;}if(prev.status==='open'&&n.status==='done')resolved++;}
   if(!first)return;const count=n=>n+(n===1?' comment':' comments'),parts=[];if(resolved)parts.push('resolved '+count(resolved));if(replies>resolved)parts.push('replied on '+count(replies-resolved));if(added)parts.push('added '+count(added));toast(`AI editor ${parts.join(' and ')}.`,()=>focusNote(first),'Show');}
 // Picks up changes made elsewhere (the agent, another tab) without disturbing an edit or reply in progress.
-async function loadNotes(){const list=await backend.refresh();await localViewRequest();syncVideos();await reloadIfChanged();if(JSON.stringify(list)!==lastSnapshot&&!editing){const before=notes;setNotes(list);if(before.length||lastSnapshot)aiActivity(before,list);}setSaveState(savedLabel());}
+let notesRefresh=null,agentRefresh=null,reviewStale=false,requestStale=false,viewStale=false;
+function renderSyncState(){for(const [id,text] of [['#reviewSyncState',reviewStale||requestStale?'Review updates stale':''],['#viewSyncState',viewStale?'Agent view not synced':'']]){const node=$(id);if(node.textContent!==text)node.textContent=text;}}
+function loadNotes(){
+  if(!notesRefresh)return startNotesRefresh();
+  const current=notesRefresh;
+  if(!current.next)current.next=current.promise.catch(()=>{}).then(startNotesRefresh);
+  return current.next;
+}
+function startNotesRefresh(){
+  const run={next:null};notesRefresh=run;
+  run.promise=refreshNotes().finally(()=>{if(!run.next&&notesRefresh===run)notesRefresh=null;});
+  return run.promise;
+}
+async function refreshNotes(){
+  if(viewStale)reportView();
+  try{
+    const list=await backend.refresh();syncVideos();await reloadIfChanged();
+    if(JSON.stringify(list)!==lastSnapshot&&!editing){const before=notes;setNotes(list);if(before.length||lastSnapshot)aiActivity(before,list);}
+    reviewStale=false;
+  }catch{reviewStale=true;}
+  // A failed open-video poll must not hide comments that refreshed successfully.
+  try{await localViewRequest();requestStale=false;}catch{requestStale=true;}
+  renderSyncState();
+  if(!agentRefresh)agentRefresh=transcriptPanel.refreshAgentStatus().catch(()=>{}).finally(()=>{agentRefresh=null;});
+}
 
 // Offline app: the local MCP server leaves open-video requests for the page to pick up.
 async function localViewRequest(){if(!backend.viewRequest)return;const r=await backend.viewRequest();if(!r?.id||r.id===localStorage.getItem('techies-review-view-request'))return;localStorage.setItem('techies-review-view-request',r.id);if(Date.now()-Date.parse(r.createdAt)<120000)await openFromAgent(r);}
@@ -237,7 +262,7 @@ setInterval(()=>document.querySelectorAll('.comment').forEach(c=>{const n=notes.
 
 async function init(){
   try{
-    backend=await openBackend({onExternalChange:(origin,cmd)=>{if(cmd?.action==='set-transcript'&&cmd.videoId===active?.id)transcriptPanel.load(active,backend);loadNotes().catch(()=>{});},onAgentStatus:renderAgent,onOpenVideo:openFromAgent,onMediaNotice:message=>toast(message)});
+    backend=await openBackend({onExternalChange:(origin,cmd)=>{if(cmd?.action==='set-transcript'&&cmd.videoId===active?.id)transcriptPanel.load(active,backend);loadNotes().catch(()=>{});},onViewStatus:ok=>{viewStale=!ok;renderSyncState();},onAgentStatus:renderAgent,onOpenVideo:openFromAgent,onMediaNotice:message=>toast(message)});
     document.body.dataset.mode=backend.mode;
     if(backend.mode==='browser'){$('#addVideo').hidden=false;$('#agentBtn').hidden=false;}else document.querySelectorAll('[data-browser]').forEach(b=>b.hidden=true);
     await backend.load();syncVideos();notes=backend.comments();lastSnapshot=JSON.stringify(notes);

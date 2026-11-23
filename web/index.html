@@ -44,6 +44,7 @@
       <span id="transcriptSummary" class="sr-only" role="status"></span>
       <div class="transcript-tools"><label class="transcript-search"><input id="transcriptSearch" type="search" aria-label="Find in transcript" placeholder="Find a word or phrase…"></label><label class="follow-words"><input id="followTranscript" type="checkbox" checked>Follow playback</label><label class="pause-threshold">Pauses ≥ <select id="pauseThreshold" aria-label="Show pauses longer than"><option value="250">0.25 s</option><option value="450" selected>0.45 s</option><option value="650">0.65 s</option><option value="1000">1 s</option></select></label><button id="importTranscript" class="ghost small" type="button">Import transcript</button></div>
       <div id="transcriptText" class="transcript-text" aria-label="Timed transcript" tabindex="0"><p class="transcript-empty">Your transcript will appear here. Import the existing word-timed JSON; no new transcription is needed.</p></div>
+      <p id="viewSyncState" class="transcript-notice" role="status"></p>
       <p id="transcriptNotice" class="transcript-notice" role="status"></p>
       <div id="cutPreviewBar" class="cut-preview-bar" hidden><span id="cutPreviewStatus" role="status"></span><button id="undoTranscriptCut" type="button">Undo cut</button><button id="exportTranscriptCut" type="button">Export cut list</button></div>
       <div id="transcriptSelection" class="transcript-selection edit-bar" role="group" aria-label="Edit the selected words" hidden>
@@ -80,6 +81,7 @@
       <p id="error" role="alert"></p>
     </form>
     <div class="list-head"><h2><span id="count">0</span> <span id="countLabel">Comments</span></h2><div class="filters"><button type="button" data-filter="open" class="active">Open</button><button type="button" data-filter="done">Resolved</button></div></div>
+    <p id="reviewSyncState" class="transcript-notice" role="status"></p>
     <div id="comments" class="comments"></div>
   </aside>
 </main>
