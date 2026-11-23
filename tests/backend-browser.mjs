@@ -63,7 +63,8 @@ try{
       if(failure==='404'||failure==='browser'){
         await page.waitForFunction(()=>document.body.dataset.mode==='browser');
         if(populated)await page.waitForFunction(()=>document.querySelector('#videoTitle').textContent==='Browser fixture');
-        assert.equal(await page.locator('#addVideo').isVisible(),true);
+        assert.equal(await page.locator('#addVideo').getAttribute('hidden'),null);
+        assert.equal(await page.locator('#addVideo').isVisible(),width===1440,'the existing phone layout hides header ghost buttons');
         assert.notEqual(await page.locator('#gateTitle').innerText(),'Review library unavailable');
         assert.deepEqual(await browserState(),{videos:populated?[{id:'browser-only',title:'Browser fixture',label:'Browser cut',durationMs:3000,fps:30}]:[],comments:[],transcripts:{}});
         console.log(`PASS ${width} ${colorScheme} ${failure} browser=${populated?'existing':'empty'}: intended browser fallback retained`);
