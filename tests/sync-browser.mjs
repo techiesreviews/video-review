@@ -70,7 +70,8 @@ try{
           await page.waitForFunction(()=>document.querySelector('#toastText').textContent==='Removed from the library.',{},{timeout:1500});
           assert.equal(await page.locator('#toastAction').isVisible(),true);
           await page.waitForFunction(()=>!document.querySelector('.library-remove'));
-          failed=null;await page.locator('#toastAction').click();await page.waitForFunction(()=>document.querySelector('#videoTitle').textContent==='Review fixture');
+          const restored=new Promise(resolve=>{restoreDone=resolve;});failed=null;await page.locator('#toastAction').click();await restored;
+          await page.waitForFunction(()=>!document.querySelector('#reviewSyncState').textContent&&document.querySelector('#videoTitle').textContent==='Review fixture');
           assert.deepEqual(errors,[]);console.log(`PASS ${width} ${colorScheme} remove-failed: removal keeps Undo despite stale refresh`);await context.close();continue;
         }
         await page.waitForFunction(()=>document.querySelector('#videoTitle').textContent==='Video Review');
