@@ -21,12 +21,14 @@ let browser;
 try{
   let ready=false;for(let i=0;i<80;i++){try{if((await fetch(base+'/api/local')).ok){ready=true;break;}}catch{}await new Promise(r=>setTimeout(r,100));}assert.ok(ready);
   browser=await chromium.launch({headless:true});if(shots)await mkdir(shots,{recursive:true});
-  const reviewCases=process.env.SYNC_REVIEW?[process.env.SYNC_REVIEW]:before?[null]:[null,'save','restore'];
+  const focused=['save','restore','restore-failed','agent'];
+  if(process.env.SYNC_REVIEW&&!focused.includes(process.env.SYNC_REVIEW))throw Error('Unknown SYNC_REVIEW case');
+  const reviewCases=process.env.SYNC_REVIEW?[process.env.SYNC_REVIEW]:before?[null]:[null,...focused];
   for(const width of [1440,390])for(const colorScheme of ['light','dark'])for(const reviewCase of reviewCases){
     await writeFile(join(temp,'comments.json'),JSON.stringify({comments:[original]}));
     const context=await browser.newContext({viewport:{width,height:width===390?844:960},colorScheme});
     const page=await context.newPage(),errors=[];page.on('pageerror',error=>errors.push(error.message));
-    let failed=null,newNote=false,failView=false,agent='absent',writes=0,holdVideos=false,releaseVideos,heldVideos,restoreDone;
+    let failed=null,newNote=false,failView=false,agent='absent',writes=0,holdVideos=false,releaseVideos,heldVideos,restoreDone,holdAgent=false,releaseAgent,agentHeld;
     await page.route('**/api/**',async route=>{
       const path=new URL(route.request().url()).pathname;
       if(path==='/api/videos'&&holdVideos){holdVideos=false;const response=await route.fetch();heldVideos?.();await new Promise(resolve=>{releaseVideos=resolve;});return route.fulfill({response});}
@@ -34,7 +36,10 @@ try{
         const response=await route.fetch();await route.fulfill({response});restoreDone?.();return;
       }
       if(path==='/api/view'&&route.request().method()==='POST'&&failView)return route.fulfill({status:503,json:{error:'Unavailable'}});
-      if(path==='/api/agent')return route.fulfill({status:agent==='unknown'?503:200,json:agent==='unknown'?{error:'Unavailable'}:{connected:agent==='connected'}});
+      if(path==='/api/agent'){
+        if(holdAgent){agentHeld?.();await new Promise(resolve=>{releaseAgent=resolve;});}
+        return route.fulfill({status:agent==='unknown'?503:200,json:agent==='unknown'?{error:'Unavailable'}:{connected:agent==='connected'}}).catch(()=>{});
+      }
       if(path===failed)return route.fulfill({status:503,json:{error:'Unavailable'}});
       if(path==='/api/comments'){
         if(route.request().method()==='POST'){writes++;return route.continue();}
@@ -50,19 +55,34 @@ try{
       if(reviewCase==='save'){
         failed='/api/comments';await page.locator('.transcript-word').click();await page.locator('#transcriptNote').fill('Refused request');await page.locator('#transcriptNote').press('Enter');
         await page.waitForFunction(()=>document.querySelector('#saveState').textContent==='Not saved',{},{timeout:1500});
+      }else if(reviewCase==='agent'){
+        agent='connected';await page.locator('.transcript-word').click();await page.locator('#transcriptNote').fill('Saved request');await page.locator('#transcriptNote').press('Enter');
+        await page.waitForFunction(()=>document.querySelector('#barStatus').textContent.includes('Sent to your agent'));
+        const held=new Promise(resolve=>{agentHeld=resolve;});holdAgent=true;await visibility();await held;
+        newNote=true;
+        await page.getByText('Fresh agent reply',{exact:true}).waitFor({timeout:6500});
+        holdAgent=false;releaseAgent();
       }else{
         page.on('dialog',dialog=>dialog.accept());
         await page.locator('#libraryBtn').click();await page.getByRole('button',{name:'Remove Review fixture from library',exact:true}).click();
         await page.waitForFunction(()=>document.querySelector('#videoTitle').textContent==='Video Review');
         if(!await page.locator('#libraryMenu').isVisible())await page.locator('#libraryBtn').click();
         await page.locator('#libraryRemoved').click();await page.locator('.library-restore-label').waitFor();
+        if(reviewCase==='restore-failed'){
+          failed='/api/videos';await page.locator('.library-open').click();
+          await page.waitForFunction(()=>document.querySelector('#toast.error #toastText')?.textContent==='Unavailable',{},{timeout:1500});
+          assert.deepEqual(errors,[],'a failed refresh must not select a missing video');
+          failed=null;await visibility();await page.waitForFunction(()=>document.querySelector('#videoTitle').textContent==='Review fixture');
+          console.log(`PASS ${width} ${colorScheme} restore-failed: refresh error retained; recovery opens restored video`);await context.close();continue;
+        }
         const held=new Promise(resolve=>{heldVideos=resolve;});holdVideos=true;await visibility();await held;
         const restored=new Promise(resolve=>{restoreDone=resolve;});await page.locator('.library-open').click();await restored;
+        // Let the restore callback join the held refresh before releasing its stale response.
         await page.waitForTimeout(50);releaseVideos();
         await page.waitForFunction(()=>document.querySelector('#videoTitle').textContent==='Review fixture',{},{timeout:1500});
         assert.equal(await page.locator('#toast.error').count(),0,'restoring during a held refresh must not select an absent video');
       }
-      assert.deepEqual(errors,[]);console.log(`PASS ${width} ${colorScheme} ${reviewCase}: ${reviewCase==='save'?'failed request says Not saved':'restore waits for a fresh queued refresh'}`);await context.close();continue;
+      assert.deepEqual(errors,[]);console.log(`PASS ${width} ${colorScheme} ${reviewCase}: ${reviewCase==='save'?'failed request says Not saved':reviewCase==='agent'?'held agent status does not block fresh replies':'restore waits for a fresh queued refresh'}`);await context.close();continue;
     }
     // Break both sync channels, capture what the reviewer sees, then recover.
     failed='/api/comments';failView=true;
@@ -111,5 +131,5 @@ try{
     await page.getByRole('button',{name:'Cancel',exact:true}).click();await visibility();await page.getByText('Fresh agent reply',{exact:true}).waitFor();
     assert.deepEqual(errors,[]);await context.close();
   }
-  console.log(`RESULT: ok sync-browser ${before?'before screenshots':process.env.SYNC_REVIEW?'four '+process.env.SYNC_REVIEW+' regression cases':'24 endpoint failure/recovery cases; eight save/restore regressions; view and agent recovery; playback, note saving and drafts retained in four layouts'}`);
+  console.log(`RESULT: ok sync-browser ${before?'before screenshots':process.env.SYNC_REVIEW?'four '+process.env.SYNC_REVIEW+' regression cases':'24 endpoint failure/recovery cases; 16 save/restore/held-status regressions; view and agent recovery; playback, note saving and drafts retained in four layouts'}`);
 }finally{await browser?.close();server.kill();await new Promise(resolve=>server.once('exit',resolve));await rm(temp,{recursive:true,force:true});}

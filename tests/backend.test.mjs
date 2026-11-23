@@ -86,6 +86,22 @@ test('agent status failure is unknown, then recovers without writing a request',
   assert.equal(writes,0,'rechecking status never resends a saved request');
 });
 
+test('an unresponsive agent status request is aborted and can recover',async()=>{
+  let expire,aborted=false;
+  globalThis.setTimeout=(fn,delay)=>{assert.equal(delay,3000);expire=fn;return 1;};
+  globalThis.clearTimeout=()=>{};
+  globalThis.fetch=async(route,options)=>{
+    if(route==='/api/local')return response(200,{local:true});
+    return new Promise((resolve,reject)=>options?.signal?.addEventListener('abort',()=>{aborted=true;reject(Error('Aborted'));}));
+  };
+  try{
+    const backend=await openBackend({}),check=backend.agentConnected();
+    assert.equal(typeof expire,'function','status queries need a bounded deadline');
+    expire();assert.equal(await check,null);assert.equal(aborted,true);
+    globalThis.fetch=async()=>response(200,{connected:true});assert.equal(await backend.agentConnected(),true);
+  }finally{globalThis.setTimeout=saved.setTimeout;globalThis.clearTimeout=saved.clearTimeout;}
+});
+
 test('view debounce reports failure and acknowledges only the newest view after recovery',async()=>{
   const timers=new Map(),states=[],writes=[];let counter=0,fail=true,finish;
   globalThis.setTimeout=(fn,delay)=>{assert.equal(delay,400);timers.set(++counter,fn);return counter;};

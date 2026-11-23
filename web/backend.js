@@ -5,7 +5,7 @@
 import { applyChange, applyRender, checkVideo, describe, timecode, RULES } from './review-core.js';
 import { normalizeTranscript, searchLibrary, storeTranscript } from './transcript-core.js';
 
-async function api(route,body){const r=await fetch(route,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{cache:'no-store'});const result=await r.json();if(!r.ok)throw Error(result.error||'Could not save.');return result;}
+async function api(route,body,signal){const r=await fetch(route,{...(body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{cache:'no-store'}),...(signal?{signal}:{})});const result=await r.json();if(!r.ok)throw Error(result.error||'Could not save.');return result;}
 
 export async function openBackend(events){
   let probe;
@@ -34,7 +34,7 @@ function localBackend(events){
   }
   return {
     mode:'local',
-    async agentConnected(){try{const {connected}=await api('/api/agent');return typeof connected==='boolean'?connected:null;}catch{return null;}},
+    async agentConnected(){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),3000);try{const {connected}=await api('/api/agent',undefined,controller.signal);return typeof connected==='boolean'?connected:null;}catch{return null;}finally{clearTimeout(timer);}},
     async load(){videos=await api('/api/videos');comments=(await api('/api/comments')).comments;},
     videos:()=>videos, comments:()=>comments,
     async apply(cmd){comments=(await api('/api/comments',cmd)).comments;return comments;},
