@@ -65,6 +65,7 @@ test('after a delete the selection moves to the next kept word, else the one bef
   assert.equal(nextWordAfterDelete(words,['c','d','e'],2,2),1,'skips words that were removed earlier, then steps back');
 });
 test('the status line is honest about the agent',()=>{
+  assert.match(sentLine(null),/Agent status unavailable/);assert.match(sentLine(null),/saved/);
   assert.match(sentLine(false),/No agent connected/);assert.match(sentLine(false),/saved/);
   assert.match(sentLine(true),/Sent to your agent/);
 });

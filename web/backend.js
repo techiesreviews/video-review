@@ -19,21 +19,29 @@ export async function openBackend(events){
   }catch{
     const error=Error('Could not check the review library.');error.code='LOCAL_UNAVAILABLE';throw error;
   }
-  return probe.local?localBackend():browserBackend(events);
+  return probe.local?localBackend(events):browserBackend(events);
 }
 
-function localBackend(){
+function localBackend(events){
   let videos=[],comments=[],viewTimer=null;const urls=new Map();
+  let latestView,viewVersion=0,viewReady=false,viewSending=false;
+  async function sendView(){
+    if(viewSending||!viewReady)return;
+    viewSending=true;viewReady=false;const version=viewVersion,view=latestView;
+    try{await api('/api/view',view);if(version===viewVersion)events.onViewStatus?.(true);}
+    catch{if(version===viewVersion)events.onViewStatus?.(false);}
+    finally{viewSending=false;if(viewReady)await sendView();}
+  }
   return {
     mode:'local',
-    async agentConnected(){try{return !!(await api('/api/agent')).connected;}catch{return false;}},
+    async agentConnected(){try{const {connected}=await api('/api/agent');return typeof connected==='boolean'?connected:null;}catch{return null;}},
     async load(){videos=await api('/api/videos');comments=(await api('/api/comments')).comments;},
     videos:()=>videos, comments:()=>comments,
     async apply(cmd){comments=(await api('/api/comments',cmd)).comments;return comments;},
     async refresh(){[videos,{comments}]=await Promise.all([api('/api/videos'),api('/api/comments')]);return comments;},
     // fileVersion changes when the file is replaced; while it is missing (mid-render) keep the last URL.
     async media(v){const current=videos.find(x=>x.id===v.id)||v;if(current.fileVersion||!urls.has(v.id))urls.set(v.id,`/media/${encodeURIComponent(v.id)}?v=${current.fileVersion||''}`);return {url:urls.get(v.id)};},
-    setView(view){clearTimeout(viewTimer);viewTimer=setTimeout(()=>api('/api/view',view).catch(()=>{}),400);},
+    setView(view){latestView=view;viewVersion++;viewReady=false;clearTimeout(viewTimer);viewTimer=setTimeout(()=>{viewReady=true;return sendView();},400);},
     async viewRequest(){return api('/api/view-request');},
     async searchVideos(query){return api('/api/library/search?q='+encodeURIComponent(query));},
     async removedVideos(){return api('/api/library/removed');},

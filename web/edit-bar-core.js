@@ -88,6 +88,7 @@ export function broughtBackLine({noteResolved=false,selectedAgain=false}={}){
 
 /** The one plain line shown after a request is saved. */
 export function sentLine(agentConnected){
+  if(agentConnected==null)return 'Agent status unavailable: your note is saved.';
   return agentConnected?'Sent to your agent. It shows in the comment list.':'No agent connected: your note is saved and waits for it.';
 }
 
