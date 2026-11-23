@@ -114,7 +114,20 @@ async function reply(n,text){try{setNotes(await backend.apply({action:'reply',id
 function aiActivity(before,after){const old=new Map(before.map(n=>[n.id,n]));let replies=0,resolved=0,added=0,first=null;for(const n of after){const prev=old.get(n.id);if(!prev){if(n.author==='ai'){added++;first??=n;}continue;}const fresh=thread(n).filter(r=>r.author==='ai').length-thread(prev).filter(r=>r.author==='ai').length;if(fresh>0){replies++;first??=n;}if(prev.status==='open'&&n.status==='done')resolved++;}
   if(!first)return;const count=n=>n+(n===1?' comment':' comments'),parts=[];if(resolved)parts.push('resolved '+count(resolved));if(replies>resolved)parts.push('replied on '+count(replies-resolved));if(added)parts.push('added '+count(added));toast(`AI editor ${parts.join(' and ')}.`,()=>focusNote(first),'Show');}
 // Picks up changes made elsewhere (the agent, another tab) without disturbing an edit or reply in progress.
-async function loadNotes(){const list=await backend.refresh();await localViewRequest();syncVideos();await reloadIfChanged();if(JSON.stringify(list)!==lastSnapshot&&!editing){const before=notes;setNotes(list);if(before.length||lastSnapshot)aiActivity(before,list);}setSaveState(savedLabel());}
+let notesRefresh=null,reviewStale=false,requestStale=false,viewStale=false;
+function renderSyncState(){$('#reviewSyncState').textContent=reviewStale||requestStale?'Review updates stale':'';$('#viewSyncState').textContent=viewStale?'Agent view not synced':'';}
+function loadNotes(){if(notesRefresh)return notesRefresh;notesRefresh=refreshNotes().finally(()=>{notesRefresh=null;});return notesRefresh;}
+async function refreshNotes(){
+  if(viewStale)reportView();
+  try{
+    const list=await backend.refresh();syncVideos();await reloadIfChanged();
+    if(JSON.stringify(list)!==lastSnapshot&&!editing){const before=notes;setNotes(list);if(before.length||lastSnapshot)aiActivity(before,list);}
+    reviewStale=false;
+  }catch{reviewStale=true;}
+  // A failed open-video poll must not hide comments that refreshed successfully.
+  try{await localViewRequest();requestStale=false;}catch{requestStale=true;}
+  renderSyncState();await transcriptPanel.refreshAgentStatus();
+}
 
 // Offline app: the local MCP server leaves open-video requests for the page to pick up.
 async function localViewRequest(){if(!backend.viewRequest)return;const r=await backend.viewRequest();if(!r?.id||r.id===localStorage.getItem('techies-review-view-request'))return;localStorage.setItem('techies-review-view-request',r.id);if(Date.now()-Date.parse(r.createdAt)<120000)await openFromAgent(r);}
@@ -237,7 +250,7 @@ setInterval(()=>document.querySelectorAll('.comment').forEach(c=>{const n=notes.
 
 async function init(){
   try{
-    backend=await openBackend({onExternalChange:(origin,cmd)=>{if(cmd?.action==='set-transcript'&&cmd.videoId===active?.id)transcriptPanel.load(active,backend);loadNotes().catch(()=>{});},onAgentStatus:renderAgent,onOpenVideo:openFromAgent,onMediaNotice:message=>toast(message)});
+    backend=await openBackend({onExternalChange:(origin,cmd)=>{if(cmd?.action==='set-transcript'&&cmd.videoId===active?.id)transcriptPanel.load(active,backend);loadNotes().catch(()=>{});},onViewStatus:ok=>{viewStale=!ok;renderSyncState();},onAgentStatus:renderAgent,onOpenVideo:openFromAgent,onMediaNotice:message=>toast(message)});
     document.body.dataset.mode=backend.mode;
     if(backend.mode==='browser'){$('#addVideo').hidden=false;$('#agentBtn').hidden=false;}else document.querySelectorAll('[data-browser]').forEach(b=>b.hidden=true);
     await backend.load();syncVideos();notes=backend.comments();lastSnapshot=JSON.stringify(notes);
