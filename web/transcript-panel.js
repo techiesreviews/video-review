@@ -365,7 +365,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
       const message=$('#barStatus').textContent;
       if(![sentLine(null),sentLine(false),sentLine(true)].includes(message))return;
       const status=await agentConnected();
-      if($('#barStatus').textContent===message)barStatus(sentLine(status));
+      if($('#barStatus').textContent===message&&sentLine(status)!==message)barStatus(sentLine(status));
     },
     async load(v,backend){
       const token=++loadToken;if(v?.id!==videoId)carriedNote='';backendRef=backend;videoRef=v;videoId=v?.id;notice();editing.load(null,v);pendingFocus=null;waveform.load(v);$('#cutPreviewBar').hidden=true;$('#transcriptSummary').textContent=v?'Loading transcript…':'Open a video to read its transcript.';render();

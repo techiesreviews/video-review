@@ -20,7 +20,7 @@ function download(name,data){const blob=new Blob([JSON.stringify(data,null,2)],{
 
 let previewStop=null;
 const transcriptPanel=createTranscriptPanel({media:video,seek:ms=>{if(video.readyState>=1)seek(ms);else pendingSeek=ms;},pause:()=>video.pause(),playContext:(start,end)=>{seek(start);previewStop=end;video.play().catch(error=>showToastError(error.message));},showError:showToastError,cutsOn:()=>cutsOn,notify:text=>toast(text),togglePlay:()=>togglePlay(),agentConnected:async()=>{try{return await backend.agentConnected?.()??null;}catch{return null;}},
-  request:async selection=>{if(!active)return;video.pause();const videoId=active.id,createdAt=new Date().toISOString();setSaveState('Saving…');const list=await backend.apply({action:'add',videoId,startMs:selection.startMs,endMs:selection.endMs,text:selection.text,editRequest:selection.editRequest,createdAt});setNotes(list);if(filter!=='open')setFilter('open');setSaveState(savedLabel());return list.findLast(n=>n.videoId===videoId&&n.createdAt===createdAt&&n.text===selection.text);},
+  request:async selection=>{if(!active)return;video.pause();const videoId=active.id,createdAt=new Date().toISOString();setSaveState('Saving…');try{const list=await backend.apply({action:'add',videoId,startMs:selection.startMs,endMs:selection.endMs,text:selection.text,editRequest:selection.editRequest,createdAt});setNotes(list);if(filter!=='open')setFilter('open');setSaveState(savedLabel());return list.findLast(n=>n.videoId===videoId&&n.createdAt===createdAt&&n.text===selection.text);}catch(error){setSaveState('Not saved');throw error;}},
   updateRequest:async(id,text)=>{const list=await backend.apply({action:'update',id,text});setNotes(list);setSaveState(savedLabel());return list.find(n=>n.id===id);},
   cancelRequest:async id=>{setNotes(await backend.apply({action:'reply',id,author:'you',text:'Undid this preview removal; keep the passage.',status:'done'}));}});
 const libraryPanel=createLibraryPanel({getBackend:()=>backend,showError:showToastError,
@@ -114,9 +114,13 @@ async function reply(n,text){try{setNotes(await backend.apply({action:'reply',id
 function aiActivity(before,after){const old=new Map(before.map(n=>[n.id,n]));let replies=0,resolved=0,added=0,first=null;for(const n of after){const prev=old.get(n.id);if(!prev){if(n.author==='ai'){added++;first??=n;}continue;}const fresh=thread(n).filter(r=>r.author==='ai').length-thread(prev).filter(r=>r.author==='ai').length;if(fresh>0){replies++;first??=n;}if(prev.status==='open'&&n.status==='done')resolved++;}
   if(!first)return;const count=n=>n+(n===1?' comment':' comments'),parts=[];if(resolved)parts.push('resolved '+count(resolved));if(replies>resolved)parts.push('replied on '+count(replies-resolved));if(added)parts.push('added '+count(added));toast(`AI editor ${parts.join(' and ')}.`,()=>focusNote(first),'Show');}
 // Picks up changes made elsewhere (the agent, another tab) without disturbing an edit or reply in progress.
-let notesRefresh=null,reviewStale=false,requestStale=false,viewStale=false;
-function renderSyncState(){$('#reviewSyncState').textContent=reviewStale||requestStale?'Review updates stale':'';$('#viewSyncState').textContent=viewStale?'Agent view not synced':'';}
-function loadNotes(){if(notesRefresh)return notesRefresh;notesRefresh=refreshNotes().finally(()=>{notesRefresh=null;});return notesRefresh;}
+let notesRefresh=null,refreshAgain=false,reviewStale=false,requestStale=false,viewStale=false;
+function renderSyncState(){for(const [id,text] of [['#reviewSyncState',reviewStale||requestStale?'Review updates stale':''],['#viewSyncState',viewStale?'Agent view not synced':'']]){const node=$(id);if(node.textContent!==text)node.textContent=text;}}
+function loadNotes(){
+  if(notesRefresh){refreshAgain=true;return notesRefresh;}
+  notesRefresh=(async()=>{do{refreshAgain=false;await refreshNotes();}while(refreshAgain);})().finally(()=>{notesRefresh=null;});
+  return notesRefresh;
+}
 async function refreshNotes(){
   if(viewStale)reportView();
   try{
