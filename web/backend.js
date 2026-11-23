@@ -8,8 +8,18 @@ import { normalizeTranscript, searchLibrary, storeTranscript } from './transcrip
 async function api(route,body){const r=await fetch(route,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{cache:'no-store'});const result=await r.json();if(!r.ok)throw Error(result.error||'Could not save.');return result;}
 
 export async function openBackend(events){
-  try{const r=await fetch('/api/local',{cache:'no-store'});if(r.ok&&(await r.json()).local)return localBackend();}catch{}
-  return browserBackend(events);
+  let probe;
+  try{
+    const r=await fetch('/api/local',{cache:'no-store'});
+    // Static hosts have no local endpoint; the hosted Worker explicitly returns local:false.
+    if(r.status===404)return browserBackend(events);
+    if(!r.ok)throw Error('Local probe failed');
+    probe=await r.json();
+    if(typeof probe?.local!=='boolean')throw Error('Invalid local probe');
+  }catch{
+    const error=Error('Could not reach the local service.');error.code='LOCAL_UNAVAILABLE';throw error;
+  }
+  return probe.local?localBackend():browserBackend(events);
 }
 
 function localBackend(){

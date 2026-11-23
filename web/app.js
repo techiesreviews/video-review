@@ -244,6 +244,12 @@ async function init(){
     if(!videos.length)showEmpty();
     else{const saved=localStorage.getItem('techies-review-video');selectVideo(videos.some(v=>v.id===saved)?saved:videos[0].id);}
     setSaveState(savedLabel());
-  }catch(e){showError(e.message);$('#loading').textContent='Could not open the review library.';}
+  }catch(e){
+    if(e.code==='LOCAL_UNAVAILABLE'){
+      $('#libraryBtn').disabled=true;
+      document.querySelectorAll('[data-browser]').forEach(b=>b.hidden=true);
+      gate('Local library unavailable',e.message,'Retry',()=>location.reload());
+    }else{showError(e.message);$('#loading').textContent='Could not open the review library.';}
+  }
 }
 init();
