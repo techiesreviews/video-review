@@ -26,8 +26,9 @@ const transcriptPanel=createTranscriptPanel({media:video,seek:ms=>{if(video.read
 const libraryPanel=createLibraryPanel({getBackend:()=>backend,showError:showToastError,
   open:async(id,atMs)=>{await selectVideo(id);if(atMs!=null){if(video.readyState>=1)seek(atMs);else pendingSeek=atMs;}},
   add:chooseVideoForBackend,
-  remove:async(id,title)=>{if(!confirm(`Remove “${title}” from the library? The recording and review notes are kept in Removed videos.`))return false;await backend.removeVideo(id);await loadNotes();toast('Removed from the library.',async()=>{await backend.restoreVideo(id);await loadNotes();selectVideo(id);});return true;},
-  restore:async id=>{await backend.restoreVideo(id);await loadNotes();selectVideo(id);toast('Video and review notes restored.');}});
+  remove:async(id,title)=>{if(!confirm(`Remove “${title}” from the library? The recording and review notes are kept in Removed videos.`))return false;await backend.removeVideo(id);await loadNotes();toast('Removed from the library.',()=>restoreLibraryVideo(id));return true;},
+  restore:async id=>{await restoreLibraryVideo(id);toast('Video and review notes restored.');}});
+async function restoreLibraryVideo(id){await backend.restoreVideo(id);await loadNotes();if(!videos.some(v=>v.id===id))throw Error('Video restored, but review updates are unavailable.');await selectVideo(id);}
 
 // The cuts switch: on plays the removals skipped, off plays the original. The clocks always read the review file's own time.
 let cutsOn=true;try{cutsOn=localStorage.getItem('techies-review-cuts')!=='off';}catch{}
@@ -129,17 +130,15 @@ function startNotesRefresh(){
 }
 async function refreshNotes(){
   if(viewStale)reportView();
-  let refreshError=null;
   try{
     const list=await backend.refresh();syncVideos();await reloadIfChanged();
     if(JSON.stringify(list)!==lastSnapshot&&!editing){const before=notes;setNotes(list);if(before.length||lastSnapshot)aiActivity(before,list);}
     reviewStale=false;
-  }catch(error){reviewStale=true;refreshError=error;}
+  }catch{reviewStale=true;}
   // A failed open-video poll must not hide comments that refreshed successfully.
-  try{await localViewRequest();requestStale=false;}catch(error){requestStale=true;refreshError??=error;}
+  try{await localViewRequest();requestStale=false;}catch{requestStale=true;}
   renderSyncState();
   if(!agentRefresh)agentRefresh=transcriptPanel.refreshAgentStatus().catch(()=>{}).finally(()=>{agentRefresh=null;});
-  if(refreshError)throw refreshError;
 }
 
 // Offline app: the local MCP server leaves open-video requests for the page to pick up.

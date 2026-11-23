@@ -21,7 +21,7 @@ let browser;
 try{
   let ready=false;for(let i=0;i<80;i++){try{if((await fetch(base+'/api/local')).ok){ready=true;break;}}catch{}await new Promise(r=>setTimeout(r,100));}assert.ok(ready);
   browser=await chromium.launch({headless:true});if(shots)await mkdir(shots,{recursive:true});
-  const focused=['save','restore','restore-failed','agent'];
+  const focused=['save','restore','restore-failed','agent','restore-poll','remove-failed'];
   if(process.env.SYNC_REVIEW&&!focused.includes(process.env.SYNC_REVIEW))throw Error('Unknown SYNC_REVIEW case');
   const reviewCases=process.env.SYNC_REVIEW?[process.env.SYNC_REVIEW]:before?[null]:[null,...focused];
   for(const width of [1440,390])for(const colorScheme of ['light','dark'])for(const reviewCase of reviewCases){
@@ -64,13 +64,27 @@ try{
         holdAgent=false;releaseAgent();
       }else{
         page.on('dialog',dialog=>dialog.accept());
+        if(reviewCase==='remove-failed')failed='/api/videos';
         await page.locator('#libraryBtn').click();await page.getByRole('button',{name:'Remove Review fixture from library',exact:true}).click();
+        if(reviewCase==='remove-failed'){
+          await page.waitForFunction(()=>document.querySelector('#toastText').textContent==='Removed from the library.',{},{timeout:1500});
+          assert.equal(await page.locator('#toastAction').isVisible(),true);
+          await page.waitForFunction(()=>!document.querySelector('.library-remove'));
+          failed=null;await page.locator('#toastAction').click();await page.waitForFunction(()=>document.querySelector('#videoTitle').textContent==='Review fixture');
+          assert.deepEqual(errors,[]);console.log(`PASS ${width} ${colorScheme} remove-failed: removal keeps Undo despite stale refresh`);await context.close();continue;
+        }
         await page.waitForFunction(()=>document.querySelector('#videoTitle').textContent==='Video Review');
         if(!await page.locator('#libraryMenu').isVisible())await page.locator('#libraryBtn').click();
         await page.locator('#libraryRemoved').click();await page.locator('.library-restore-label').waitFor();
+        if(reviewCase==='restore-poll'){
+          failed='/api/view-request';await page.locator('.library-open').click();
+          await page.waitForFunction(()=>document.querySelector('#toastText').textContent==='Video and review notes restored.',{},{timeout:1500});
+          assert.equal(await page.locator('#toast.error').count(),0);assert.equal(await page.locator('#videoTitle').innerText(),'Review fixture');
+          assert.deepEqual(errors,[]);console.log(`PASS ${width} ${colorScheme} restore-poll: failed view polling does not fail a restored video`);await context.close();continue;
+        }
         if(reviewCase==='restore-failed'){
           failed='/api/videos';await page.locator('.library-open').click();
-          await page.waitForFunction(()=>document.querySelector('#toast.error #toastText')?.textContent==='Unavailable',{},{timeout:1500});
+          await page.waitForFunction(()=>document.querySelector('#toast.error #toastText')?.textContent==='Video restored, but review updates are unavailable.',{},{timeout:1500});
           assert.deepEqual(errors,[],'a failed refresh must not select a missing video');
           failed=null;await visibility();await page.waitForFunction(()=>document.querySelector('#videoTitle').textContent==='Review fixture');
           console.log(`PASS ${width} ${colorScheme} restore-failed: refresh error retained; recovery opens restored video`);await context.close();continue;
@@ -131,5 +145,5 @@ try{
     await page.getByRole('button',{name:'Cancel',exact:true}).click();await visibility();await page.getByText('Fresh agent reply',{exact:true}).waitFor();
     assert.deepEqual(errors,[]);await context.close();
   }
-  console.log(`RESULT: ok sync-browser ${before?'before screenshots':process.env.SYNC_REVIEW?'four '+process.env.SYNC_REVIEW+' regression cases':'24 endpoint failure/recovery cases; 16 save/restore/held-status regressions; view and agent recovery; playback, note saving and drafts retained in four layouts'}`);
+  console.log(`RESULT: ok sync-browser ${before?'before screenshots':process.env.SYNC_REVIEW?'four '+process.env.SYNC_REVIEW+' regression cases':'24 endpoint failure/recovery cases; 24 save/library/held-status regressions; view and agent recovery; playback, note saving and drafts retained in four layouts'}`);
 }finally{await browser?.close();server.kill();await new Promise(resolve=>server.once('exit',resolve));await rm(temp,{recursive:true,force:true});}
