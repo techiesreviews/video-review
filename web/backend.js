@@ -17,7 +17,7 @@ export async function openBackend(events){
     probe=await r.json();
     if(typeof probe?.local!=='boolean')throw Error('Invalid local probe');
   }catch{
-    const error=Error('Could not reach the local service.');error.code='LOCAL_UNAVAILABLE';throw error;
+    const error=Error('Could not check the review library.');error.code='LOCAL_UNAVAILABLE';throw error;
   }
   return probe.local?localBackend():browserBackend(events);
 }

@@ -28,7 +28,7 @@ try{
   browser=await chromium.launch({headless:true});
   if(shots)await mkdir(shots,{recursive:true});
   for(const width of [1440,390])for(const colorScheme of ['light','dark']){
-    for(const populated of [false,true])for(const failure of ['network','503','json']){
+    for(const populated of [false,true])for(const failure of ['network','503','json','404','browser']){
       const context=await browser.newContext({viewport:{width,height:width===390?844:960},colorScheme});
       await context.addInitScript(({populated})=>{
         // A made-up browser library at this origin; never connect a relay or an agent.
@@ -50,7 +50,7 @@ try{
       await page.route('**/api/local',route=>{
         if(recovered)return route.continue();
         if(failure==='network')return route.abort('failed');
-        return route.fulfill({status:failure==='503'?503:200,contentType:'application/json',body:failure==='503'?'{}':'invalid JSON'});
+        return route.fulfill({status:failure==='404'?404:failure==='503'?503:200,contentType:'application/json',body:failure==='browser'?'{"local":false}':failure==='json'?'invalid JSON':'{}'});
       });
       await page.goto(base);
       const browserState=()=>page.evaluate(()=>new Promise((resolve,reject)=>{
@@ -60,12 +60,23 @@ try{
           get.onsuccess=()=>resolve(get.result);tx.oncomplete=()=>db.close();tx.onerror=()=>reject(tx.error);
         };request.onerror=()=>reject(request.error);
       }));
+      if(failure==='404'||failure==='browser'){
+        await page.waitForFunction(()=>document.body.dataset.mode==='browser');
+        if(populated)await page.waitForFunction(()=>document.querySelector('#videoTitle').textContent==='Browser fixture');
+        assert.equal(await page.locator('#addVideo').isVisible(),true);
+        assert.notEqual(await page.locator('#gateTitle').innerText(),'Review library unavailable');
+        assert.deepEqual(await browserState(),{videos:populated?[{id:'browser-only',title:'Browser fixture',label:'Browser cut',durationMs:3000,fps:30}]:[],comments:[],transcripts:{}});
+        console.log(`PASS ${width} ${colorScheme} ${failure} browser=${populated?'existing':'empty'}: intended browser fallback retained`);
+        await context.close();continue;
+      }
       await page.getByRole('button',{name:'Retry',exact:true}).waitFor();
-      assert.equal(await page.locator('#gateTitle').innerText(),'Local library unavailable');
+      assert.equal(await page.locator('#gateTitle').innerText(),'Review library unavailable');
       assert.notEqual(await page.locator('body').getAttribute('data-mode'),'browser');
       assert.equal(await page.locator('#videoSelect option').count(),0);
       assert.equal(await page.locator('#addVideo').isVisible(),false);
       assert.equal(await page.locator('#toast.show').count(),0);
+      assert.equal(await page.locator('#libraryBtn').isDisabled(),true);
+      for(const id of ['backupBtn','importBtn','removeVideo'])assert.equal(await page.locator('#'+id).getAttribute('hidden'),'');
       const originalBrowser=await browserState();
       assert.deepEqual(originalBrowser.videos.map(v=>v.id),populated?['browser-only']:[]);
       if(shots&&!populated&&failure==='503')await page.screenshot({path:join(shots,`after-${colorScheme}-${width}.png`),fullPage:true});
@@ -80,7 +91,7 @@ try{
       await context.close();
     }
   }
-  console.log('RESULT: ok backend-browser 24 failure/recovery checks');
+  console.log('RESULT: ok backend-browser 24 failure/recovery checks and 16 hosted fallback checks');
 }finally{
   await browser?.close();
   server.kill();await new Promise(resolve=>server.once('exit',resolve));
