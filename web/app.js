@@ -248,7 +248,7 @@ async function init(){
     if(e.code==='LOCAL_UNAVAILABLE'){
       $('#libraryBtn').disabled=true;
       document.querySelectorAll('[data-browser]').forEach(b=>b.hidden=true);
-      gate('Local library unavailable',e.message,'Retry',()=>location.reload());
+      gate('Review library unavailable',e.message,'Retry',()=>location.reload());
     }else{showError(e.message);$('#loading').textContent='Could not open the review library.';}
   }
 }

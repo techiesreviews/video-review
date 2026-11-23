@@ -39,7 +39,7 @@ for(const populated of [false,true])for(const [name,probe] of Object.entries(fai
     browserState={videos:populated?[{id:'browser-only'}]:[],comments:[],transcripts:{}};
     const original=structuredClone(browserState);reads=0;writes=0;
     globalThis.fetch=probe;
-    await assert.rejects(openBackend({}),error=>error.code==='LOCAL_UNAVAILABLE'&&/local service/i.test(error.message));
+    await assert.rejects(openBackend({}),error=>error.code==='LOCAL_UNAVAILABLE'&&/review library/i.test(error.message));
     assert.equal(reads,0,'the failed probe never opens the browser library');
     globalThis.fetch=async route=>{
       if(route==='/api/local')return response(200,{local:true});
