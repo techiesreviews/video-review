@@ -6,6 +6,9 @@ import { applyChange, applyRender, checkVideo, describe, timecode, RULES } from 
 import { normalizeTranscript, searchLibrary, storeTranscript } from './transcript-core.js';
 
 async function api(route,body,signal){const r=await fetch(route,{...(body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{cache:'no-store'}),...(signal?{signal}:{})});const result=await r.json();if(!r.ok)throw Error(result.error||'Could not save.');return result;}
+// Background polls give up after three seconds, so a stalled server cannot hold them open.
+async function poll(route){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),3000);try{return await api(route,undefined,controller.signal);}finally{clearTimeout(timer);}}
+const sameView=(a,b)=>!!a&&!!b&&a.videoId===b.videoId&&a.playheadMs===b.playheadMs;
 
 export async function openBackend(events){
   let probe;
@@ -34,15 +37,19 @@ function localBackend(events){
   }
   return {
     mode:'local',
-    async agentConnected(){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),3000);try{const {connected}=await api('/api/agent',undefined,controller.signal);return typeof connected==='boolean'?connected:null;}catch{return null;}finally{clearTimeout(timer);}},
+    async agentConnected(){try{const {connected}=await poll('/api/agent');return typeof connected==='boolean'?connected:null;}catch{return null;}},
     async load(){videos=await api('/api/videos');comments=(await api('/api/comments')).comments;},
     videos:()=>videos, comments:()=>comments,
     async apply(cmd){comments=(await api('/api/comments',cmd)).comments;return comments;},
     async refresh(){[videos,{comments}]=await Promise.all([api('/api/videos'),api('/api/comments')]);return comments;},
     // fileVersion changes when the file is replaced; while it is missing (mid-render) keep the last URL.
     async media(v){const current=videos.find(x=>x.id===v.id)||v;if(current.fileVersion||!urls.has(v.id))urls.set(v.id,`/media/${encodeURIComponent(v.id)}?v=${current.fileVersion||''}`);return {url:urls.get(v.id)};},
-    setView(view){latestView=view;viewVersion++;viewReady=false;clearTimeout(viewTimer);viewTimer=setTimeout(()=>{viewReady=true;return sendView();},400);},
-    async viewRequest(){return api('/api/view-request');},
+    setView(view){
+      // A retry of the view that is already waiting or on its way changes nothing, so its slow success still counts as current.
+      if((viewTimer||viewReady||viewSending)&&sameView(view,latestView))return;
+      latestView=view;viewVersion++;viewReady=false;clearTimeout(viewTimer);viewTimer=setTimeout(()=>{viewTimer=null;viewReady=true;return sendView();},400);
+    },
+    async viewRequest(){return poll('/api/view-request');},
     async searchVideos(query){return api('/api/library/search?q='+encodeURIComponent(query));},
     async removedVideos(){return api('/api/library/removed');},
     async removeVideo(id){return api('/api/library',{action:'remove',videoId:id});},
