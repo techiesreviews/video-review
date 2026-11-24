@@ -1,4 +1,4 @@
-import { openBackend, pickVideoFile, canRememberFiles } from './backend.js';
+import { openBackend, pickVideoFile } from './backend.js';
 import { sourceSpans, thread } from './review-core.js';
 import { createTranscriptPanel } from './transcript-panel.js';
 import { createLibraryPanel } from './library-panel.js';
