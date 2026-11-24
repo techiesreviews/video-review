@@ -31,7 +31,6 @@ export function createJoinFade(video,onAvailabilityChange=()=>{}){
       if(failed||!Context)return;
       try{context=new Context();context.onstatechange=route;}catch{failed=true;report(false);return;}
     }
-    if(failed)return;
     if(context.state!=='running'){
       try{context.resume().then(()=>{route();if(context.state!=='running')report(false);},()=>report(false));}catch{report(false);}
     }
