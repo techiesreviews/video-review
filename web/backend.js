@@ -6,7 +6,7 @@ import { applyChange, applyRender, checkVideo, describe, timecode, RULES } from 
 import { normalizeTranscript, searchLibrary, storeTranscript } from './transcript-core.js';
 
 async function api(route,body,signal){const r=await fetch(route,{...(body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{cache:'no-store'}),...(signal?{signal}:{})});const result=await r.json();if(!r.ok)throw Error(result.error||'Could not save.');return result;}
-// Background polls give up after three seconds, so a stalled server cannot hold them open.
+// The agent-status and open-video polls give up after three seconds, so a stalled server cannot hold them open. Comment refresh has no such deadline.
 async function poll(route){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),3000);try{return await api(route,undefined,controller.signal);}finally{clearTimeout(timer);}}
 const sameView=(a,b)=>!!a&&!!b&&a.videoId===b.videoId&&a.playheadMs===b.playheadMs;
 

@@ -76,6 +76,8 @@ try{
         await page.getByText('Review updates stale',{exact:true}).waitFor({timeout:1500});
         failed=null;newNote=true;await visibility();
         await page.getByText('Fresh agent reply',{exact:true}).waitFor({timeout:1500});
+        // Comments are current again, so their notice clears while the poll is still held.
+        await page.waitForFunction(()=>!document.querySelector('#reviewSyncState').textContent,{},{timeout:1500});
         // The stalled poll gives up by itself and then counts as a failed poll, with the request still held.
         await Promise.race([aborted,new Promise((resolve,reject)=>setTimeout(()=>reject(Error('The held open-video poll was never given up')),6500))]);
         await page.getByText('Review updates stale',{exact:true}).waitFor({timeout:1500});
