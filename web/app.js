@@ -31,13 +31,14 @@ const libraryPanel=createLibraryPanel({getBackend:()=>backend,showError:showToas
 async function restoreLibraryVideo(id){await backend.restoreVideo(id);await loadNotes();if(!videos.some(v=>v.id===id))throw Error('Video restored, but review updates are unavailable.');await selectVideo(id);}
 
 // The cuts switch: on plays the removals skipped, off plays the original. The clocks always read the review file's own time.
-let cutsOn=true;try{cutsOn=localStorage.getItem('techies-review-cuts')!=='off';}catch{}
+let cutsOn=true,fadeAvailable=null;try{cutsOn=localStorage.getItem('techies-review-cuts')!=='off';}catch{}
 const fileAt=ms=>cutToFile(ms,active.durationMs,transcriptPanel.edits());
 const cutEnd=()=>cutLength(active.durationMs,transcriptPanel.edits());
-function setCuts(on){cutsOn=on;try{localStorage.setItem('techies-review-cuts',on?'on':'off');}catch{}$('#cutsSwitch').setAttribute('aria-checked',String(on));$('#cutsState').textContent=on?'Cuts on':'Cuts off';}
+function renderCuts(){$('#cutsSwitch').setAttribute('aria-checked',String(cutsOn));$('#cutsState').textContent=cutsOn?(fadeAvailable===false?'Cuts on · Fades unavailable':'Cuts on'):'Cuts off';}
+function setCuts(on){cutsOn=on;try{localStorage.setItem('techies-review-cuts',on?'on':'off');}catch{}renderCuts();}
 
 // Playback
-const joinFade=createJoinFade(video),cutPlayback=createCutPlayback({video,removals:()=>transcriptPanel.removals(),fps:()=>active?.fps||30,fade:joinFade});
+const joinFade=createJoinFade(video,available=>{fadeAvailable=available;renderCuts();}),cutPlayback=createCutPlayback({video,removals:()=>transcriptPanel.removals(),fps:()=>active?.fps||30,fade:joinFade});
 function clamp(ms){return Math.max(0,Math.min(active.durationMs,ms));}
 function currentMs(){return explicitTime??Math.round((video.paused||document.body.classList.contains('transcript-only')?video.currentTime:presented)*1000);}
 function renderTime(){if(!active)return;const ms=currentMs();$('#currentTime').textContent=precise(ms);$('#frameInfo').textContent=`frame ${frameOf(ms)}`;$('#seek').value=ms/1000;$('#playIcon').setAttribute('d',video.paused?PLAY:PAUSE);$('#play').setAttribute('aria-label',video.paused?'Play':'Pause');renderStamp();highlightActive(ms);transcriptPanel.tick(ms,!video.paused);}

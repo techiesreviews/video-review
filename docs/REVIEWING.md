@@ -82,9 +82,10 @@ not touched. These controls let you hear and feel the result first.
   either way.
 - The timecodes, seek bar, comment times and pins all use the review file's own clock, which is not the
   original recording's. Comments are always saved in that time.
-- Every join is faded for 15 ms out and back in, like the native audio fades in the Resolve cut. It applies to
+- With Web Audio available, every join is faded for 15 ms out and back in, like the native audio fades in the Resolve cut. It applies to
   every jump, including Hear cut. The fade starts early, so it does not hold back the jump, and it only hides
-  clicks. It cannot repair a clipped word. It is fixed and has no control.
+  clicks. It cannot repair a clipped word. It is fixed and has no control. If the browser cannot prepare the fade,
+  the Cuts control reads **Cuts on · Fades unavailable**; ordinary playback continues without the preview fades.
 
 A short silence at a join is the browser finding its place in the file, and it is not in the final cut. The picture can
 also show a removed frame or two just before the jump. Review copies with frequent keyframes cut that silence
