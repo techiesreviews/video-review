@@ -72,3 +72,27 @@ test('successful audio startup never warns while resume is pending and retains 1
     assert.deepEqual(states,[true,false,true],'A recovered context clears the warning');
   }finally{globalThis.window=previous;}
 });
+
+test('playing again resumes direct audio after a failed fade route is interrupted',async()=>{
+  const previous=globalThis.window,states=[];
+  let context,resumes=0,direct=false;
+  class Context{
+    state='running';destination={};
+    constructor(){context=this;}
+    resume(){resumes++;this.state='running';this.onstatechange();return Promise.resolve();}
+    createGain(){return {connect(){},disconnect(){}};}
+    createMediaElementSource(){return {disconnect(){direct=false;},connect:target=>{
+      if(target!==this.destination)throw Error('Fade route unavailable');
+      direct=true;
+    }};}
+  }
+  globalThis.window={AudioContext:Context};
+  try{
+    const fade=createJoinFade({},value=>states.push(value));
+    fade.prepare();assert.equal(direct,true);assert.deepEqual(states,[false]);
+    context.state='suspended';context.onstatechange();fade.prepare();await Promise.resolve();
+    assert.equal(resumes,1,'Playing again must resume the captured direct audio route');
+    assert.equal(context.state,'running');assert.equal(direct,true);
+    assert.deepEqual(states,[false],'Direct audio resumes without claiming fades are active');
+  }finally{globalThis.window=previous;}
+});
