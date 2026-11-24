@@ -21,7 +21,8 @@ let browser;
 try{
   let ready=false;for(let i=0;i<80;i++){try{if((await fetch(base+'/api/local')).ok){ready=true;break;}}catch{}await new Promise(r=>setTimeout(r,100));}assert.ok(ready);
   browser=await chromium.launch({headless:true});if(shots)await mkdir(shots,{recursive:true});
-  const focused=['save','restore','restore-failed','agent','restore-poll','remove-failed'];
+  const focused=['save','restore','restore-failed','agent','restore-poll','remove-failed','poll-held','view-slow'];
+  const passed={save:'failed request says Not saved',agent:'held agent status does not block fresh replies','poll-held':'held open-video poll does not block comment sync','view-slow':'slow view success clears the notice'};
   if(process.env.SYNC_REVIEW&&!focused.includes(process.env.SYNC_REVIEW))throw Error('Unknown SYNC_REVIEW case');
   const reviewCases=process.env.SYNC_REVIEW?[process.env.SYNC_REVIEW]:before?[null]:[null,...focused];
   for(const width of [1440,390])for(const colorScheme of ['light','dark'])for(const reviewCase of reviewCases){
@@ -29,8 +30,13 @@ try{
     const context=await browser.newContext({viewport:{width,height:width===390?844:960},colorScheme});
     const page=await context.newPage(),errors=[];page.on('pageerror',error=>errors.push(error.message));
     let failed=null,newNote=false,failView=false,agent='absent',writes=0,holdVideos=false,releaseVideos,heldVideos,restoreDone,holdAgent=false,releaseAgent,agentHeld;
+    let holdRequest=false,requestHeld,requestAborted,failViewOnce=false,viewDelay=0;const heldRequests=[];
+    page.on('requestfailed',request=>{if(new URL(request.url()).pathname==='/api/view-request')requestAborted?.();});
     await page.route('**/api/**',async route=>{
       const path=new URL(route.request().url()).pathname;
+      if(path==='/api/view-request'&&holdRequest){requestHeld?.();await new Promise(resolve=>heldRequests.push(resolve));return route.fulfill({json:{}}).catch(()=>{});}
+      if(path==='/api/view'&&route.request().method()==='POST'&&failViewOnce){failViewOnce=false;return route.fulfill({status:503,json:{error:'Unavailable'}});}
+      if(path==='/api/view'&&route.request().method()==='POST'&&viewDelay){await new Promise(resolve=>setTimeout(resolve,viewDelay));return route.continue().catch(()=>{});}
       if(path==='/api/videos'&&holdVideos){holdVideos=false;const response=await route.fetch();heldVideos?.();await new Promise(resolve=>{releaseVideos=resolve;});return route.fulfill({response});}
       if(path==='/api/library'&&route.request().method()==='POST'&&route.request().postDataJSON()?.action==='restore'){
         const response=await route.fetch();await route.fulfill({response});restoreDone?.();return;
@@ -62,6 +68,25 @@ try{
         newNote=true;
         await page.getByText('Fresh agent reply',{exact:true}).waitFor({timeout:6500});
         holdAgent=false;releaseAgent();
+      }else if(reviewCase==='poll-held'){
+        // The open-video poll stalls; comment sync must go on and show its own state without waiting for it.
+        const held=new Promise(resolve=>{requestHeld=resolve;}),aborted=new Promise(resolve=>{requestAborted=resolve;});
+        holdRequest=true;await visibility();await held;
+        failed='/api/comments';await visibility();
+        await page.getByText('Review updates stale',{exact:true}).waitFor({timeout:1500});
+        failed=null;newNote=true;await visibility();
+        await page.getByText('Fresh agent reply',{exact:true}).waitFor({timeout:1500});
+        // The stalled poll gives up by itself and then counts as a failed poll, with the request still held.
+        await Promise.race([aborted,new Promise((resolve,reject)=>setTimeout(()=>reject(Error('The held open-video poll was never given up')),6500))]);
+        await page.getByText('Review updates stale',{exact:true}).waitFor({timeout:1500});
+        holdRequest=false;for(const release of heldRequests.splice(0))release();await visibility();
+        await page.waitForFunction(()=>!document.querySelector('#reviewSyncState').textContent,{},{timeout:6500});
+      }else if(reviewCase==='view-slow'){
+        // One failed view update, then successes slower than the four-second retry, with the playhead left alone.
+        failViewOnce=true;viewDelay=5000;
+        await page.locator('#seek').evaluate(node=>{node.value='2.3';node.dispatchEvent(new Event('input'));});
+        await page.getByText('Agent view not synced',{exact:true}).waitFor({timeout:6500});
+        await page.waitForFunction(()=>!document.querySelector('#viewSyncState').textContent,{},{timeout:13000});
       }else{
         page.on('dialog',dialog=>dialog.accept());
         if(reviewCase==='remove-failed')failed='/api/videos';
@@ -97,7 +122,7 @@ try{
         await page.waitForFunction(()=>document.querySelector('#videoTitle').textContent==='Review fixture',{},{timeout:1500});
         assert.equal(await page.locator('#toast.error').count(),0,'restoring during a held refresh must not select an absent video');
       }
-      assert.deepEqual(errors,[]);console.log(`PASS ${width} ${colorScheme} ${reviewCase}: ${reviewCase==='save'?'failed request says Not saved':reviewCase==='agent'?'held agent status does not block fresh replies':'restore waits for a fresh queued refresh'}`);await context.close();continue;
+      assert.deepEqual(errors,[]);console.log(`PASS ${width} ${colorScheme} ${reviewCase}: ${passed[reviewCase]||'restore waits for a fresh queued refresh'}`);await context.close();continue;
     }
     // Break both sync channels, capture what the reviewer sees, then recover.
     failed='/api/comments';failView=true;
@@ -146,5 +171,5 @@ try{
     await page.getByRole('button',{name:'Cancel',exact:true}).click();await visibility();await page.getByText('Fresh agent reply',{exact:true}).waitFor();
     assert.deepEqual(errors,[]);await context.close();
   }
-  console.log(`RESULT: ok sync-browser ${before?'before screenshots':process.env.SYNC_REVIEW?'four '+process.env.SYNC_REVIEW+' regression cases':'24 endpoint failure/recovery cases; 24 save/library/held-status regressions; view and agent recovery; playback, note saving and drafts retained in four layouts'}`);
+  console.log(`RESULT: ok sync-browser ${before?'before screenshots':process.env.SYNC_REVIEW?'four '+process.env.SYNC_REVIEW+' regression cases':'24 endpoint failure/recovery cases; 32 save/library/held-poll/slow-view regressions; view and agent recovery; playback, note saving and drafts retained in four layouts'}`);
 }finally{await browser?.close();server.kill();await new Promise(resolve=>server.once('exit',resolve));await rm(temp,{recursive:true,force:true});}

@@ -115,7 +115,7 @@ async function reply(n,text){try{setNotes(await backend.apply({action:'reply',id
 function aiActivity(before,after){const old=new Map(before.map(n=>[n.id,n]));let replies=0,resolved=0,added=0,first=null;for(const n of after){const prev=old.get(n.id);if(!prev){if(n.author==='ai'){added++;first??=n;}continue;}const fresh=thread(n).filter(r=>r.author==='ai').length-thread(prev).filter(r=>r.author==='ai').length;if(fresh>0){replies++;first??=n;}if(prev.status==='open'&&n.status==='done')resolved++;}
   if(!first)return;const count=n=>n+(n===1?' comment':' comments'),parts=[];if(resolved)parts.push('resolved '+count(resolved));if(replies>resolved)parts.push('replied on '+count(replies-resolved));if(added)parts.push('added '+count(added));toast(`AI editor ${parts.join(' and ')}.`,()=>focusNote(first),'Show');}
 // Picks up changes made elsewhere (the agent, another tab) without disturbing an edit or reply in progress.
-let notesRefresh=null,agentRefresh=null,reviewStale=false,requestStale=false,viewStale=false;
+let notesRefresh=null,agentRefresh=null,requestPoll=null,reviewStale=false,requestStale=false,viewStale=false;
 function renderSyncState(){for(const [id,text] of [['#reviewSyncState',reviewStale||requestStale?'Review updates stale':''],['#viewSyncState',viewStale?'Agent view not synced':'']]){const node=$(id);if(node.textContent!==text)node.textContent=text;}}
 function loadNotes(){
   if(!notesRefresh)return startNotesRefresh();
@@ -135,9 +135,9 @@ async function refreshNotes(){
     if(JSON.stringify(list)!==lastSnapshot&&!editing){const before=notes;setNotes(list);if(before.length||lastSnapshot)aiActivity(before,list);}
     reviewStale=false;
   }catch{reviewStale=true;}
-  // A failed open-video poll must not hide comments that refreshed successfully.
-  try{await localViewRequest();requestStale=false;}catch{requestStale=true;}
   renderSyncState();
+  // The open-video poll is optional and runs by itself: a failed or stalled one never holds back comments or their status.
+  if(!requestPoll)requestPoll=localViewRequest().then(()=>{requestStale=false;},()=>{requestStale=true;}).finally(()=>{requestPoll=null;renderSyncState();});
   if(!agentRefresh)agentRefresh=transcriptPanel.refreshAgentStatus().catch(()=>{}).finally(()=>{agentRefresh=null;});
 }
 

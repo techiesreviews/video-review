@@ -103,6 +103,52 @@ test('an unresponsive agent status request is aborted and can recover',async()=>
   }finally{globalThis.fetch=saved.fetch;globalThis.setTimeout=saved.setTimeout;globalThis.clearTimeout=saved.clearTimeout;}
 });
 
+test('a stalled open-video poll is aborted after three seconds and can recover',async()=>{
+  let expire,aborted=false;const cleared=[];
+  globalThis.setTimeout=(fn,delay)=>{assert.equal(delay,3000);expire=fn;return 1;};
+  globalThis.clearTimeout=id=>cleared.push(id);
+  globalThis.fetch=async(route,options)=>{
+    if(route==='/api/local')return response(200,{local:true});
+    assert.equal(route,'/api/view-request');
+    return new Promise((resolve,reject)=>options?.signal?.addEventListener('abort',()=>{aborted=true;reject(Error('Aborted'));}));
+  };
+  try{
+    const backend=await openBackend({}),poll=backend.viewRequest();
+    assert.equal(typeof expire,'function','open-video polls need a bounded deadline');
+    expire();await assert.rejects(poll);assert.equal(aborted,true);
+    globalThis.fetch=async()=>response(200,{id:'request'});assert.deepEqual(await backend.viewRequest(),{id:'request'});
+    assert.deepEqual(cleared,[1,1],'failed and successful polls both clear their deadline');
+  }finally{globalThis.fetch=saved.fetch;globalThis.setTimeout=saved.setTimeout;globalThis.clearTimeout=saved.clearTimeout;}
+});
+
+test('retrying an unchanged view keeps a slow success current',async()=>{
+  const timers=new Map(),states=[],writes=[];let counter=0,fail=true,finish;
+  globalThis.setTimeout=(fn,delay)=>{assert.equal(delay,400);timers.set(++counter,fn);return counter;};
+  globalThis.clearTimeout=id=>timers.delete(id);
+  const flush=async()=>{for(const [id,fn] of timers){timers.delete(id);await fn();}await Promise.resolve();};
+  globalThis.fetch=async(route,options)=>{
+    if(route==='/api/local')return response(200,{local:true});
+    assert.equal(route,'/api/view');writes.push(JSON.parse(options.body));
+    if(fail)return response(503,{error:'Unavailable'});
+    await new Promise(resolve=>{finish=resolve;});return response(200,{ok:true});
+  };
+  try{
+    const backend=await openBackend({onViewStatus:ok=>states.push(ok)}),view={videoId:'same',playheadMs:2300};
+    backend.setView({...view});await flush();assert.deepEqual(states,[false]);
+    // The page retries every four seconds while the notice shows; this success takes longer than that.
+    fail=false;backend.setView({...view});const slow=flush();await Promise.resolve();
+    assert.equal(writes.length,2);
+    backend.setView({...view});await flush();backend.setView({...view});await flush();
+    assert.equal(writes.length,2,'a retry of the view already on its way is not sent again');
+    finish();await new Promise(resolve=>saved.setTimeout(resolve,0));
+    assert.deepEqual(states,[false,true],'the slow success clears the notice');
+    await slow;assert.equal(writes.length,2);assert.equal(timers.size,0);
+    // Once nothing is on its way, the same view can be sent again.
+    backend.setView({...view});const again=flush();await Promise.resolve();
+    assert.equal(writes.length,3);finish();await again;assert.deepEqual(states,[false,true,true]);
+  }finally{globalThis.setTimeout=saved.setTimeout;globalThis.clearTimeout=saved.clearTimeout;}
+});
+
 test('view debounce reports failure and acknowledges only the newest view after recovery',async()=>{
   const timers=new Map(),states=[],writes=[];let counter=0,fail=true,finish;
   globalThis.setTimeout=(fn,delay)=>{assert.equal(delay,400);timers.set(++counter,fn);return counter;};
