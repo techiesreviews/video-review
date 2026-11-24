@@ -47,3 +47,28 @@ test('audio setup failures report unavailable and retain an audible route',async
     }
   }finally{globalThis.window=previous;}
 });
+
+test('successful audio startup never warns while resume is pending and retains 15 ms fades',async()=>{
+  const previous=globalThis.window,states=[],ramps=[];
+  let context,finishResume;
+  class Context{
+    state='suspended';destination={};currentTime=1;
+    constructor(){context=this;}
+    resume(){return new Promise(resolve=>{finishResume=resolve;});}
+    createGain(){return {connect(){},gain:{cancelScheduledValues(){},setValueAtTime(){},linearRampToValueAtTime:(value,time)=>ramps.push([value,time])}};}
+    createMediaElementSource(){return {connect(){}};}
+  }
+  globalThis.window={AudioContext:Context};
+  try{
+    const fade=createJoinFade({},value=>states.push(value));
+    fade.prepare();assert.deepEqual(states,[],'Pending resume is not an unavailable fade');
+    context.state='running';context.onstatechange();finishResume();await Promise.resolve();
+    assert.deepEqual(states,[true]);
+    fade.fadeOut(20);fade.fadeIn();fade.reset();
+    assert.deepEqual(ramps,[[0,1.035],[1,1.015]],'The existing 15 ms ramps and delay stay unchanged');
+    context.state='suspended';context.onstatechange();
+    assert.deepEqual(states,[true,false],'An interrupted route no longer claims fades are available');
+    fade.prepare();context.state='running';context.onstatechange();finishResume();await Promise.resolve();
+    assert.deepEqual(states,[true,false,true],'A recovered context clears the warning');
+  }finally{globalThis.window=previous;}
+});

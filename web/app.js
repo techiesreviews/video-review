@@ -34,7 +34,7 @@ async function restoreLibraryVideo(id){await backend.restoreVideo(id);await load
 let cutsOn=true,fadeAvailable=null;try{cutsOn=localStorage.getItem('techies-review-cuts')!=='off';}catch{}
 const fileAt=ms=>cutToFile(ms,active.durationMs,transcriptPanel.edits());
 const cutEnd=()=>cutLength(active.durationMs,transcriptPanel.edits());
-function renderCuts(){$('#cutsSwitch').setAttribute('aria-checked',String(cutsOn));$('#cutsState').textContent=cutsOn?(fadeAvailable===false?'Cuts on · Fades unavailable':'Cuts on'):'Cuts off';}
+function renderCuts(){$('#cutsSwitch').setAttribute('aria-checked',String(cutsOn));$('#cutsState').textContent=cutsOn?'Cuts on':'Cuts off';$('#cutsFade').textContent=cutsOn&&fadeAvailable===false?' · Fades unavailable':'';}
 function setCuts(on){cutsOn=on;try{localStorage.setItem('techies-review-cuts',on?'on':'off');}catch{}renderCuts();}
 
 // Playback

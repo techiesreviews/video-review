@@ -11,7 +11,7 @@ export function createJoinFade(video,onAvailabilityChange=()=>{}){
   if(!Context)report(false);
   function route(){
     if(failed)return;
-    if(context?.state!=='running'){report(false);return;}
+    if(context?.state!=='running'){if(gain)report(false);return;}
     if(gain){report(true);return;}
     let candidate;
     try{
@@ -33,8 +33,7 @@ export function createJoinFade(video,onAvailabilityChange=()=>{}){
     }
     if(failed)return;
     if(context.state!=='running'){
-      report(false);
-      try{context.resume().then(route,()=>report(false));}catch{report(false);}
+      try{context.resume().then(()=>{route();if(context.state!=='running')report(false);},()=>report(false));}catch{report(false);}
     }
     route();
   }
