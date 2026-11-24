@@ -81,7 +81,7 @@ async function checkMediaDuration(video,file){
   if(!Number.isFinite(actual)||Math.abs(actual-video.durationMs)>Math.max(60,1000/video.fps))throw Error(`That file is a different cut (${timecode(actual)}). This review needs ${timecode(video.durationMs)}. Choose the updated render; your comments are kept.`);
 }
 
-export const canRememberFiles='showOpenFilePicker' in window;
+const canRememberFiles='showOpenFilePicker' in window;
 export async function pickVideoFile(){
   if(canRememberFiles){const [handle]=await window.showOpenFilePicker({id:'video-review',types:[{description:'Video',accept:{'video/*':['.mp4','.mov','.m4v','.webm','.mkv']}}]});return {file:await handle.getFile(),handle};}
   return new Promise((resolve,reject)=>{const input=Object.assign(document.createElement('input'),{type:'file',accept:'video/*'});input.onchange=()=>input.files[0]?resolve({file:input.files[0],handle:null}):reject(new DOMException('No file chosen','AbortError'));input.oncancel=()=>reject(new DOMException('No file chosen','AbortError'));input.click();});
