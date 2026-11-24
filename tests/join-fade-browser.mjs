@@ -53,6 +53,12 @@ try{
     await page.waitForFunction(()=>document.querySelector('video').currentTime>.1);
     if(failure==='available')assert.equal(await page.locator('#cutsSwitch').innerText(),'Cuts on');
     else assert.match(await page.locator('#cutsSwitch').innerText(),/Fades unavailable/);
+    assert.equal(await page.locator('#cutsSwitch').getAttribute('aria-describedby'),'cutsFade');
+    assert.equal(await page.locator('#cutsFade').getAttribute('aria-live'),'polite');
+    if(width===390){
+      assert.ok(await page.locator('#cutsSwitch').evaluate(node=>node.getBoundingClientRect().height<=34),'The phone control stays on one line');
+      assert.ok(await page.locator('.control-row').evaluate(node=>node.scrollWidth<=node.clientWidth),'The phone control row does not overflow');
+    }
     const sound=await page.evaluate(async()=>{
       const video=document.querySelector('video');
       let context,analyser=window.__sourceCaptured?window.__outputAnalyser:null;
