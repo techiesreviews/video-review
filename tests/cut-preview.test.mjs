@@ -233,7 +233,9 @@ test('playback starts the fade once, ahead of the join, and jumps on time',t=>{
   t.mock.timers.enable({apis:['setTimeout']});
   const {video,calls,playback}=fakePlayer(1.95);
   playback.tick();
-  assert.deepEqual(calls,[['out',35]],'The fade is scheduled to finish on the join.');
+  // The player's clock can trail the sound it has already handed on, so the fade ends 20 ms before the join: no sound
+  // from inside the cut gets out (the browser check plays a marker tone inside each cut and listens for it).
+  assert.deepEqual(calls,[['out',15]],'The fade is scheduled to finish just before the join.');
   playback.tick();assert.equal(calls.length,1,'Another frame does not schedule it again.');
   video.time=2;t.mock.timers.tick(50);
   assert.deepEqual(video.seeks,[3]);assert.equal(calls.length,1);
@@ -243,7 +245,7 @@ test('a frame that lands on the join before the timer does not restart a fade in
   t.mock.timers.enable({apis:['setTimeout']});
   const {video,calls,playback}=fakePlayer(1.95);
   playback.tick();video.time=2;playback.tick();
-  assert.deepEqual(calls,[['out',35]],'Restarting here would bring the sound back to full volume and click.');
+  assert.deepEqual(calls,[['out',15]],'Restarting here would bring the sound back to full volume and click.');
   assert.deepEqual(video.seeks,[3]);
 });
 
