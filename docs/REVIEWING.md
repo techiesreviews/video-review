@@ -42,7 +42,7 @@ revokes the session's tokens. Never commit connection tokens, footage, transcrip
 The app starts with the picture hidden, larger transcript text, and playback controls pinned below the words.
 Use **Show video** to bring the picture back. The view is remembered after refresh. **Follow playback** keeps
 the current word or long-pause marker vertically centred; switch it off to browse freely. Selecting words
-pauses playback. The **Pauses ≥** setting chooses which approximate word-timing gaps to show.
+pauses playback. The **Pauses ≥** setting chooses which approximate word-timing gaps to show; a shorter gap still shows while it holds a cut with no words, so that cut can be selected and restored.
 
 When **Waveform** is enabled, it replaces the ordinary seek bar in the bottom playback controls. With no
 selection it spans the whole video; selecting a passage opens a close-up and a small full-video overview.
