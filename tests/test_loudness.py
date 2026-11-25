@@ -74,11 +74,6 @@ class Measure(unittest.TestCase):
         self.assertAlmostEqual(levels[10] / 2, 9.0, delta=0.5)
         self.assertGreaterEqual(levels[150], 190)
 
-
-if __name__ == '__main__':
-    unittest.main()
-
-
 class Stream(unittest.TestCase):
     """media_tools.stream stops a tool that runs too long, or whose reader fails, and leaves no process behind."""
 
@@ -92,3 +87,8 @@ class Stream(unittest.TestCase):
             with self.assertRaises(ZeroDivisionError):
                 media_tools.stream('ffmpeg', ['-c', 'import sys\nwhile True: sys.stdout.write("x" * 4096)'], 30, lambda chunk: 1 / 0)
         self.assertEqual([p.poll() is not None for p in processes], [True, True], 'no tool is left running')
+
+
+if __name__ == '__main__':
+    unittest.main()
+

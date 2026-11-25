@@ -62,3 +62,13 @@ test('loudness from decoded samples: a tone reads near -3 dB, silence at the flo
   assert.ok(Math.abs(env.db[10]+3)<0.5,`tone ${env.db[10]}`);
   assert.equal(env.db.at(-1),-100);
 });
+
+test('a word the loudness shows no sound for is cut on its transcript times, not as a one-frame cut',()=>{
+  // "uh" sits in one long silence, so both edge searches find the same pause.
+  const env=drawn(3000,[[500,1000,-20],[1700,2400,-20]]);
+  const transcript={words:[word('a','well',500,1000),word('b','uh',1200,1500),word('c','then',1700,2400)]};
+  assert.equal(cleanCut(transcript.words,1,1,env,{fps:30,durationMs:3000}),null);
+  const cut=removalBounds(transcript,wordSelection(transcript.words,1,1),3000,30,env);
+  assert.ok(cut.startMs<=1200&&cut.endMs>=1500,`covers the word's transcript span: ${cut.startMs}–${cut.endMs}`);
+  assert.ok(cut.startMs>=1000&&cut.endMs<=1700,'and leaves its neighbours alone');
+});

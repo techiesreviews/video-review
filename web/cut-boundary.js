@@ -90,7 +90,8 @@ function quietestFrame(env,aimMs,lo,hi,step){
 }
 
 /**
- * The cut for words[first..last]: {startMs, endMs, aimStartMs, aimEndMs, silent}. startMs and endMs are on frame lines
+ * The cut for words[first..last]: {startMs, endMs, aimStartMs, aimEndMs, silent}, or null when the loudness shows
+ * no sound for them. startMs and endMs are on frame lines
  * (what plays and what exports); aim* are the exact audio points. The search never reaches past the middle of a
  * neighbouring word, and of the two pauses around the words the longer one stays, shared out between the two sides.
  */
@@ -101,6 +102,8 @@ export function cleanCut(words,first,last,env,{fps=30,durationMs}){
   const loStart=before?Math.max(before.startMs+(before.endMs-before.startMs)/2,s-SEARCH_BEFORE_MS):Math.max(0,s-SEARCH_BEFORE_MS);
   const hiEnd=after?Math.min(after.startMs+(after.endMs-after.startMs)/2,e+SEARCH_BEFORE_MS):Math.min(durationMs,e+SEARCH_BEFORE_MS);
   const g1=findGap(env,s,loStart,s+inside),g2=findGap(env,e,e-inside,hiEnd);
+  // Both edges in one pause: the words make no sound the loudness can see, so it cannot place the cut (null).
+  if(g1.endMs>g2.startMs)return null;
   if(!before)g1.startMs=Math.max(0,g1.startMs);
   if(!after)g2.endMs=Math.min(durationMs,g2.endMs);
   // Keep one natural pause: the longer of the two. The shorter pause goes with the words.
