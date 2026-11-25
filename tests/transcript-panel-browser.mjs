@@ -307,13 +307,18 @@ try{
     // mark brings back just this cut; the other Delete stays.
     const inGap={id:'gap',startMs:2967,endMs:3033,wordIds:[],quote:'Join J1',kind:'words',commentId:null};
     const other={id:'w11',startMs:5533,endMs:5967,wordIds:['W11'],quote:'word11',kind:'words',commentId:null};
-    await writeFile(join(temp,'transcripts/words.json'),JSON.stringify({words,cuts:[{id:'J1',atMs:3000}],draftEdits:[inGap,other],revision:'gap-cut'}));
+    // So do cuts before the first word and after the last one.
+    const opening={...inGap,id:'opening',startMs:0,endMs:33},trailing={...inGap,id:'trailing',startMs:7967,endMs:8000};
+    await writeFile(join(temp,'transcripts/words.json'),JSON.stringify({words,cuts:[{id:'J1',atMs:3000}],draftEdits:[opening,inGap,other,trailing],revision:'gap-cut'}));
     await page.reload();await page.waitForSelector('.transcript-pause.cut-only');
-    await page.locator('.transcript-pause.cut-only').click();
-    assert.equal(await page.locator('.bar-delete').innerText(),'Restore',`${name}: the cut pause offers Restore.`);
-    await page.locator('.bar-delete').click();
-    await page.waitForFunction(()=>!document.querySelector('.transcript-pause.cut-only'));
-    assert.deepEqual((await onDisk()).map(e=>e.id),['w11'],`${name}: only the pause's cut is brought back.`);
+    assert.equal(await page.locator('.transcript-pause.cut-only').count(),3,`${name}: a mark for each cut with no words.`);
+    for(const [n,left] of [[1,['opening','w11','trailing']],[0,['w11','trailing']],[0,['w11']]]){
+      await page.keyboard.press('Escape');await page.locator('.transcript-pause.cut-only').nth(n).click();
+      assert.equal(await page.locator('.bar-delete').innerText(),'Restore',`${name}: the cut pause offers Restore.`);
+      await page.locator('.bar-delete').click();
+      await page.waitForFunction(count=>document.querySelectorAll('.transcript-pause.cut-only').length===count,left.length-1);
+      assert.deepEqual((await onDisk()).map(e=>e.id),left,`${name}: only that pause's cut is brought back.`);
+    }
 
     // The bar and the words stay on screen.
     await word(9).click();

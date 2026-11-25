@@ -61,10 +61,11 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
   const edits=()=>transcript?.draftEdits||[];
   const indexOf=id=>transcript.words.findIndex(w=>w.id===id);
 
-  /** The video's loudness (an envelope from cut-boundary.js, or a promise of one) for finding where word cuts go. */
-  function setLoudness(videoId,value){
+  /** The video's loudness (an envelope from cut-boundary.js, or a promise of one) for finding where word cuts go. from:
+   *  the media file a waveform decode read it from; none for the server's, which is fetched for each file version. */
+  function setLoudness(videoId,value,{from=null}={}){
     if(!value)return void loudness.delete(videoId);
-    const entry={env:null,promise:null,waited:false};loudness.set(videoId,entry);
+    const entry={env:null,promise:null,waited:false,from};loudness.set(videoId,entry);
     if(typeof value.then!=='function'){entry.env=value;return;}
     entry.promise=Promise.resolve(value).then(env=>{entry.env=env||null;return entry.env;},()=>null);
   }
@@ -79,6 +80,10 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
   const loudnessNow=()=>loudness.get(video?.id)?.env||null;
   /** True once a video's loudness is in (measured on the server, or from the waveform's decode). */
   const hasLoudness=videoId=>!!loudness.get(videoId)?.env;
+  /** True when the video's loudness came from a waveform decode, which a newer decode replaces. */
+  const decodedLoudness=videoId=>!!loudness.get(videoId)?.from;
+  /** The video plays this file now: loudness decoded from another file (before a new render) no longer fits, so it goes. */
+  function mediaChanged(videoId,src){const entry=loudness.get(videoId);if(entry?.from&&entry.from!==src)loudness.delete(videoId);}
 
   function flushNote(){
     cancelNoteTimer?.();cancelNoteTimer=null;
@@ -106,9 +111,11 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
     selection={startMs:Math.max(0,cut.atMs-200),endMs:cut.atMs+200,cutId:cut.id,atMs:cut.atMs,quote:'Join '+cut.id};
     return selection;
   }
+  /** A pause between two words; with no previous word it starts the video, with no next word it ends it. */
   function selectPause(previous,next){
     clear();
-    selection={kind:'pause',startMs:previous.endMs,endMs:next.startMs,firstWordId:previous.id,lastWordId:next.id,quote:`Pause after “${previous.text}”, before “${next.text}”`};
+    const quote=previous&&next?`Pause after “${previous.text}”, before “${next.text}”`:previous?`Pause after “${previous.text}”, to the end`:`Pause from the start, before “${next.text}”`;
+    selection={kind:'pause',startMs:previous?previous.endMs:0,endMs:next?next.startMs:video.durationMs,firstWordId:previous?.id,lastWordId:next?.id,quote};
     return selection;
   }
   function sourceSelection(group,words=group.words){
@@ -180,8 +187,10 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
     const target=video;let noteOpen,landed=null;
     try{noteOpen=await commit(at,remaining,options);}
     catch(error){if(!error.saved)throw error;landed=error;}
+    // A note stays open while a cut still holds it, also in a cut's saved history (its words are still cut, or come back on Undo).
+    const held=new Set(notesIn(remaining));
     for(const id of new Set(back.map(e=>e.commentId).filter(Boolean))){
-      if(remaining.some(e=>e.commentId===id))continue;
+      if(held.has(id))continue;
       // A failed close is reported; it must not hide that the save landed, which the panel shows by loading again.
       // Another video opened meanwhile: the save still landed on the old one, and nothing is said over the new one.
       try{await cancelRequest(id);}
@@ -435,6 +444,6 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
     get noteId(){return note.id;},
     edits,
     clear,selectWords,selectCut,selectPause,selectSource,wholeGap,adjust,selectedIds,toRestore,bounds,
-    setLoudness,hasLoudness,remove,undo,restore,restoreWords,send,editNote,noteTyped,flushNote,alreadyAsked,askRestore,target,changeContext,
+    setLoudness,hasLoudness,decodedLoudness,mediaChanged,remove,undo,restore,restoreWords,send,editNote,noteTyped,flushNote,alreadyAsked,askRestore,target,changeContext,
   };
 }
