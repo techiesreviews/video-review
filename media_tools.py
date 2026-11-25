@@ -20,6 +20,8 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
+import threading
 
 TOOLS = ('ffmpeg', 'ffprobe')
 OWN_BIN = Path(__file__).resolve().parent / 'bin'
@@ -159,6 +161,44 @@ def run(tool, arguments, timeout, text=False):
         # Windows leaves its own placeholder in the text: "%1 is not a valid Win32 application."
         reason = str(error.strerror or error).replace('%1', os.path.basename(command[0])).rstrip('.')
         raise ToolMissing(tool, found=command[0], reason=reason) from None
+
+
+def stream(tool, arguments, timeout, on_chunk, size=1 << 16):
+    """Run the tool and hand what it prints to on_chunk(bytes) piece by piece, so a long recording's decoded audio is
+    never held whole. Returns (return code, error text). Raises ToolMissing, or ToolTimedOut after timeout seconds."""
+    command = [find(tool), *arguments]
+    with tempfile.TemporaryFile() as errors:
+        try:
+            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=errors, stdin=subprocess.DEVNULL,
+                                       creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        except FileNotFoundError:
+            forget()
+            raise ToolMissing(tool) from None
+        except OSError as error:
+            forget()
+            reason = str(error.strerror or error).replace('%1', os.path.basename(command[0])).rstrip('.')
+            raise ToolMissing(tool, found=command[0], reason=reason) from None
+        timed_out = threading.Event()
+
+        def stop():
+            timed_out.set()
+            process.kill()
+        late = threading.Timer(timeout, stop)
+        late.start()
+        try:
+            while chunk := process.stdout.read(size):
+                on_chunk(chunk)
+            process.wait()
+        finally:
+            late.cancel()
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+            process.stdout.close()
+        if timed_out.is_set():
+            raise ToolTimedOut(tool, timeout)
+        errors.seek(0)
+        return process.returncode, errors.read().decode('utf-8', 'replace')
 
 
 def main(argv):
