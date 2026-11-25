@@ -132,15 +132,37 @@ test('after a reload or a video switch, Undo of a joined Delete still brings bac
   assert.deepEqual(calls.cancels,[joined.commentId],'the taken-in cut keeps its note open');
 });
 
-test('a long run of single-word Deletes keeps saving, and Undo still steps back one Delete at a time',async()=>{
+test('a long run of single-word Deletes keeps saving, and Undo still steps back one Delete at a time, closing every note',async()=>{
   const many=Array.from({length:60},(_,i)=>({id:'W'+i,text:'w'+i,startMs:i*150+10,endMs:i*150+110}));
-  const {editing}=setup({transcript:{revision:'r1',words:many,cuts:[]}});
+  const {editing,state,calls}=setup({transcript:{revision:'r1',words:many,cuts:[]}});
   for(let i=0;i<55;i++){
     editing.selectWords(i);
     assert.ok(await editing.remove(),`Delete ${i+1} saves`);
   }
   assert.deepEqual(editing.edits().map(e=>e.wordIds.length),[55],'one cut');
   for(const left of [54,53,52]){await editing.undo();assert.deepEqual(editing.edits().map(e=>e.wordIds.length),[left]);}
+  // Undo too far back for the saved history: the words come back with the oldest Delete still kept, and no note is
+  // left open for words that play again.
+  while(editing.edits().length)assert.ok(await editing.undo());
+  const notes=state.comments.map(c=>c.id);
+  assert.equal(notes.length,55);
+  assert.deepEqual(notes.filter(id=>!calls.cancels.includes(id)),[],'every Delete note is closed');
+});
+
+test('bringing one word back and deleting it again, over and over, keeps the saved history small and saving',async()=>{
+  const many=Array.from({length:60},(_,i)=>({id:'W'+i,text:'w'+i,startMs:i*150+10,endMs:i*150+110}));
+  const {editing}=setup({transcript:{revision:'r1',words:many,cuts:[]}});
+  const size=list=>(list||[]).reduce((n,e)=>n+1+size(e.takenIn),0);
+  editing.selectWords(10,20);await editing.remove();
+  for(let round=1;round<=12;round++){
+    assert.ok(await editing.restoreWords(['W15']),`round ${round}: W15 comes back`);
+    assert.equal(editing.edits().length,2,'the cut is split in two');
+    editing.selectWords(15);
+    assert.ok(await editing.remove(),`round ${round}: deleting W15 again saves`);
+    assert.deepEqual(editing.edits().map(e=>e.wordIds.length),[11],'one cut again');
+  }
+  assert.ok(size(editing.edits())<=40,`the history grows by a few cuts a round, not doubling (${size(editing.edits())})`);
+  editing.selectWords(40);assert.ok(await editing.remove(),'a Delete elsewhere still saves');
 });
 
 test('a Delete cuts the words selected when it was pressed, even if another word is clicked while it waits',async()=>{

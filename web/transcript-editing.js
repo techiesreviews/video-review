@@ -15,11 +15,19 @@ const LOUDNESS_WAIT_MS=4000;
 // Undo reaches back at most this many joins into one cut (the stores refuse a deeper takenIn), so a long run of
 // Deletes next to each other keeps saving; the oldest joins are let go.
 const UNDO_JOINS=30;
-const keepJoins=(edit,depth=1)=>{
-  if(!edit.takenIn)return edit;
-  const {takenIn,...rest}=edit;
-  return depth>=UNDO_JOINS?rest:{...rest,takenIn:takenIn.map(e=>keepJoins(e,depth+1))};
-};
+const notesIn=list=>(list||[]).flatMap(e=>[e.commentId,...notesIn(e.takenIn)]).filter(Boolean);
+/** The takenIn a joined cut saves: each earlier cut once (the two pieces of a split cut can hold the same ones, and Undo
+ *  merges them by id anyway), at most UNDO_JOINS deep. dropped collects the notes of the cuts let go. */
+function keepJoins(list,dropped,depth=1,seen=new Set()){
+  const level=list.filter(e=>!seen.has(e.id)&&seen.add(e.id));
+  return level.map(e=>{
+    if(!e.takenIn)return e;
+    const {takenIn,...rest}=e;
+    if(depth>=UNDO_JOINS){dropped.push(...notesIn(takenIn));return rest;}
+    const inner=keepJoins(takenIn,dropped,depth+1,seen);
+    return inner.length?{...rest,takenIn:inner}:rest;
+  });
+}
 export const RELOADED_TEXT='The transcript changed while this was saving. The edit was saved, and the transcript is loaded again.';
 export const REFUSED_TEXT='Not saved: the words changed elsewhere. Try again.';
 export const REMOVED_TEXT='Not saved: the transcript was removed elsewhere.';
@@ -219,11 +227,14 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
       for(const e of taken){if(e.startMs<startMs){startMs=e.startMs;grew=true;}if(e.endMs>endMs){endMs=e.endMs;grew=true;}}
       grew&&=edits().some(e=>!taken.has(e)&&e.startMs<endMs&&e.endMs>startMs);
     }
+    const dropped=[],takenIn=keepJoins([...taken],dropped);
     const edit={id:crypto.randomUUID(),startMs,endMs,wordIds:words.slice(lo,hi+1).map(w=>w.id),kind:'words',quote:chosen.quote,
-      ...(taken.size?{takenIn:[...taken].map(e=>keepJoins(e))}:{})};
+      ...(takenIn.length?{takenIn}:{})};
     const kept=edits().filter(e=>!taken.has(e));
     if(previewDuration(video.durationMs,[...kept,edit])<1000/video.fps)throw Error('Keep at least one frame in the video.');
-    return {chosen,edit,kept,taken:[...taken]};
+    // Too old for Undo: their words stay cut under this cut and its note, so their own notes are closed.
+    const held=new Set(notesIn([...kept,edit]));
+    return {chosen,edit,kept,taken:[...taken],letGo:[...new Set(dropped)].filter(id=>!held.has(id))};
   }
 
   /** Delete: cuts the selection (words, a pause, a join span). Words are cut whole, at the silence the loudness shows
@@ -237,8 +248,8 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
       const env=await loudnessFor(at);
       const wasWords=picked.kind==null&&picked.a!=null,said=String(typed).trim();
       // A span set with the waveform handles (precise) is an exact time span, so it is cut as it is.
-      let chosen=picked,edit,kept=edits(),taken=[];
-      if(wasWords&&!picked.precise)({chosen,edit,kept,taken}=joinedCut(picked.a,picked.b,env));
+      let chosen=picked,edit,kept=edits(),taken=[],letGo=[];
+      if(wasWords&&!picked.precise)({chosen,edit,kept,taken,letGo}=joinedCut(picked.a,picked.b,env));
       else edit=makeRemoval({...transcript,draftEdits:edits()},picked,video.durationMs,video.fps,env);
       const ask=askFor(chosen.kind==='pause'?'pause':'remove',`Remove from cut: “${chosen.quote}”`+(said?` — ${said}`:''),chosen);
       // The note covers what this Delete cut: its words and its span.
@@ -254,6 +265,7 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
         throw error;
       }
       if(said&&saved?.id)cutNotes.set(saved.id,said);
+      for(const id of letGo){await cancelRequest(id).catch(onError);cutNotes.delete(id);}
       const first=chosen.a,last=chosen.b;
       const next=wasWords?nextWordAfterDelete(transcript.words,[...deletedIds(edits())],first,last):-1;
       return {edit,pieces:[edit],wasWords,first,last,next,noteOpen,
@@ -304,8 +316,12 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
       let endMs=j===at.at(-1)?edit.endMs:found?found.endMs:Math.floor(words[j+1].startMs/step)*step;
       startMs=Math.round(Math.max(edit.startMs,startMs));endMs=Math.round(Math.min(edit.endMs,endMs));
       if(endMs-startMs<step-0.5)continue;
-      const ids=words.slice(i,j+1).map(w=>w.id);
-      pieces.push({...edit,id:pieces.length?crypto.randomUUID():edit.id,startMs,endMs,wordIds:ids,quote:wordSelection(words,i,j).quote});
+      const ids=words.slice(i,j+1).map(w=>w.id),mine=new Set(ids);
+      // A piece holds only the earlier cuts inside it, so splitting a cut over and over does not copy its whole history.
+      const takenIn=(edit.takenIn||[]).filter(e=>e.wordIds?.length?e.wordIds.some(id=>mine.has(id)):e.startMs<endMs&&e.endMs>startMs);
+      const {takenIn:_,...rest}=edit;
+      pieces.push({...rest,id:pieces.length?crypto.randomUUID():edit.id,startMs,endMs,wordIds:ids,quote:wordSelection(words,i,j).quote,
+        ...(takenIn.length?{takenIn}:{})});
     }
     return pieces;
   }
