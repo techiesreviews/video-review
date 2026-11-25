@@ -15,6 +15,7 @@ export function normalizeDraftEdits(edits=[],durationMs=Infinity){
       ids.add(edit.id);
       if(!Array.isArray(edit.wordIds)||edit.wordIds.some(id=>typeof id!=='string'||id.length>120))throw Error('Invalid removed word IDs.');
       const clean={id:edit.id,startMs:Math.round(edit.startMs),endMs:Math.round(edit.endMs),wordIds:[...edit.wordIds],quote:String(edit.quote||'').slice(0,3000),kind:edit.kind==='pause'?'pause':'words',commentId:typeof edit.commentId==='string'?edit.commentId:null};
+      if(Number.isInteger(edit.at)&&edit.at>=0&&edit.at<=5000)clean.at=edit.at;
       if(edit.takenIn!=null){
         if(!Array.isArray(edit.takenIn)||depth>=50||(held+=edit.takenIn.length)>TAKEN_IN_LIMIT)throw Error('Invalid preview cuts.');
         if(edit.takenIn.length)clean.takenIn=list(edit.takenIn,depth+1);

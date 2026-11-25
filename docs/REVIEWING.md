@@ -120,7 +120,7 @@ IDs and frames from when it was asked. Other request types are unchanged and hav
 
 `get_transcript` returns the reviewer's current preview removals as `draftEdits`:
 `{id, startMs, endMs, wordIds, quote, kind, commentId}`, in review-file milliseconds, with `kind` either `words` or
-`pause`. A cut's optional `takenIn` lists earlier cuts it replaced, kept only for Undo; they remove nothing. The removals
+`pause`. A cut's optional `takenIn` lists earlier cuts it replaced, kept only for Undo; they remove nothing. Each keeps its old place in the list as `at`, so Undo puts it back there. The removals
 are not in the rendered file until an agent applies them. The hosted app reads them from the open tab.
 
 ## See the original words and restore a passage

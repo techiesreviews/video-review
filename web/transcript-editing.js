@@ -8,6 +8,8 @@ import {clock} from './time-format.js';
 import {RULES} from './review-core.js';
 
 const stamp=ms=>clock(ms,{places:3,hours:false});
+// A note quotes at most this much; the cut itself keeps every word (a cut joined from many Deletes can be longer).
+const shortQuote=quote=>quote.length>RULES.limits.quoteLength?quote.slice(0,RULES.limits.quoteLength-1)+'…':quote;
 const NOTE_PAUSE_MS=450;
 // How long a Delete waits for the video's loudness while the server still measures it; after that it cuts on the
 // transcript's word times, as it does when there is no loudness at all.
@@ -28,6 +30,8 @@ function keepJoins(list,dropped,depth=1,seen=new Set()){
     return inner.length?{...rest,takenIn:inner}:rest;
   });
 }
+// The reply on the note of a cut let go of that way: its words are still cut, so it must not say they are kept.
+export const JOINED_TEXT='Joined into a later Delete, whose note now covers these words. They stay cut.';
 export const RELOADED_TEXT='The transcript changed while this was saving. The edit was saved, and the transcript is loaded again.';
 export const REFUSED_TEXT='Not saved: the words changed elsewhere. Try again.';
 export const REMOVED_TEXT='Not saved: the transcript was removed elsewhere.';
@@ -141,7 +145,7 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
   }
 
   function askFor(type,text,chosen=selection){
-    return {...chosen,editRequest:{type,quote:chosen.quote,firstWordId:chosen.firstWordId,lastWordId:chosen.lastWordId,cutId:chosen.cutId,transcriptRevision:transcript.revision},text};
+    return {...chosen,editRequest:{type,quote:shortQuote(chosen.quote),firstWordId:chosen.firstWordId,lastWordId:chosen.lastWordId,cutId:chosen.cutId,transcriptRevision:transcript.revision},text};
   }
   function changeAsk(chosen){
     const words=chosen.a!=null?transcript.words.slice(chosen.a,chosen.b+1).map(w=>w.id):[];
@@ -227,7 +231,9 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
       for(const e of taken){if(e.startMs<startMs){startMs=e.startMs;grew=true;}if(e.endMs>endMs){endMs=e.endMs;grew=true;}}
       grew&&=edits().some(e=>!taken.has(e)&&e.startMs<endMs&&e.endMs>startMs);
     }
-    const dropped=[],takenIn=keepJoins([...taken],dropped);
+    // Each taken-in cut keeps where it stood in the list (at), so Undo puts it back in its place.
+    const place=e=>edits().indexOf(e),dropped=[];
+    const takenIn=keepJoins([...taken].sort((x,y)=>place(x)-place(y)).map(e=>({...e,at:place(e)})),dropped);
     const edit={id:crypto.randomUUID(),startMs,endMs,wordIds:words.slice(lo,hi+1).map(w=>w.id),kind:'words',quote:chosen.quote,
       ...(takenIn.length?{takenIn}:{})};
     const kept=edits().filter(e=>!taken.has(e));
@@ -251,7 +257,7 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
       let chosen=picked,edit,kept=edits(),taken=[],letGo=[];
       if(wasWords&&!picked.precise)({chosen,edit,kept,taken,letGo}=joinedCut(picked.a,picked.b,env));
       else edit=makeRemoval({...transcript,draftEdits:edits()},picked,video.durationMs,video.fps,env);
-      const ask=askFor(chosen.kind==='pause'?'pause':'remove',`Remove from cut: “${chosen.quote}”`+(said?` — ${said}`:''),chosen);
+      const ask=askFor(chosen.kind==='pause'?'pause':'remove',`Remove from cut: “${shortQuote(chosen.quote)}”`+(said?` — ${said}`:''),chosen);
       // The note covers what this Delete cut: its words and its span.
       Object.assign(ask,{startMs:edit.startMs,endMs:edit.endMs});
       const saved=await request(ask);
@@ -262,19 +268,28 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
         // No open note may claim a cut that was never saved.
         if(saved?.id&&!error.saved)await cancelRequest(saved.id).catch(onError);
         if(saved?.id&&error.saved&&said)cutNotes.set(saved.id,said);
+        if(error.saved)await closeJoined(letGo);
         throw error;
       }
       if(said&&saved?.id)cutNotes.set(saved.id,said);
-      for(const id of letGo){await cancelRequest(id).catch(onError);cutNotes.delete(id);}
       const first=chosen.a,last=chosen.b;
       const next=wasWords?nextWordAfterDelete(transcript.words,[...deletedIds(edits())],first,last):-1;
+      await closeJoined(letGo);
       return {edit,pieces:[edit],wasWords,first,last,next,noteOpen,
         line:said?'Deleted, with your note. Ctrl+Z brings both back.':'Deleted. Ctrl+Z brings it back.'};
     });
   }
 
+  /** Closes the notes of cuts a Delete let go of (see joinedCut), saying their words stay cut. */
+  async function closeJoined(ids){for(const id of ids){await cancelRequest(id,{text:JOINED_TEXT}).catch(onError);cutNotes.delete(id);}}
   /** The cuts these took in when they were made, still waiting for their Undo (a cut split in two holds them in both). */
   const takenBy=list=>[...new Map(list.flatMap(e=>e.takenIn||[]).map(e=>[e.id,e])).values()];
+  /** Every cut in these cuts' saved history, at any depth, once each. */
+  const heldBy=list=>{
+    const all=new Map(),walk=l=>{for(const e of l||[]){if(!all.has(e.id))all.set(e.id,e);walk(e.takenIn);}};
+    for(const e of list)walk(e.takenIn);
+    return [...all.values()];
+  };
 
   /** Undo: brings back the last Delete, all its pieces together, puts back the cuts it took in as they were, and closes
    *  its own note. keep: see commit. */
@@ -283,7 +298,10 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
     return exclusive(async at=>{
       const count=lastCutGroup(edits()),undone=edits().slice(-count),edit=undone[0],said=cutNotes.get(edit.commentId)||'';
       const earlier=edits().slice(0,-count),before=takenBy(undone).filter(e=>!earlier.some(k=>k.id===e.id));
-      const noteOpen=await commitThenClose(at,[...earlier,...before],undone,{keep});
+      // Each cut goes back where it stood when it was taken in.
+      const list=[...earlier];
+      for(const {at:spot,...cut} of before.sort((x,y)=>(x.at??Infinity)-(y.at??Infinity)))list.splice(Math.min(spot??list.length,list.length),0,cut);
+      const noteOpen=await commitThenClose(at,list,undone,{keep});
       const ids=undone.flatMap(e=>e.wordIds||[]);
       return {edit,undone,note:said,noteOpen,first:ids.length?indexOf(ids[0]):-1,last:ids.length?indexOf(ids.at(-1)):-1};
     });
@@ -296,7 +314,7 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
     return exclusive(async at=>{
       const back=edits().filter(e=>ids.includes(e.id)),noted=new Set(cutNotes.keys());
       const remaining=edits().filter(e=>!ids.includes(e.id));
-      await commitThenClose(at,remaining,[...back,...takenBy(back)],{keep});
+      await commitThenClose(at,remaining,[...back,...heldBy(back)],{keep});
       return {back,noteResolved:back.some(e=>noted.has(e.commentId)&&!cutNotes.has(e.commentId))};
     });
   }
@@ -334,13 +352,15 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
       const env=await loudnessFor(at),noted=new Set(cutNotes.keys());
       const touched=edits().filter(touches),cutNow=edits().flatMap(e=>touches(e)?piecesLeft(e,back,env):[e]);
       // A cut a Delete took in has its note closed too, once none of its words is cut any more; its pieces stop holding it.
-      const stillCut=deletedIds(cutNow),closing=new Set(takenBy(touched).filter(e=>!(e.wordIds||[]).some(id=>stillCut.has(id))).map(e=>e.id));
-      const remaining=cutNow.map(e=>{
-        if(!e.takenIn?.some(t=>closing.has(t.id)))return e;
-        const {takenIn,...rest}=e,left=takenIn.filter(t=>!closing.has(t.id));
+      // At any depth of the saved history.
+      const stillCut=deletedIds(cutNow),closing=new Set(heldBy(touched).filter(e=>!(e.wordIds||[]).some(id=>stillCut.has(id))).map(e=>e.id));
+      const strip=list=>list.filter(e=>!closing.has(e.id)).map(e=>{
+        if(!e.takenIn)return e;
+        const {takenIn,...rest}=e,left=strip(takenIn);
         return left.length?{...rest,takenIn:left}:rest;
       });
-      await commitThenClose(at,remaining,[...touched,...takenBy(touched).filter(e=>closing.has(e.id))],{keep});
+      const remaining=cutNow.map(e=>e.takenIn?strip([e])[0]:e);
+      await commitThenClose(at,remaining,[...touched,...heldBy(touched).filter(e=>closing.has(e.id))],{keep});
       const where=[...back].map(indexOf).filter(i=>i>=0);
       return {back:touched,noteResolved:touched.some(e=>noted.has(e.commentId)&&!cutNotes.has(e.commentId)),
         first:where.length?Math.min(...where):-1,last:where.length?Math.max(...where):-1};

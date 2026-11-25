@@ -310,6 +310,8 @@ def _clean_transcript(video,data):
             item={'id':eid,'startMs':round(start),'endMs':round(end),'wordIds':word_ids,
                   'quote':str(edit.get('quote',''))[:LIMITS['quoteLength']],'kind':'pause' if edit.get('kind')=='pause' else 'words',
                   'commentId':edit.get('commentId') if isinstance(edit.get('commentId'),str) else None}
+            at=edit.get('at')
+            if isinstance(at,int) and not isinstance(at,bool) and 0<=at<=5000:item['at']=at
             taken=edit.get('takenIn')
             if taken is not None:
                 if not isinstance(taken,list) or depth>=50:raise ValueError('Invalid preview cuts')

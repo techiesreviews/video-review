@@ -3,7 +3,7 @@
 // Saves go through the shared review rules (review-core.js, transcript-core.js), as the browser backend saves them.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createTranscriptEditing} from '../web/transcript-editing.js';
+import {createTranscriptEditing,JOINED_TEXT} from '../web/transcript-editing.js';
 import {applyChange} from '../web/review-core.js';
 import {normalizeTranscript,sameWords,storeTranscript} from '../web/transcript-core.js';
 import {HOP_MS,envelope} from '../web/cut-boundary.js';
@@ -19,7 +19,7 @@ function held(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;r
 /** A review state with one video, saved through the shared rules, and an editing module that writes to it.
  *  hold.save / hold.request: the next save or request waits for the test. fail.save: the next save is refused. */
 function setup({transcript=TRANSCRIPT}={}){
-  const state={videos:[{...VIDEO}],comments:[],appliedOps:[]},calls={saves:[],requests:[],updates:[],cancels:[],errors:[]};
+  const state={videos:[{...VIDEO}],comments:[],appliedOps:[]},calls={saves:[],requests:[],updates:[],cancels:[],reasons:[],errors:[]};
   const hold={},fail={},timers=[];
   let now=0;
   const editing=createTranscriptEditing({
@@ -36,8 +36,8 @@ function setup({transcript=TRANSCRIPT}={}){
       return applyChange(state,{action:'add',videoId:VIDEO.id,startMs:selection.startMs,endMs:selection.endMs,text:selection.text,editRequest:selection.editRequest,createdAt:new Date(++now*1000).toISOString()});
     },
     async updateRequest(id,text){calls.updates.push([id,text]);return applyChange(state,{action:'update',id,text});},
-    async cancelRequest(id){
-      calls.cancels.push(id);
+    async cancelRequest(id,reason){
+      calls.cancels.push(id);if(reason)calls.reasons.push([id,reason]);
       if(hold.cancel){const wait=hold.cancel;delete hold.cancel;await wait.promise;}
       applyChange(state,{action:'reply',id,author:'you',text:'Undid this preview removal; keep the passage.',status:'done'});},
     onError:error=>calls.errors.push(error.message),
@@ -124,7 +124,7 @@ test('after a reload or a video switch, Undo of a joined Delete still brings bac
   const inner=editing.edits()[0];
   editing.selectWords(0,4);await editing.remove();
   const joined=editing.edits()[0];
-  assert.deepEqual(state.transcripts.v.draftEdits[0].takenIn,[inner],'the taken-in cut is saved with the joined cut');
+  assert.deepEqual(state.transcripts.v.draftEdits[0].takenIn,[{...inner,at:0}],'the taken-in cut is saved with the joined cut, with its place');
   editing.load(null,{...VIDEO,id:'other'});
   editing.load(JSON.parse(JSON.stringify(state.transcripts.v)),state.videos[0]);
   await editing.undo();
@@ -139,6 +139,12 @@ test('a long run of single-word Deletes keeps saving, and Undo still steps back 
     editing.selectWords(i);
     assert.ok(await editing.remove(),`Delete ${i+1} saves`);
   }
+  // The oldest Deletes are too far back to undo one by one: their notes close now, saying their words stay cut under
+  // the newer note, never that the passage is kept.
+  const oldest=state.comments[0].id;
+  assert.ok(editing.edits()[0].wordIds.includes('W0'),'W0 is still cut');
+  assert.deepEqual(calls.reasons.find(([id])=>id===oldest)?.[1],{text:JOINED_TEXT});
+  assert.equal(calls.cancels.length,calls.reasons.length,'no note was closed as kept');
   assert.deepEqual(editing.edits().map(e=>e.wordIds.length),[55],'one cut');
   for(const left of [54,53,52]){await editing.undo();assert.deepEqual(editing.edits().map(e=>e.wordIds.length),[left]);}
   // Undo too far back for the saved history: the words come back with the oldest Delete still kept, and no note is
@@ -703,4 +709,33 @@ test('the panel only draws: the editing rules and saves live in transcript-editi
   assert.match(panel,/import \{createTranscriptEditing[,\w]*\} from '\.\/transcript-editing\.js';/,'the panel uses the editing module');
   for(const rule of ['makeRemoval','piecesLeft','joinedCut','lastCutGroup','cutsToRestore','nextWordAfterDelete','wordSelection','removalBounds','cutNotes','notePending','draftEdits:'])
     assert.ok(!panel.includes(rule),`${rule} belongs in transcript-editing.js, not the page`);
+});
+
+test('bringing back every word of three neighbouring Deletes closes all three notes',async()=>{
+  const {editing,state,calls}=setup();editing.setLoudness('v',loudness());
+  for(const i of [2,3,4]){editing.selectWords(i);await editing.remove();}
+  assert.deepEqual(editing.edits().map(words),[['W2','W3','W4']]);
+  await editing.restoreWords(['W2','W3','W4']);
+  assert.deepEqual(editing.edits(),[]);
+  assert.deepEqual(state.comments.map(c=>c.id).filter(id=>!calls.cancels.includes(id)),[],'no note is left open');
+});
+
+test('Undo keeps the order of the Deletes after a join, also after a reload',async()=>{
+  const {editing,state}=setup();editing.setLoudness('v',loudness());
+  for(const i of [2,7,3]){editing.selectWords(i);await editing.remove();}
+  editing.load(JSON.parse(JSON.stringify(state.transcripts.v)),state.videos[0]);
+  await editing.undo();
+  assert.deepEqual(editing.edits().map(words),[['W2'],['W7']],'the joined cut is undone, and word 2 goes back to its place');
+  await editing.undo();
+  assert.deepEqual(editing.edits().map(words),[['W2']],'the next Undo brings back word 7, the Delete made after word 2');
+});
+
+test('a Delete that joins a cut near the note length limit still saves, its note quote shortened',async()=>{
+  const long=Array.from({length:40},(_,i)=>({id:'W'+i,text:String(i%10).repeat(99),startMs:i*200+10,endMs:i*200+150}));
+  const {editing,calls}=setup({transcript:{revision:'r1',words:long,cuts:[]}});
+  editing.selectWords(0,29);assert.ok(await editing.remove(),'a 2,999-character cut saves');
+  editing.selectWords(30);assert.ok(await editing.remove(),'joining one more word still saves');
+  assert.deepEqual(editing.edits().map(e=>e.wordIds.length),[31],'the cut keeps every word');
+  const ask=calls.requests.at(-1);
+  assert.ok(ask.editRequest.quote.length<=3000&&ask.editRequest.quote.endsWith('…'));
 });
