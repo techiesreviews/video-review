@@ -12,6 +12,14 @@ const NOTE_PAUSE_MS=450;
 // How long a Delete waits for the video's loudness while the server still measures it; after that it cuts on the
 // transcript's word times, as it does when there is no loudness at all.
 const LOUDNESS_WAIT_MS=4000;
+// Undo reaches back at most this many joins into one cut (the stores refuse a deeper takenIn), so a long run of
+// Deletes next to each other keeps saving; the oldest joins are let go.
+const UNDO_JOINS=30;
+const keepJoins=(edit,depth=1)=>{
+  if(!edit.takenIn)return edit;
+  const {takenIn,...rest}=edit;
+  return depth>=UNDO_JOINS?rest:{...rest,takenIn:takenIn.map(e=>keepJoins(e,depth+1))};
+};
 export const RELOADED_TEXT='The transcript changed while this was saving. The edit was saved, and the transcript is loaded again.';
 export const REFUSED_TEXT='Not saved: the words changed elsewhere. Try again.';
 export const REMOVED_TEXT='Not saved: the transcript was removed elsewhere.';
@@ -212,7 +220,7 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
       grew&&=edits().some(e=>!taken.has(e)&&e.startMs<endMs&&e.endMs>startMs);
     }
     const edit={id:crypto.randomUUID(),startMs,endMs,wordIds:words.slice(lo,hi+1).map(w=>w.id),kind:'words',quote:chosen.quote,
-      ...(taken.size?{takenIn:[...taken]}:{})};
+      ...(taken.size?{takenIn:[...taken].map(e=>keepJoins(e))}:{})};
     const kept=edits().filter(e=>!taken.has(e));
     if(previewDuration(video.durationMs,[...kept,edit])<1000/video.fps)throw Error('Keep at least one frame in the video.');
     return {chosen,edit,kept,taken:[...taken]};

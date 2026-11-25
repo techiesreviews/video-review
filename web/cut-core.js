@@ -68,7 +68,8 @@ export function removalBounds(transcript,selection,durationMs,fps=30,env=null){
   let start=selection.startMs,end=selection.endMs,aligned=false;
   if(!selection.precise&&selection.kind!=='pause'){
     const first=words.findIndex(w=>w.id===wordIds[0]),last=words.findIndex(w=>w.id===wordIds.at(-1)),before=words[first-1],after=words[last+1];
-    if(env&&first>=0&&last>=first){({startMs:start,endMs:end}=cleanCut(words,first,last,env,{fps,durationMs}));aligned=true;}
+    const found=env&&first>=0&&last>=first?cleanCut(words,first,last,env,{fps,durationMs}):null;
+    if(found){({startMs:start,endMs:end}=found);aligned=true;}
     else{
       if(first>=0&&before)start=Math.max(before.endMs,start-Math.min(120,Math.max(0,start-before.endMs)/2));
       if(last>=0&&after)end=Math.min(after.startMs,end+Math.min(120,Math.max(0,after.startMs-end)/2));
@@ -88,7 +89,7 @@ export function exportCut(transcript,video){
   for(const [a,b] of removed){if(a>at)kept.push([at,a]);at=b;}if(at<duration)kept.push([at,duration]);
   const fps=video.fps,sourceRanges=video.keepRanges||[[0,frame(duration,fps)]],keepRanges=[];
   for(const [a,b] of kept){let cursor=0;for(const [start,end] of sourceRanges){const length=(end-start)/fps*1000,left=Math.max(a,cursor),right=Math.min(b,cursor+length);if(right>left)keepRanges.push([Math.round(start+(left-cursor)*fps/1000),Math.round(start+(right-cursor)*fps/1000)]);cursor+=length;}}
-  // The preview's fade travels with the ranges, so the export sounds like the preview: each join fades over
-  // audioFadeMs, on the kept side (the end of the range before it, the start of the range after it).
+  // The fade travels with the ranges: each join fades over audioFadeMs on the kept side (the end of the range before
+  // it, the start of the range after it). The preview's fade ends a little earlier, to cover the player's clock lag.
   return {schemaVersion:1,videoId:video.id,transcriptRevision:transcript.revision,fps,keepRanges,audioFadeMs:JOIN_FADE_MS,audioFadeSide:'kept',draftEdits:(transcript.draftEdits||[]).map(({takenIn,...edit})=>edit),durationMs:Math.round(keepRanges.reduce((n,[a,b])=>n+b-a,0)/fps*1000),note:'Preview cut decisions for the existing Resolve timeline; original media and review timestamps are unchanged.'};
 }

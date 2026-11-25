@@ -132,6 +132,17 @@ test('after a reload or a video switch, Undo of a joined Delete still brings bac
   assert.deepEqual(calls.cancels,[joined.commentId],'the taken-in cut keeps its note open');
 });
 
+test('a long run of single-word Deletes keeps saving, and Undo still steps back one Delete at a time',async()=>{
+  const many=Array.from({length:60},(_,i)=>({id:'W'+i,text:'w'+i,startMs:i*150+10,endMs:i*150+110}));
+  const {editing}=setup({transcript:{revision:'r1',words:many,cuts:[]}});
+  for(let i=0;i<55;i++){
+    editing.selectWords(i);
+    assert.ok(await editing.remove(),`Delete ${i+1} saves`);
+  }
+  assert.deepEqual(editing.edits().map(e=>e.wordIds.length),[55],'one cut');
+  for(const left of [54,53,52]){await editing.undo();assert.deepEqual(editing.edits().map(e=>e.wordIds.length),[left]);}
+});
+
 test('a Delete cuts the words selected when it was pressed, even if another word is clicked while it waits',async()=>{
   const {editing,fire}=setup();editing.setLoudness('v',new Promise(()=>{}));
   editing.selectWords(1,2);

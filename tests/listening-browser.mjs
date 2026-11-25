@@ -71,6 +71,8 @@ try{
  await page.locator('#pauseThreshold').selectOption('1000');assert.equal(await page.locator('.transcript-pause').count(),0);
  await page.locator('#pauseThreshold').selectOption('450');assert.ok(await page.locator('.transcript-pause').count()>0);
  await page.locator('.transcript-pause').first().click();assert.equal(await page.locator('video').evaluate(v=>v.paused),true);
+ // Selecting the pause scrolls the transcript to it; the bar follows on the next frame, before it is drawn.
+ await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
  {const bar=await page.locator('#transcriptSelection').boundingBox(),gap=await page.locator('.transcript-pause').first().boundingBox(),below=bar.y-(gap.y+gap.height),above=gap.y-(bar.y+bar.height);
   assert.ok((below>=0&&below<=80)||(above>=0&&above<=80),`The bar opens next to a selected pause (gap below ${below}, above ${above}).`);}
  const start=await page.locator('#waveformStart').boundingBox();await page.mouse.move(start.x+start.width/2,start.y+start.height/2);await page.mouse.down();await page.mouse.move(start.x+start.width/2+15,start.y+start.height/2,{steps:5});await page.mouse.up();
