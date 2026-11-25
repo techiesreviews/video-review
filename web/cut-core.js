@@ -2,6 +2,7 @@
 // The join fade is Lex's, from the cut preferences file the cutter and the join check read too.
 import preferences from './cut-preferences.json' with {type:'json'};
 import {frame} from './time-format.js';
+import {cleanCut} from './cut-boundary.js';
 export function normalizeDraftEdits(edits=[],durationMs=Infinity){
   if(!Array.isArray(edits)||edits.length>5000)throw Error('Invalid preview cuts.');
   const ids=new Set();
@@ -49,20 +50,26 @@ export function jumpPlan(ms,edits=[],{fadeMs=JOIN_FADE_MS,rate=1,horizonMs=70}={
   }
   return null;
 }
-export function removalBounds(transcript,selection,durationMs,fps=30){
+/** The frame-aligned span a Delete cuts. Words, with the video's loudness (env, see cut-boundary.js): from the real
+ *  silence or quietest moment around them, keeping the longer pause. Without it, from the transcript's word times. */
+export function removalBounds(transcript,selection,durationMs,fps=30,env=null){
   const words=transcript.words,wordIds=selection.kind==='pause'?[]:words.filter(w=>w.startMs<selection.endMs&&w.endMs>selection.startMs).map(w=>w.id);
-  let start=selection.startMs,end=selection.endMs;
+  let start=selection.startMs,end=selection.endMs,aligned=false;
   if(!selection.precise&&selection.kind!=='pause'){
     const first=words.findIndex(w=>w.id===wordIds[0]),last=words.findIndex(w=>w.id===wordIds.at(-1)),before=words[first-1],after=words[last+1];
-    if(first>=0&&before)start=Math.max(before.endMs,start-Math.min(120,Math.max(0,start-before.endMs)/2));
-    if(last>=0&&after)end=Math.min(after.startMs,end+Math.min(120,Math.max(0,after.startMs-end)/2));
+    if(env&&first>=0&&last>=first){({startMs:start,endMs:end}=cleanCut(words,first,last,env,{fps,durationMs}));aligned=true;}
+    else{
+      if(first>=0&&before)start=Math.max(before.endMs,start-Math.min(120,Math.max(0,start-before.endMs)/2));
+      if(last>=0&&after)end=Math.min(after.startMs,end+Math.min(120,Math.max(0,after.startMs-end)/2));
+    }
   }else if(!selection.precise){const room=Math.min(180,(end-start)/3);start+=room;end-=room;}
-  start=Math.max(0,(selection.precise?Math.round:Math.ceil)(start*fps/1000)*1000/fps);end=Math.min(durationMs,(selection.precise?Math.round:Math.floor)(end*fps/1000)*1000/fps);
-  if(end-start<1000/fps)throw Error('This selection is too short for a safe frame-aligned cut.');
+  // The loudness search lands on frame lines already; rounding again would only move an edge by a rounding error.
+  if(!aligned){start=Math.max(0,(selection.precise?Math.round:Math.ceil)(start*fps/1000)*1000/fps);end=Math.min(durationMs,(selection.precise?Math.round:Math.floor)(end*fps/1000)*1000/fps);}
+  if(end-start<1000/fps-0.5)throw Error('This selection is too short for a safe frame-aligned cut.');
   return {startMs:Math.round(start),endMs:Math.round(end),wordIds,kind:selection.kind==='pause'?'pause':'words',quote:selection.quote};
 }
-export function makeRemoval(transcript,selection,durationMs,fps=30){
-  const edit={id:crypto.randomUUID(),...removalBounds(transcript,selection,durationMs,fps)};
+export function makeRemoval(transcript,selection,durationMs,fps=30,env=null){
+  const edit={id:crypto.randomUUID(),...removalBounds(transcript,selection,durationMs,fps,env)};
   if(previewDuration(durationMs,[...(transcript.draftEdits||[]),edit])<1000/fps)throw Error('Keep at least one frame in the video.');return edit;
 }
 export function exportCut(transcript,video){
@@ -70,5 +77,7 @@ export function exportCut(transcript,video){
   for(const [a,b] of removed){if(a>at)kept.push([at,a]);at=b;}if(at<duration)kept.push([at,duration]);
   const fps=video.fps,sourceRanges=video.keepRanges||[[0,frame(duration,fps)]],keepRanges=[];
   for(const [a,b] of kept){let cursor=0;for(const [start,end] of sourceRanges){const length=(end-start)/fps*1000,left=Math.max(a,cursor),right=Math.min(b,cursor+length);if(right>left)keepRanges.push([Math.round(start+(left-cursor)*fps/1000),Math.round(start+(right-cursor)*fps/1000)]);cursor+=length;}}
-  return {schemaVersion:1,videoId:video.id,transcriptRevision:transcript.revision,fps,keepRanges,draftEdits:transcript.draftEdits||[],durationMs:Math.round(keepRanges.reduce((n,[a,b])=>n+b-a,0)/fps*1000),note:'Preview cut decisions for the existing Resolve timeline; original media and review timestamps are unchanged.'};
+  // The preview's fade travels with the ranges, so the export sounds like the preview: each join fades over
+  // audioFadeMs, on the kept side (the end of the range before it, the start of the range after it).
+  return {schemaVersion:1,videoId:video.id,transcriptRevision:transcript.revision,fps,keepRanges,audioFadeMs:JOIN_FADE_MS,audioFadeSide:'kept',draftEdits:transcript.draftEdits||[],durationMs:Math.round(keepRanges.reduce((n,[a,b])=>n+b-a,0)/fps*1000),note:'Preview cut decisions for the existing Resolve timeline; original media and review timestamps are unchanged.'};
 }

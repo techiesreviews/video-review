@@ -316,11 +316,12 @@ test('the export keeps exactly the ranges the preview plays, with the same fade 
   const {envelope,HOP_MS}=await import('../web/cut-boundary.js');
   const {removalBounds,exportCut}=await import('../web/cut-core.js');
   const {wordSelection}=await import('../web/transcript-core.js');
-  const durationMs=10000,db=new Float32Array(durationMs/HOP_MS).fill(-80);
   const words=Array.from({length:9},(_,i)=>({id:'W'+i,text:'w'+i,startMs:i*1000+100,endMs:i*1000+800}));
-  for(const w of words)for(let i=(w.startMs+30)/HOP_MS;i<(w.endMs-20)/HOP_MS;i++)db[i]=-20;
-  const env=envelope(db);
   for(const fps of [30,29.97]){
+    // A real video is a whole number of frames long: 300 frames.
+    const durationMs=Math.round(300*1000/fps),db=new Float32Array(durationMs/HOP_MS).fill(-80);
+    for(const w of words)for(let i=(w.startMs+30)/HOP_MS;i<(w.endMs-20)/HOP_MS;i++)db[i]=-20;
+    const env=envelope(db);
     const transcript={revision:'r',words},draftEdits=[[2,3],[6,6]].map(([a,b],n)=>({id:'e'+n,...removalBounds(transcript,wordSelection(words,a,b),durationMs,fps,env)}));
     const cut=exportCut({...transcript,draftEdits},{id:'v',fps,durationMs});
     const exported=cut.keepRanges.map(([a,b])=>[Math.round(a*1000/fps),Math.round(b*1000/fps)]);
