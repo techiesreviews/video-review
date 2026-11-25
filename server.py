@@ -5,6 +5,8 @@ from urllib.parse import urlsplit,parse_qs,unquote,quote
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 sys.path.insert(0,str(Path(__file__).resolve().parent/'scripts'/'video'))
 import review_store as store
+import loudness
+import media_tools
 import overview_page
 import rough_cut
 import scene_store
@@ -86,6 +88,7 @@ class Handler(BaseHTTPRequestHandler):
         if route.startswith('/api/transcript/'):
             try:return self.send_json(store.get_transcript(DATA,route[len('/api/transcript/'):]))
             except ValueError as error:return self.send_json({'error':str(error)},404)
+        if route.startswith('/api/loudness/'):return self.send_loudness(route[len('/api/loudness/'):])
         if route=='/api/view-request':return self.send_json(store.read(DATA/'view-request.json',{}))
         if route.startswith('/scenes/'):
             path=self.scene_path(route[len('/scenes/'):])
@@ -94,7 +97,7 @@ class Handler(BaseHTTPRequestHandler):
             key=route[7:];item=next((x for x in store.videos(DATA) if x['id']==key),None)
             if not item:return self.send_error(404)
             path=Path(item['path'])
-        elif route in ['/','/index.html','/app.js','/backend.js','/review-core.js','/transcript-core.js','/transcript-panel.js','/transcript-editing.js','/edit-bar-core.js','/cut-core.js','/cut-playback.js','/join-fade.js','/waveform-core.js','/waveform-panel.js','/library-panel.js','/time-format.js','/cut-preferences.json','/review-rules.json','/style.css']:
+        elif route in ['/','/index.html','/app.js','/backend.js','/review-core.js','/transcript-core.js','/transcript-panel.js','/transcript-editing.js','/edit-bar-core.js','/cut-core.js','/cut-boundary.js','/cut-playback.js','/join-fade.js','/waveform-core.js','/waveform-panel.js','/library-panel.js','/time-format.js','/cut-preferences.json','/review-rules.json','/style.css']:
             path=WEB/('index.html' if route=='/' else route[1:])
         else:return self.send_error(404)
         if not path.is_file():return self.send_error(404)
@@ -118,6 +121,18 @@ class Handler(BaseHTTPRequestHandler):
                     chunk=f.read(min(1024*1024,remaining))
                     if not chunk:break
                     self.wfile.write(chunk);remaining-=len(chunk)
+        except (BrokenPipeError,ConnectionResetError,ConnectionAbortedError):pass
+    def send_loudness(self,key):
+        """The video's loudness every 5 ms, one byte each (loudness.py), measured once per file version."""
+        item=next((x for x in store.videos(DATA) if x['id']==unquote(key)),None)
+        version=store.file_version(item['path']) if item else None
+        if version is None:return self.send_json({'error':'Unknown video'},404)
+        try:payload=loudness.cached(DATA,item['path'],version)
+        except media_tools.MediaToolError as error:return self.send_json({'error':str(error)},503)
+        except loudness.NoSound as error:return self.send_json({'error':f'No sound to measure: {error}'},422)
+        self.send_response(200);self.send_header('Content-Type','application/octet-stream');self.send_header('Content-Length',str(len(payload)));self.send_header('Cache-Control','no-store')
+        self.end_headers()
+        try:self.wfile.write(payload)
         except (BrokenPipeError,ConnectionResetError,ConnectionAbortedError):pass
     def do_OPTIONS(self):
         # The browser asks first before the saved overview page may send a star from the origin "null".
