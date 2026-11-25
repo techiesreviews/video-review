@@ -187,7 +187,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     const transcript=editing.transcript,edits=editing.edits(),gone=deletedIds(edits),busy=editing.busy;
     for(const block of body.querySelectorAll('.source-removal'))block.remove();
     drawJoins();
-    for(let i=0;i<wordNodes.length;i++){const word=transcript.words[i],removed=gone.has(word.id);wordNodes[i].classList.toggle('removed-word',removed);wordNodes[i].setAttribute('aria-label',`${removed?'Deleted: ':''}${word.text}, ${stamp(word.startMs)}`);wordNodes[i].title=removed?`${stamp(word.startMs)} · click to bring this word back`:stamp(word.startMs);}
+    for(let i=0;i<wordNodes.length;i++){const word=transcript.words[i],removed=gone.has(word.id);wordNodes[i].classList.toggle('removed-word',removed);wordNodes[i].setAttribute('aria-label',removed?`Deleted: ${word.text}, ${stamp(word.startMs)}, press Enter to bring it back`:`${word.text}, ${stamp(word.startMs)}`);wordNodes[i].title=removed?`${stamp(word.startMs)} · click to bring this word back`:stamp(word.startMs);}
     markSpaces();
     const ranges=removedRanges(edits);
     for(const gap of pauseNodes){const a=Number(gap.dataset.startMs),b=Number(gap.dataset.endMs),cut=ranges.reduce((n,[x,y])=>n+Math.max(0,Math.min(b,y)-Math.max(a,x)),0),seconds=ms=>(ms/1000).toFixed(1);gap.classList.toggle('removed-pause',cut>0);gap.textContent=cut>0?`${seconds(b-a)} → ${seconds(b-a-cut)} s pause`:`${seconds(b-a)} s pause`;}
@@ -316,7 +316,8 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     try{
       const done=await editing.restoreWords([word.id],{keep:stay});if(!done)return;
       if(stay)barStatus(broughtBackLine({noteResolved:done.noteResolved}));
-      else{clearView();refreshCuts();seek(Math.max(0,word.startMs-500));focusWords(i);}
+      // The word that came back is selected, so a mistaken click is one Backspace from being redone.
+      else{clearView();refreshCuts();seek(Math.max(0,word.startMs-500));focusWords(i);editing.anchor=i;choose(i,i,{focus:false});barStatus(broughtBackLine({noteResolved:done.noteResolved,selectedAgain:true}));}
     }catch(error){failed(error);}finally{refreshCuts();}
   }
   /** The bar's Restore on a selection that is all cut: those words come back (only those), or the selected pause's cut. */

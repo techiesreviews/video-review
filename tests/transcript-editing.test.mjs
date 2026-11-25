@@ -118,6 +118,39 @@ test('Undo of a Delete that took in earlier cuts brings them back as they were, 
   assert.equal(await editing.undo(),null,'nothing left to undo');
 });
 
+test('after a reload or a video switch, Undo of a joined Delete still brings back the cuts it took in, notes open',async()=>{
+  const {editing,state,calls}=setup();editing.setLoudness('v',loudness());
+  editing.selectWords(2);await editing.remove();
+  const inner=editing.edits()[0];
+  editing.selectWords(0,4);await editing.remove();
+  const joined=editing.edits()[0];
+  assert.deepEqual(state.transcripts.v.draftEdits[0].takenIn,[inner],'the taken-in cut is saved with the joined cut');
+  editing.load(null,{...VIDEO,id:'other'});
+  editing.load(JSON.parse(JSON.stringify(state.transcripts.v)),state.videos[0]);
+  await editing.undo();
+  assert.deepEqual(editing.edits(),[inner],'only the joined Delete is undone');
+  assert.deepEqual(calls.cancels,[joined.commentId],'the taken-in cut keeps its note open');
+});
+
+test('a Delete cuts the words selected when it was pressed, even if another word is clicked while it waits',async()=>{
+  const {editing,fire}=setup();editing.setLoudness('v',new Promise(()=>{}));
+  editing.selectWords(1,2);
+  const done=editing.remove();
+  editing.selectWords(7);
+  fire();await done;
+  assert.deepEqual(editing.edits().map(words),[['W1','W2']]);
+});
+
+test('while the loudness is still being measured, only the first edit waits for it',async()=>{
+  const {editing,fire}=setup();editing.setLoudness('v',new Promise(()=>{}));
+  editing.selectWords(1);const first=editing.remove();
+  await new Promise(done=>setTimeout(done,0));fire();await first;
+  editing.selectWords(5);
+  const second=await Promise.race([editing.remove(),new Promise(done=>setTimeout(()=>done('waited'),50))]);
+  assert.notEqual(second,'waited','the second Delete cuts on the word times at once');
+  assert.deepEqual(editing.edits().map(words),[['W1'],['W5']]);
+});
+
 test('restoring one word in the middle of a cut splits it in two, keeping its outer edges and its note',async()=>{
   const {editing,calls}=setup();editing.setLoudness('v',loudness());
   editing.selectWords(1,3);await editing.remove();

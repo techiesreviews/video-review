@@ -134,8 +134,9 @@ Drag across words, or click one and Shift+click another, to select whole words; 
 transcript and one on the waveform. **Delete** makes one cut, and takes in any deleted words next to or inside it. The
 cut's edges come from the sound itself: the real pause around the words (or the quietest moment, when words run
 together), keeping the longer of the two pauses, on whole video frames. The local server measures each video's
-loudness once and keeps it; online, the decoded waveform supplies it. Each join fades over 15 ms on the kept side, in
-the preview and in the exported cut list (`audioFadeMs`), and the preview never plays sound from inside a cut.
+loudness once and keeps it; online, the decoded waveform supplies it. Each join fades over 15 ms on the kept side in
+the exported cut list (`audioFadeMs`). The preview's fade ends 20 ms before each cut, because the player's clock trails
+the sound it has already sent, so the preview never plays sound from inside a cut.
 
 The attached transcript may also contain an `original` section with the full source recording's word timings,
 duration and source identity. Its word IDs must match those in the derived review transcript. This section is

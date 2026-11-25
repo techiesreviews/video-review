@@ -295,7 +295,7 @@ try{
   assert.equal(await page.locator('.transcript-word.removed-word:visible').count(),4,'The words of both cuts are still shown.');
   assert.deepEqual(await page.locator('.transcript-word.removed-word').allInnerTexts(),['word4','word5','word10','word11']);
   assert.match(await page.locator('.transcript-word.removed-word').first().evaluate(n=>getComputedStyle(n).textDecorationLine),/line-through/,'Deleted words are struck through.');
-  assert.equal(await page.locator('.transcript-word').nth(4).getAttribute('aria-label'),'Deleted: word4, 0:02.050','A screen reader hears that the word is deleted.');
+  assert.equal(await page.locator('.transcript-word').nth(4).getAttribute('aria-label'),'Deleted: word4, 0:02.050, press Enter to bring it back','A screen reader hears that the word is deleted, and how to bring it back.');
   assert.equal(await page.locator('.restore-cut:not(.source-restore)').count(),0,'No Restore buttons in the text.');
   assert.match(await text('#cutPreviewStatus'),/Preview cut · 0:06\.000 · 2\.0 s removed$/,'The cut still skips the deleted words.');
   const cutWords=async()=>(await editsOnDisk()).sort((x,y)=>x.startMs-y.startMs).map(e=>e.wordIds);
@@ -306,9 +306,18 @@ try{
   await page.locator('.transcript-word').nth(4).click();await page.waitForTimeout(250);
   assert.deepEqual(await cutWords(),[['W5'],['W10','W11']],'A click on a deleted word brings back only that word.');
   assert.equal(await removedAt(4),false);
+  // The word that came back is selected, so a mistaken click is one Backspace from being redone.
+  assert.equal((await page.locator('.transcript-word.selected').allInnerTexts()).join(' '),'word4','The word that came back is selected.');
+  assert.equal(await text('#barStatus'),'Brought back. Backspace deletes it again.');
+  await page.keyboard.press('Backspace');await page.waitForTimeout(250);
+  assert.deepEqual(await cutWords(),[['W4','W5'],['W10','W11']],'Backspace cuts it again, as one cut with its neighbour.');
+  await page.keyboard.press('Escape');await page.locator('.transcript-word').nth(4).click();await page.waitForTimeout(250);
+  assert.deepEqual(await cutWords(),[['W5'],['W10','W11']]);
   // Dragging over deleted words selects them: the first button is Restore, and Backspace never cuts them twice.
   await page.keyboard.press('Escape');await drag(10,11);await nextToWords('deleted words');
   assert.equal(await page.evaluate(()=>getSelection().toString()),'','The browser does not highlight the text itself.');
+  const ground=selector=>page.locator(selector).first().evaluate(n=>getComputedStyle(n).backgroundColor);
+  assert.equal(await ground('.transcript-space.selected'),await ground('.transcript-word.selected'),'The space between selected deleted words is part of one band.');
   assert.equal((await page.locator('#transcriptSelection button:visible').first().innerText()).trim(),'Restore','On deleted words the first button brings them back.');
   await page.keyboard.press('Backspace');await page.waitForTimeout(250);assert.deepEqual(await cutWords(),[['W5'],['W10','W11']],'Backspace does not cut deleted words again.');
   await page.locator('[data-transcript-action="remove"]').click();await page.waitForTimeout(250);

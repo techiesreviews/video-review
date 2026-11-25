@@ -117,3 +117,13 @@ test('a video registered with the hash of its file keeps it, and one without has
   for(const bad of [hash.slice(1),hash+'0','sha256:'+hash,'',{},7])
     assert.throws(()=>checkVideo({...entry,sha256:bad},[]),/sha256 must be 64 hex digits/);
 });
+
+test('a joined cut keeps the cuts it took in for its Undo, checked like cuts, and the export leaves them out',()=>{
+  const inner={id:'in',startMs:250,endMs:450,wordIds:['a'],quote:'one',kind:'words',commentId:'c1'};
+  const [cut]=normalizeDraftEdits([{id:'cut',startMs:200,endMs:500,wordIds:['a'],takenIn:[inner]}],2000);
+  assert.deepEqual(cut.takenIn,[inner]);
+  assert.throws(()=>normalizeDraftEdits([{id:'cut',startMs:200,endMs:500,wordIds:['a'],takenIn:[{...inner,endMs:3000}]}],2000));
+  assert.throws(()=>normalizeDraftEdits([{id:'cut',startMs:200,endMs:500,wordIds:['a'],takenIn:'x'}],2000));
+  const out=exportCut({revision:'r',draftEdits:[cut]},{id:'v',durationMs:2000,fps:30});
+  assert.equal('takenIn' in out.draftEdits[0],false);
+});

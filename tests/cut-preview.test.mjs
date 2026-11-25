@@ -313,7 +313,7 @@ test('with the cuts off, playing straight through a removal never jumps',t=>{
   assert.deepEqual(video.seeks,[]);assert.deepEqual(calls,[]);
 });
 
-test('the export keeps exactly the ranges the preview plays, with the same fade on the kept side of each join',async()=>{
+test('the export keeps exactly the ranges the preview plays, with a fade on the kept side of each join',async()=>{
   // Two word cuts found in the audio (TOOLS-463), at a whole and at a broken frame rate.
   const {envelope,HOP_MS}=await import('../web/cut-boundary.js');
   const {removalBounds,exportCut}=await import('../web/cut-core.js');

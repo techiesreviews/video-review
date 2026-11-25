@@ -54,6 +54,16 @@ class TranscriptReviewTests(unittest.TestCase):
         self.assertEqual(store.save_transcript(self.data,'v',t)['draftEdits'][0]['wordIds'],['a'])
         t['draftEdits'][0]['endMs']=3000
         with self.assertRaises(ValueError):store.save_transcript(self.data,'v',t)
+    def test_the_cuts_a_joined_cut_took_in_are_kept_for_its_undo_and_checked_like_cuts(self):
+        inner={'id':'in','startMs':250,'endMs':450,'wordIds':['a'],'quote':'one','kind':'words','commentId':'c1'}
+        t={'words':[{'id':'a','text':'one','startMs':100,'endMs':600}],
+           'draftEdits':[{'id':'cut','startMs':200,'endMs':500,'wordIds':['a'],'quote':'one','takenIn':[inner]}]}
+        saved=store.save_transcript(self.data,'v',t)['draftEdits'][0]
+        self.assertEqual(saved['takenIn'],[inner])
+        self.assertNotIn('takenIn',store.save_transcript(self.data,'v',{**t,'draftEdits':[{**t['draftEdits'][0],'takenIn':[]}]})['draftEdits'][0])
+        for bad in [{**inner,'endMs':3000},'x']:
+            with self.subTest(bad=bad),self.assertRaises(ValueError):
+                store.save_transcript(self.data,'v',{**t,'draftEdits':[{**t['draftEdits'][0],'takenIn':[bad]}]})
     def test_an_edits_only_save_is_refused_once_the_saved_words_changed(self):
         # The page saves its preview cuts with editsOnly; a new render or an import that came in meanwhile wins.
         words=[{'id':'a','text':'one','startMs':100,'endMs':600},{'id':'b','text':'two','startMs':700,'endMs':1200}]
