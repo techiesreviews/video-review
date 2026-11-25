@@ -2,13 +2,16 @@
 // There is no page here. The panel passes clicks in and draws what this module holds; the browser parts (saving the
 // transcript, the comment list, timers) are passed in, so every rule runs in a test without a browser.
 import {activeWordIndex,wordSelection,wordsInSpan} from './transcript-core.js';
-import {makeRemoval,removalBounds} from './cut-core.js';
-import {cutsToRestore,deletedIds,keptRuns,lastCutGroup,nextWordAfterDelete} from './edit-bar-core.js';
+import {makeRemoval,previewDuration,removalBounds} from './cut-core.js';
+import {cutsToRestore,deletedIds,lastCutGroup,nextWordAfterDelete} from './edit-bar-core.js';
 import {clock} from './time-format.js';
 import {RULES} from './review-core.js';
 
 const stamp=ms=>clock(ms,{places:3,hours:false});
 const NOTE_PAUSE_MS=450;
+// How long a Delete waits for the video's loudness while the server still measures it; after that it cuts on the
+// transcript's word times, as it does when there is no loudness at all.
+const LOUDNESS_WAIT_MS=4000;
 export const RELOADED_TEXT='The transcript changed while this was saving. The edit was saved, and the transcript is loaded again.';
 export const REFUSED_TEXT='Not saved: the words changed elsewhere. Try again.';
 export const REMOVED_TEXT='Not saved: the transcript was removed elsewhere.';
@@ -30,9 +33,28 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
   let note={id:null,base:''},pendingNote=null,cancelNoteTimer=null;
   // Notes typed with a Delete, by comment id: Undo hands them back to the box.
   const cutNotes=new Map();
+  // The loudness of each video by id ({env, promise}, see setLoudness), and the cuts each Delete took into its own cut
+  // (by the new cut's id), which its Undo brings back as they were.
+  const loudness=new Map(),takenIn=new Map();
 
   const edits=()=>transcript?.draftEdits||[];
   const indexOf=id=>transcript.words.findIndex(w=>w.id===id);
+
+  /** The video's loudness (an envelope from cut-boundary.js, or a promise of one) for finding where word cuts go. */
+  function setLoudness(videoId,value){
+    if(!value)return void loudness.delete(videoId);
+    const entry={env:null,promise:null};loudness.set(videoId,entry);
+    if(typeof value.then!=='function'){entry.env=value;return;}
+    entry.promise=Promise.resolve(value).then(env=>{entry.env=env||null;return entry.env;},()=>null);
+  }
+  /** The open video's loudness now, or after a short wait while it is still being measured; null without it. */
+  async function loudnessSoon(){
+    const entry=loudness.get(video?.id);
+    if(!entry||entry.env||!entry.promise)return entry?.env||null;
+    let cancel=null;const late=new Promise(done=>{cancel=schedule(()=>done(null),LOUDNESS_WAIT_MS);});
+    try{return await Promise.race([entry.promise,late]);}finally{cancel?.();}
+  }
+  const loudnessNow=()=>loudness.get(video?.id)?.env||null;
 
   function flushNote(){
     cancelNoteTimer?.();cancelNoteTimer=null;
@@ -87,12 +109,15 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
     selection={...selection,...range,precise:true};return true;
   }
   function selectedIds(){return selection?.a!=null&&transcript?transcript.words.slice(selection.a,selection.b+1).map(w=>w.id):[];}
-  /** The cuts that bring the selection back, when every selected word is deleted already. */
-  function toRestore(){return cutsToRestore(edits(),selectedIds());}
+  /** The cuts that bring the selection back: when every selected word is deleted already, or a selected pause is cut. */
+  function toRestore(){
+    if(selection?.kind==='pause')return edits().filter(e=>e.kind==='pause'&&e.startMs<selection.endMs&&e.endMs>selection.startMs);
+    return cutsToRestore(edits(),selectedIds());
+  }
   /** The frame-aligned span a Delete would cut, or null for a selection too short for one. */
   function bounds(){
     if(!selection||!transcript)return null;
-    try{return removalBounds(transcript,selection,video.durationMs,video.fps);}
+    try{return removalBounds(transcript,selection,video.durationMs,video.fps,loudnessNow());}
     catch{return null;}
   }
 
@@ -153,28 +178,61 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
     finally{busy=false;}
   }
 
-  /** Delete: cuts the selection (words, a pause, a join span). Words already deleted inside it stay in their own cut,
-   *  so only the runs still in the cut are cut, one piece each, sharing one note. typed: the note typed with it. */
+  /** Waits for the video's loudness; a new transcript that came in meanwhile ends the edit before anything is asked. */
+  async function loudnessFor(at){
+    const env=await loudnessSoon();
+    if(stale(at))throw Error(RULES.messages.transcriptChanged);
+    return env;
+  }
+  /** One cut over whole words lo..hi that takes in every cut it touches: word cuts inside or right next to the words
+   *  (so a run of deleted words is one cut), and any other cut its span overlaps. Nothing a taken-in cut removed comes back. */
+  function joinedCut(lo,hi,env){
+    const words=transcript.words,taken=new Set();
+    const span=e=>(e.wordIds||[]).map(indexOf).filter(i=>i>=0);
+    for(let grew=true;grew;){
+      grew=false;
+      for(const e of edits()){
+        if(taken.has(e)||e.kind==='pause')continue;
+        const at=span(e);if(!at.some(i=>i>=lo-1&&i<=hi+1))continue;
+        taken.add(e);lo=Math.min(lo,...at);hi=Math.max(hi,...at);grew=true;
+      }
+    }
+    const chosen={...wordSelection(words,lo,hi),a:lo,b:hi};
+    let {startMs,endMs}=removalBounds(transcript,chosen,video.durationMs,video.fps,env);
+    for(let grew=true;grew;){
+      grew=false;
+      for(const e of edits()){
+        if(taken.has(e)||!(e.startMs<endMs&&e.endMs>startMs))continue;
+        taken.add(e);grew=true;
+      }
+      for(const e of taken){if(e.startMs<startMs){startMs=e.startMs;grew=true;}if(e.endMs>endMs){endMs=e.endMs;grew=true;}}
+      grew&&=edits().some(e=>!taken.has(e)&&e.startMs<endMs&&e.endMs>startMs);
+    }
+    const edit={id:crypto.randomUUID(),startMs,endMs,wordIds:words.slice(lo,hi+1).map(w=>w.id),kind:'words',quote:chosen.quote};
+    const kept=edits().filter(e=>!taken.has(e));
+    if(previewDuration(video.durationMs,[...kept,edit])<1000/video.fps)throw Error('Keep at least one frame in the video.');
+    return {chosen,edit,kept,taken:[...taken]};
+  }
+
+  /** Delete: cuts the selection (words, a pause, a join span). Words are cut whole, at the silence the loudness shows
+   *  around them, and the cut takes in the cuts it touches (see joinedCut), so one Delete is one cut with one note.
+   *  typed: the note typed with it. */
   function remove({typed=''}={}){
     if(!selection||selection.kind==='source'||toRestore().length)return Promise.resolve(null);
     return exclusive(async at=>{
-      const chosen=selection,wasWords=chosen.kind==null&&chosen.a!=null,first=chosen.a,last=chosen.b,said=String(typed).trim();
-      const gone=deletedIds(edits());
+      const env=await loudnessFor(at);
+      const picked=selection,wasWords=picked.kind==null&&picked.a!=null,said=String(typed).trim();
       // A span set with the waveform handles (precise) is an exact time span, so it is cut as it is.
-      const runs=wasWords&&!chosen.precise&&transcript.words.slice(first,last+1).some(w=>gone.has(w.id))?keptRuns(transcript.words,first,last,gone):null;
-      const parts=runs?runs.map(([i,j])=>wordSelection(transcript.words,i,j)):[chosen],pieces=[];
-      for(const part of parts)pieces.push(makeRemoval({...transcript,draftEdits:[...edits(),...pieces]},part,video.durationMs,video.fps));
-      const quote=parts.map(p=>p.quote).join(' … ');
-      const ask=askFor(chosen.kind==='pause'?'pause':'remove',`Remove from cut: “${quote}”`+(said?` — ${said}`:''),chosen);
-      // The note names only the words this Delete cut: from the first cut word to the last, and their times.
-      if(runs){
-        Object.assign(ask.editRequest,{quote,firstWordId:parts[0].firstWordId,lastWordId:parts.at(-1).lastWordId});
-        Object.assign(ask,{startMs:pieces[0].startMs,endMs:pieces.at(-1).endMs});
-      }
-      const base=edits(),saved=await request(ask);
-      for(const piece of pieces)piece.commentId=saved?.id||null;
+      let chosen=picked,edit,kept=edits(),taken=[];
+      if(wasWords&&!picked.precise)({chosen,edit,kept,taken}=joinedCut(picked.a,picked.b,env));
+      else edit=makeRemoval({...transcript,draftEdits:edits()},picked,video.durationMs,video.fps,env);
+      const ask=askFor(chosen.kind==='pause'?'pause':'remove',`Remove from cut: “${chosen.quote}”`+(said?` — ${said}`:''),chosen);
+      // The note covers what this Delete cut: its words and its span.
+      Object.assign(ask,{startMs:edit.startMs,endMs:edit.endMs});
+      const saved=await request(ask);
+      edit.commentId=saved?.id||null;
       let noteOpen;
-      try{noteOpen=await commit(at,[...base,...pieces]);}
+      try{noteOpen=await commit(at,[...kept,edit]);}
       catch(error){
         // No open note may claim a cut that was never saved.
         if(saved?.id&&!error.saved)await cancelRequest(saved.id).catch(onError);
@@ -182,31 +240,88 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
         throw error;
       }
       if(said&&saved?.id)cutNotes.set(saved.id,said);
+      if(taken.length)takenIn.set(edit.id,taken);
+      const first=chosen.a,last=chosen.b;
       const next=wasWords?nextWordAfterDelete(transcript.words,[...deletedIds(edits())],first,last):-1;
-      return {edit:pieces[0],pieces,wasWords,first,last,next,noteOpen,
+      return {edit,pieces:[edit],wasWords,first,last,next,noteOpen,
         line:said?'Deleted, with your note. Ctrl+Z brings both back.':'Deleted. Ctrl+Z brings it back.'};
     });
   }
 
-  /** Undo: brings back the last Delete, all its pieces together, and closes its note. keep: see commit. */
+  /** The cuts these took in when they were made, still waiting for their Undo. */
+  const takenBy=list=>[...new Set(list.flatMap(e=>takenIn.get(e.id)||[]))];
+  function forget(list){for(const e of list)takenIn.delete(e.id);}
+
+  /** Undo: brings back the last Delete, all its pieces together, puts back the cuts it took in as they were, and closes
+   *  its own note. keep: see commit. */
   function undo({keep=false}={}){
     if(!lastCutGroup(edits()))return Promise.resolve(null);
     return exclusive(async at=>{
       const count=lastCutGroup(edits()),undone=edits().slice(-count),edit=undone[0],said=cutNotes.get(edit.commentId)||'';
-      const noteOpen=await commitThenClose(at,edits().slice(0,-count),undone,{keep});
+      const earlier=edits().slice(0,-count),before=takenBy(undone).filter(e=>!earlier.some(k=>k.id===e.id));
+      const noteOpen=await commitThenClose(at,[...earlier,...before],undone,{keep});
+      forget(undone);
       const ids=undone.flatMap(e=>e.wordIds||[]);
       return {edit,undone,note:said,noteOpen,first:ids.length?indexOf(ids[0]):-1,last:ids.length?indexOf(ids.at(-1)):-1};
     });
   }
 
   /** Restore: brings back the cuts with these ids. A note shared with pieces still cut stays open; once its last piece
-   *  is back it is closed. keep: see commit. */
+   *  is back it is closed, with the notes of the cuts it took in. keep: see commit. */
   function restore(ids,{keep=false}={}){
     if(!edits().some(e=>ids.includes(e.id)))return Promise.resolve(null);
     return exclusive(async at=>{
       const back=edits().filter(e=>ids.includes(e.id)),noted=new Set(cutNotes.keys());
-      await commitThenClose(at,edits().filter(e=>!ids.includes(e.id)),back,{keep});
+      const remaining=edits().filter(e=>!ids.includes(e.id));
+      await commitThenClose(at,remaining,[...back,...takenBy(back)],{keep});
+      forget(back);
       return {back,noteResolved:back.some(e=>noted.has(e.commentId)&&!cutNotes.has(e.commentId))};
+    });
+  }
+
+  /** The cut left of edit once the words in `back` play again: one piece per run of words still cut. A piece keeps the
+   *  cut's own edge where it reaches it, and on the restored side ends at the silence before the restored word. */
+  function piecesLeft(edit,back,env){
+    const step=1000/video.fps,words=transcript.words,at=edit.wordIds.map(indexOf).filter(i=>i>=0).sort((x,y)=>x-y);
+    const cut=at.filter(i=>!back.has(words[i].id)),runs=[];
+    for(const i of cut){const run=runs.at(-1);if(run&&i===run[1]+1)run[1]=i;else runs.push([i,i]);}
+    const pieces=[];
+    for(const [i,j] of runs){
+      let found=null;
+      try{found=removalBounds(transcript,wordSelection(words,i,j),video.durationMs,video.fps,env);}catch{}
+      // No room for a frame-aligned cut from the word times alone: stop a whole frame clear of the restored words.
+      let startMs=i===at[0]?edit.startMs:found?found.startMs:Math.ceil(words[i-1].endMs/step)*step;
+      let endMs=j===at.at(-1)?edit.endMs:found?found.endMs:Math.floor(words[j+1].startMs/step)*step;
+      startMs=Math.round(Math.max(edit.startMs,startMs));endMs=Math.round(Math.min(edit.endMs,endMs));
+      if(endMs-startMs<step-0.5)continue;
+      const ids=words.slice(i,j+1).map(w=>w.id);
+      pieces.push({...edit,id:pieces.length?crypto.randomUUID():edit.id,startMs,endMs,wordIds:ids,quote:wordSelection(words,i,j).quote});
+    }
+    return pieces;
+  }
+  /** Restore words: each cut holding any of these words gives back just them. A cut with words left either side
+   *  becomes two cuts sharing its note; the note closes once none of its words is cut. keep: see commit. */
+  function restoreWords(ids,{keep=false}={}){
+    const back=new Set(ids),touches=e=>e.kind!=='pause'&&(e.wordIds||[]).some(id=>back.has(id));
+    if(!edits().some(touches))return Promise.resolve(null);
+    return exclusive(async at=>{
+      const env=await loudnessFor(at),noted=new Set(cutNotes.keys());
+      const touched=edits().filter(touches),remaining=[];
+      for(const e of edits()){
+        if(!touches(e)){remaining.push(e);continue;}
+        const pieces=piecesLeft(e,back,env);remaining.push(...pieces);
+        const held=takenIn.get(e.id);if(held)for(const piece of pieces)takenIn.set(piece.id,held);
+      }
+      // A cut a Delete took in has its note closed too, once none of its words is cut any more.
+      const stillCut=deletedIds(remaining),closing=takenBy(touched).filter(e=>!(e.wordIds||[]).some(id=>stillCut.has(id)));
+      await commitThenClose(at,remaining,[...touched,...closing],{keep});
+      for(const [id,held] of takenIn){
+        const left=held.filter(e=>!closing.includes(e));
+        if(!edits().some(e=>e.id===id)||!left.length)takenIn.delete(id);else takenIn.set(id,left);
+      }
+      const where=[...back].map(indexOf).filter(i=>i>=0);
+      return {back:touched,noteResolved:touched.some(e=>noted.has(e.commentId)&&!cutNotes.has(e.commentId)),
+        first:where.length?Math.min(...where):-1,last:where.length?Math.max(...where):-1};
     });
   }
 
@@ -264,7 +379,7 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
 
   return {
     /** A new transcript (or none) for a video: the selection goes, and saves still running from before are dropped. */
-    load(next,nextVideo){generation++;transcript=next;video=nextVideo;clear();},
+    load(next,nextVideo){generation++;if(nextVideo?.id!==video?.id)takenIn.clear();transcript=next;video=nextVideo;clear();},
     get transcript(){return transcript;},
     get video(){return video;},
     get selection(){return selection;},
@@ -275,6 +390,6 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
     get noteId(){return note.id;},
     edits,
     clear,selectWords,selectCut,selectPause,selectSource,wholeGap,adjust,selectedIds,toRestore,bounds,
-    remove,undo,restore,send,editNote,noteTyped,flushNote,alreadyAsked,askRestore,target,changeContext,
+    setLoudness,remove,undo,restore,restoreWords,send,editNote,noteTyped,flushNote,alreadyAsked,askRestore,target,changeContext,
   };
 }

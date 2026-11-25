@@ -14,7 +14,7 @@ test('the preview fade comes from the cut preferences file',async()=>{
     const saved=JSON.parse(await readFile(new URL('cut-preferences.json',web),'utf8'));
     saved.lex.audioFadeMs.value=17;
     await writeFile(join(folder,'cut-preferences.json'),JSON.stringify(saved));
-    for(const name of ['cut-core.js','time-format.js'])await copyFile(new URL(name,web),join(folder,name));
+    for(const name of ['cut-core.js','cut-boundary.js','time-format.js'])await copyFile(new URL(name,web),join(folder,name));
     const {JOIN_FADE_MS}=await import(pathToFileURL(join(folder,'cut-core.js')).href);
     assert.equal(JOIN_FADE_MS,17);
   }finally{await rm(folder,{recursive:true,force:true});}
