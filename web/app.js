@@ -22,7 +22,7 @@ let previewStop=null;
 const transcriptPanel=createTranscriptPanel({media:video,seek:ms=>{if(video.readyState>=1)seek(ms);else pendingSeek=ms;},pause:()=>video.pause(),playContext:(start,end)=>{seek(start);previewStop=end;video.play().catch(error=>showToastError(error.message));},showError:showToastError,cutsOn:()=>cutsOn,notify:text=>toast(text),togglePlay:()=>togglePlay(),agentConnected:async()=>{try{return await backend.agentConnected?.()??null;}catch{return null;}},
   request:async selection=>{if(!active)return;video.pause();const videoId=active.id,createdAt=new Date().toISOString();setSaveState('Saving…');try{const list=await backend.apply({action:'add',videoId,startMs:selection.startMs,endMs:selection.endMs,text:selection.text,editRequest:selection.editRequest,createdAt});setNotes(list);if(filter!=='open')setFilter('open');setSaveState(savedLabel());return list.findLast(n=>n.videoId===videoId&&n.createdAt===createdAt&&n.text===selection.text);}catch(error){setSaveState('Not saved');throw error;}},
   updateRequest:async(id,text)=>{const list=await backend.apply({action:'update',id,text});setNotes(list);setSaveState(savedLabel());return list.find(n=>n.id===id);},
-  cancelRequest:async id=>{setNotes(await backend.apply({action:'reply',id,author:'you',text:'Undid this preview removal; keep the passage.',status:'done'}));}});
+  cancelRequest:async(id,reason)=>{setNotes(await backend.apply({action:'reply',id,author:'you',text:reason?.text||'Undid this preview removal; keep the passage.',status:'done'}));}});
 const libraryPanel=createLibraryPanel({getBackend:()=>backend,showError:showToastError,
   open:async(id,atMs)=>{await selectVideo(id);if(atMs!=null){if(video.readyState>=1)seek(atMs);else pendingSeek=atMs;}},
   add:chooseVideoForBackend,

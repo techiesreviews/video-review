@@ -61,6 +61,11 @@ class TranscriptReviewTests(unittest.TestCase):
         saved=store.save_transcript(self.data,'v',t)['draftEdits'][0]
         self.assertEqual(saved['takenIn'],[inner])
         self.assertNotIn('takenIn',store.save_transcript(self.data,'v',{**t,'draftEdits':[{**t['draftEdits'][0],'takenIn':[]}]})['draftEdits'][0])
+        # A taken-in cut keeps its old place in the list (at) only when it is a whole number in range.
+        for at,kept in [(2,2),(True,None),(-1,None),(5001,None),(1.5,None)]:
+            with self.subTest(at=at):
+                got=store.save_transcript(self.data,'v',{**t,'draftEdits':[{**t['draftEdits'][0],'takenIn':[{**inner,'at':at}]}]})['draftEdits'][0]['takenIn'][0]
+                self.assertEqual(got.get('at'),kept)
         for bad in [{**inner,'endMs':3000},'x']:
             with self.subTest(bad=bad),self.assertRaises(ValueError):
                 store.save_transcript(self.data,'v',{**t,'draftEdits':[{**t['draftEdits'][0],'takenIn':[bad]}]})
