@@ -33,9 +33,9 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
   let note={id:null,base:''},pendingNote=null,cancelNoteTimer=null;
   // Notes typed with a Delete, by comment id: Undo hands them back to the box.
   const cutNotes=new Map();
-  // The loudness of each video by id ({env, promise}, see setLoudness), and the cuts each Delete took into its own cut
-  // (by the new cut's id), which its Undo brings back as they were.
-  const loudness=new Map(),takenIn=new Map();
+  // The loudness of each video by id ({env, promise, waited}, see setLoudness). The cuts a Delete took into its own cut
+  // are saved on that cut (takenIn), so its Undo brings them back as they were, also after a reload.
+  const loudness=new Map();
 
   const edits=()=>transcript?.draftEdits||[];
   const indexOf=id=>transcript.words.findIndex(w=>w.id===id);
@@ -43,15 +43,16 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
   /** The video's loudness (an envelope from cut-boundary.js, or a promise of one) for finding where word cuts go. */
   function setLoudness(videoId,value){
     if(!value)return void loudness.delete(videoId);
-    const entry={env:null,promise:null};loudness.set(videoId,entry);
+    const entry={env:null,promise:null,waited:false};loudness.set(videoId,entry);
     if(typeof value.then!=='function'){entry.env=value;return;}
     entry.promise=Promise.resolve(value).then(env=>{entry.env=env||null;return entry.env;},()=>null);
   }
-  /** The open video's loudness now, or after a short wait while it is still being measured; null without it. */
+  /** The open video's loudness now, or after a short wait while it is still being measured; null without it. Only the
+   *  first edit waits: once a wait ran out, later edits cut on the word times until the measurement is in. */
   async function loudnessSoon(){
     const entry=loudness.get(video?.id);
-    if(!entry||entry.env||!entry.promise)return entry?.env||null;
-    let cancel=null;const late=new Promise(done=>{cancel=schedule(()=>done(null),LOUDNESS_WAIT_MS);});
+    if(!entry||entry.env||!entry.promise||entry.waited)return entry?.env||null;
+    entry.waited=true;let cancel=null;const late=new Promise(done=>{cancel=schedule(()=>done(null),LOUDNESS_WAIT_MS);});
     try{return await Promise.race([entry.promise,late]);}finally{cancel?.();}
   }
   const loudnessNow=()=>loudness.get(video?.id)?.env||null;
@@ -210,7 +211,8 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
       for(const e of taken){if(e.startMs<startMs){startMs=e.startMs;grew=true;}if(e.endMs>endMs){endMs=e.endMs;grew=true;}}
       grew&&=edits().some(e=>!taken.has(e)&&e.startMs<endMs&&e.endMs>startMs);
     }
-    const edit={id:crypto.randomUUID(),startMs,endMs,wordIds:words.slice(lo,hi+1).map(w=>w.id),kind:'words',quote:chosen.quote};
+    const edit={id:crypto.randomUUID(),startMs,endMs,wordIds:words.slice(lo,hi+1).map(w=>w.id),kind:'words',quote:chosen.quote,
+      ...(taken.size?{takenIn:[...taken]}:{})};
     const kept=edits().filter(e=>!taken.has(e));
     if(previewDuration(video.durationMs,[...kept,edit])<1000/video.fps)throw Error('Keep at least one frame in the video.');
     return {chosen,edit,kept,taken:[...taken]};
@@ -221,9 +223,11 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
    *  typed: the note typed with it. */
   function remove({typed=''}={}){
     if(!selection||selection.kind==='source'||toRestore().length)return Promise.resolve(null);
+    // What is selected now is what this Delete cuts, also when another word is clicked while it waits for the loudness.
+    const picked=selection;
     return exclusive(async at=>{
       const env=await loudnessFor(at);
-      const picked=selection,wasWords=picked.kind==null&&picked.a!=null,said=String(typed).trim();
+      const wasWords=picked.kind==null&&picked.a!=null,said=String(typed).trim();
       // A span set with the waveform handles (precise) is an exact time span, so it is cut as it is.
       let chosen=picked,edit,kept=edits(),taken=[];
       if(wasWords&&!picked.precise)({chosen,edit,kept,taken}=joinedCut(picked.a,picked.b,env));
@@ -242,7 +246,6 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
         throw error;
       }
       if(said&&saved?.id)cutNotes.set(saved.id,said);
-      if(taken.length)takenIn.set(edit.id,taken);
       const first=chosen.a,last=chosen.b;
       const next=wasWords?nextWordAfterDelete(transcript.words,[...deletedIds(edits())],first,last):-1;
       return {edit,pieces:[edit],wasWords,first,last,next,noteOpen,
@@ -250,9 +253,8 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
     });
   }
 
-  /** The cuts these took in when they were made, still waiting for their Undo. */
-  const takenBy=list=>[...new Set(list.flatMap(e=>takenIn.get(e.id)||[]))];
-  function forget(list){for(const e of list)takenIn.delete(e.id);}
+  /** The cuts these took in when they were made, still waiting for their Undo (a cut split in two holds them in both). */
+  const takenBy=list=>[...new Map(list.flatMap(e=>e.takenIn||[]).map(e=>[e.id,e])).values()];
 
   /** Undo: brings back the last Delete, all its pieces together, puts back the cuts it took in as they were, and closes
    *  its own note. keep: see commit. */
@@ -262,7 +264,6 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
       const count=lastCutGroup(edits()),undone=edits().slice(-count),edit=undone[0],said=cutNotes.get(edit.commentId)||'';
       const earlier=edits().slice(0,-count),before=takenBy(undone).filter(e=>!earlier.some(k=>k.id===e.id));
       const noteOpen=await commitThenClose(at,[...earlier,...before],undone,{keep});
-      forget(undone);
       const ids=undone.flatMap(e=>e.wordIds||[]);
       return {edit,undone,note:said,noteOpen,first:ids.length?indexOf(ids[0]):-1,last:ids.length?indexOf(ids.at(-1)):-1};
     });
@@ -276,7 +277,6 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
       const back=edits().filter(e=>ids.includes(e.id)),noted=new Set(cutNotes.keys());
       const remaining=edits().filter(e=>!ids.includes(e.id));
       await commitThenClose(at,remaining,[...back,...takenBy(back)],{keep});
-      forget(back);
       return {back,noteResolved:back.some(e=>noted.has(e.commentId)&&!cutNotes.has(e.commentId))};
     });
   }
@@ -308,19 +308,15 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
     if(!edits().some(touches))return Promise.resolve(null);
     return exclusive(async at=>{
       const env=await loudnessFor(at),noted=new Set(cutNotes.keys());
-      const touched=edits().filter(touches),remaining=[];
-      for(const e of edits()){
-        if(!touches(e)){remaining.push(e);continue;}
-        const pieces=piecesLeft(e,back,env);remaining.push(...pieces);
-        const held=takenIn.get(e.id);if(held)for(const piece of pieces)takenIn.set(piece.id,held);
-      }
-      // A cut a Delete took in has its note closed too, once none of its words is cut any more.
-      const stillCut=deletedIds(remaining),closing=takenBy(touched).filter(e=>!(e.wordIds||[]).some(id=>stillCut.has(id)));
-      await commitThenClose(at,remaining,[...touched,...closing],{keep});
-      for(const [id,held] of takenIn){
-        const left=held.filter(e=>!closing.includes(e));
-        if(!edits().some(e=>e.id===id)||!left.length)takenIn.delete(id);else takenIn.set(id,left);
-      }
+      const touched=edits().filter(touches),cutNow=edits().flatMap(e=>touches(e)?piecesLeft(e,back,env):[e]);
+      // A cut a Delete took in has its note closed too, once none of its words is cut any more; its pieces stop holding it.
+      const stillCut=deletedIds(cutNow),closing=new Set(takenBy(touched).filter(e=>!(e.wordIds||[]).some(id=>stillCut.has(id))).map(e=>e.id));
+      const remaining=cutNow.map(e=>{
+        if(!e.takenIn?.some(t=>closing.has(t.id)))return e;
+        const {takenIn,...rest}=e,left=takenIn.filter(t=>!closing.has(t.id));
+        return left.length?{...rest,takenIn:left}:rest;
+      });
+      await commitThenClose(at,remaining,[...touched,...takenBy(touched).filter(e=>closing.has(e.id))],{keep});
       const where=[...back].map(indexOf).filter(i=>i>=0);
       return {back:touched,noteResolved:touched.some(e=>noted.has(e.commentId)&&!cutNotes.has(e.commentId)),
         first:where.length?Math.min(...where):-1,last:where.length?Math.max(...where):-1};
@@ -381,7 +377,7 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
 
   return {
     /** A new transcript (or none) for a video: the selection goes, and saves still running from before are dropped. */
-    load(next,nextVideo){generation++;if(nextVideo?.id!==video?.id)takenIn.clear();transcript=next;video=nextVideo;clear();},
+    load(next,nextVideo){generation++;transcript=next;video=nextVideo;clear();},
     get transcript(){return transcript;},
     get video(){return video;},
     get selection(){return selection;},

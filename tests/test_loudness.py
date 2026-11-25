@@ -77,3 +77,18 @@ class Measure(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class Stream(unittest.TestCase):
+    """media_tools.stream stops a tool that runs too long, or whose reader fails, and leaves no process behind."""
+
+    def test_a_tool_past_its_time_limit_is_stopped(self):
+        processes = []
+        real = media_tools.subprocess.Popen
+        with mock.patch.object(media_tools, 'find', return_value=sys.executable), \
+             mock.patch.object(media_tools.subprocess, 'Popen', side_effect=lambda *a, **k: processes.append(real(*a, **k)) or processes[-1]):
+            with self.assertRaises(media_tools.ToolTimedOut):
+                media_tools.stream('ffmpeg', ['-c', 'import sys\nwhile True: sys.stdout.write("x" * 4096)'], 1, lambda chunk: None)
+            with self.assertRaises(ZeroDivisionError):
+                media_tools.stream('ffmpeg', ['-c', 'import sys\nwhile True: sys.stdout.write("x" * 4096)'], 30, lambda chunk: 1 / 0)
+        self.assertEqual([p.poll() is not None for p in processes], [True, True], 'no tool is left running')
