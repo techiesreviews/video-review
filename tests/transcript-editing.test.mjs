@@ -760,3 +760,26 @@ test('a cut with no words, made by moving the handles into a short pause, is bro
   editing.selectPause(TRANSCRIPT.words[4],TRANSCRIPT.words[5]);
   assert.deepEqual(editing.toRestore().map(e=>e.id),[cut.id]);
 });
+
+test('a note stays open while a later cut still holds its words in its saved history',async()=>{
+  const {editing,state,calls}=setup();editing.setLoudness('v',loudness());
+  editing.selectWords(1,3);await editing.remove();const first=state.comments[0].id;
+  await editing.restoreWords(['W2']);
+  editing.selectWords(4);await editing.remove();
+  await editing.restoreWords(['W1']);
+  assert.ok(!calls.cancels.includes(first),'word 3 is still cut, held by the cut that took it in');
+  await editing.undo();
+  assert.deepEqual(editing.edits().map(words),[['W3']]);
+  assert.ok(!calls.cancels.includes(first),'and after Undo its note is open');
+});
+
+test('loudness from a waveform decode goes when a new render replaces the file; the server\'s stays',()=>{
+  const {editing}=setup();
+  editing.setLoudness('v',loudness(),{from:'blob:a'});
+  editing.mediaChanged('v','blob:a');assert.ok(editing.hasLoudness('v'),'the same file keeps it');
+  assert.ok(editing.decodedLoudness('v'),'a newer decode may replace it');
+  editing.mediaChanged('v','blob:b');assert.ok(!editing.hasLoudness('v'),'a new render drops it');
+  editing.setLoudness('v',loudness());
+  editing.mediaChanged('v','blob:c');assert.ok(editing.hasLoudness('v'),'the server measures each file version itself');
+  assert.ok(!editing.decodedLoudness('v'));
+});

@@ -23,8 +23,9 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   const editing=createTranscriptEditing({saveTranscript:(v,data,options)=>backendRef.saveTranscript(v,data,options),request,updateRequest,cancelRequest,onError:error=>showError(error.message)});
   // The local app measures each video's loudness on the server (backend.loudness); online, or when the server has no
   // ffmpeg, the waveform's own decode gives it once Build waveform has read the audio. Without either, cuts fall back to
-  // the transcript's word times.
-  const waveform=createWaveform({media,seek,pause,onRange:adjustSelection,onSamples:(channels,rate)=>{if(videoRef&&!editing.hasLoudness(videoRef.id))editing.setLoudness(videoRef.id,envelopeFromSamples(channels,rate));},onAudition:range=>{playContext(Math.max(0,range.startMs-750),Math.min(videoRef.durationMs,range.endMs+750));auditionRange=range;}});
+  // the transcript's word times. A decode's loudness goes when a new render replaces the file (the next decode measures it).
+  media.addEventListener('loadstart',()=>{if(videoRef)editing.mediaChanged(videoRef.id,media.currentSrc);});
+  const waveform=createWaveform({media,seek,pause,onRange:adjustSelection,onSamples:(channels,rate)=>{if(videoRef&&(!editing.hasLoudness(videoRef.id)||editing.decodedLoudness(videoRef.id)))editing.setLoudness(videoRef.id,envelopeFromSamples(channels,rate),{from:media.currentSrc});},onAudition:range=>{playContext(Math.max(0,range.startMs-750),Math.min(videoRef.durationMs,range.endMs+750));auditionRange=range;}});
   try{pauseThreshold=Number(localStorage.getItem('techies-review-pause-threshold'))||450;}catch{}
   if(![250,450,650,1000].includes(pauseThreshold))pauseThreshold=450;
   $('#pauseThreshold').value=String(pauseThreshold);
@@ -102,7 +103,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   }
   function choosePause(previous,next,node,{play=true,focus=true}={}){
     clearView();const selected=editing.selectPause(previous,next);$('#selectionTime').textContent=`${stamp(selected.startMs)} – ${stamp(selected.endMs)}`;$('#selectionQuote').textContent=selected.quote;showBar(node);selectionState();
-    if(play)seek(previous.endMs);if(focus)focusBar();
+    if(play)seek(selected.startMs);if(focus)focusBar();
   }
   function render(){
     clear();body.replaceChildren();wordNodes=[];spaceNodes=[];pauseNodes=[];currentNode=null;highlighted=-1;
@@ -188,13 +189,16 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     pauseNodes=pauseNodes.filter(n=>!n.classList.contains('cut-only'));
     const words=editing.transcript?.words||[];
     for(const cut of wordless){
-      const i=words.findIndex(w=>w.startMs>=(cut.startMs+cut.endMs)/2);
-      if(i<1||pauseNodes.some(n=>Number(n.dataset.startMs)===words[i-1].endMs))continue;
-      const previous=words[i-1],word=words[i],pause=element('button','transcript-join transcript-pause cut-only','');
+      // Also before the first word or after the last one.
+      let i=words.findIndex(w=>w.startMs>=(cut.startMs+cut.endMs)/2);if(i<0)i=words.length;
+      const previous=words[i-1]||null,word=words[i]||null,startMs=previous?previous.endMs:0;
+      if(!words.length||pauseNodes.some(n=>Number(n.dataset.startMs)===startMs))continue;
+      const pause=element('button','transcript-join transcript-pause cut-only','');
       pause.type='button';pause.title='A cut pause; select it to bring it back';
-      pause.dataset.startMs=previous.endMs;pause.dataset.endMs=word.startMs;
+      pause.dataset.startMs=startMs;pause.dataset.endMs=word?word.startMs:videoRef.durationMs;
       pause.onclick=()=>choosePause(previous,word,pause);
-      pauseNodes.push(pause);wordNodes[i].before(pause,document.createTextNode(' '));
+      pauseNodes.push(pause);
+      if(word)wordNodes[i].before(pause,document.createTextNode(' '));else spaceNodes.at(-1).after(pause);
     }
   }
   /** A space is selected or cut when the words on both sides of it are, so a run reads as one band. */
