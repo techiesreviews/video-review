@@ -303,6 +303,18 @@ try{
     const onJoin=(await comments()).find(c=>c.text==='Check this join');
     assert.equal(onJoin.editRequest.type,'change');assert.equal(onJoin.editRequest.cutId,'J1');
 
+    // A cut with no words in a gap shorter than the pause setting (handles moved into it) gets a pause mark, and that
+    // mark brings back just this cut; the other Delete stays.
+    const inGap={id:'gap',startMs:2967,endMs:3033,wordIds:[],quote:'Join J1',kind:'words',commentId:null};
+    const other={id:'w11',startMs:5533,endMs:5967,wordIds:['W11'],quote:'word11',kind:'words',commentId:null};
+    await writeFile(join(temp,'transcripts/words.json'),JSON.stringify({words,cuts:[{id:'J1',atMs:3000}],draftEdits:[inGap,other],revision:'gap-cut'}));
+    await page.reload();await page.waitForSelector('.transcript-pause.cut-only');
+    await page.locator('.transcript-pause.cut-only').click();
+    assert.equal(await page.locator('.bar-delete').innerText(),'Restore',`${name}: the cut pause offers Restore.`);
+    await page.locator('.bar-delete').click();
+    await page.waitForFunction(()=>!document.querySelector('.transcript-pause.cut-only'));
+    assert.deepEqual((await onDisk()).map(e=>e.id),['w11'],`${name}: only the pause's cut is brought back.`);
+
     // The bar and the words stay on screen.
     await word(9).click();
     const bar=await page.locator('#transcriptSelection').boundingBox();

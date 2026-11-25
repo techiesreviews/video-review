@@ -33,6 +33,7 @@ function keepJoins(list,dropped,depth=1,seen=new Set()){
 // The reply on the note of a cut let go of that way: its words are still cut, so it must not say they are kept.
 export const JOINED_TEXT='Joined into a later Delete, whose note now covers these words. They stay cut.';
 export const RELOADED_TEXT='The transcript changed while this was saving. The edit was saved, and the transcript is loaded again.';
+export const TOO_SHORT_TEXT='Not brought back: a deleted word next to it is too short to stay cut on its own. Bring both back together, or use Undo.';
 export const REFUSED_TEXT='Not saved: the words changed elsewhere. Try again.';
 export const REMOVED_TEXT='Not saved: the transcript was removed elsewhere.';
 
@@ -134,7 +135,8 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
   function selectedIds(){return selection?.a!=null&&transcript?transcript.words.slice(selection.a,selection.b+1).map(w=>w.id):[];}
   /** The cuts that bring the selection back: when every selected word is deleted already, or a selected pause is cut. */
   function toRestore(){
-    if(selection?.kind==='pause')return edits().filter(e=>e.kind==='pause'&&e.startMs<selection.endMs&&e.endMs>selection.startMs);
+    // A pause's cuts include any cut that holds no words there (handles moved into a short pause).
+    if(selection?.kind==='pause')return edits().filter(e=>(e.kind==='pause'||!e.wordIds?.length)&&e.startMs<selection.endMs&&e.endMs>selection.startMs);
     return cutsToRestore(edits(),selectedIds());
   }
   /** The frame-aligned span a Delete would cut, or null for a selection too short for one. */
@@ -333,7 +335,8 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
       let startMs=i===at[0]?edit.startMs:found?found.startMs:Math.ceil(words[i-1].endMs/step)*step;
       let endMs=j===at.at(-1)?edit.endMs:found?found.endMs:Math.floor(words[j+1].startMs/step)*step;
       startMs=Math.round(Math.max(edit.startMs,startMs));endMs=Math.round(Math.min(edit.endMs,endMs));
-      if(endMs-startMs<step-0.5)continue;
+      // Too short for a frame: dropping it would bring back words that were not clicked, so nothing changes instead.
+      if(endMs-startMs<step-0.5)throw Error(TOO_SHORT_TEXT);
       const ids=words.slice(i,j+1).map(w=>w.id),mine=new Set(ids);
       // A piece holds only the earlier cuts inside it, so splitting a cut over and over does not copy its whole history.
       const takenIn=(edit.takenIn||[]).filter(e=>e.wordIds?.length?e.wordIds.some(id=>mine.has(id)):e.startMs<endMs&&e.endMs>startMs);

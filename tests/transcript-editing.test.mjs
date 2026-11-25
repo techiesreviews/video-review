@@ -3,7 +3,7 @@
 // Saves go through the shared review rules (review-core.js, transcript-core.js), as the browser backend saves them.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createTranscriptEditing,JOINED_TEXT} from '../web/transcript-editing.js';
+import {createTranscriptEditing,JOINED_TEXT,TOO_SHORT_TEXT} from '../web/transcript-editing.js';
 import {applyChange} from '../web/review-core.js';
 import {normalizeTranscript,sameWords,storeTranscript} from '../web/transcript-core.js';
 import {HOP_MS,envelope} from '../web/cut-boundary.js';
@@ -738,4 +738,25 @@ test('a Delete that joins a cut near the note length limit still saves, its note
   assert.deepEqual(editing.edits().map(e=>e.wordIds.length),[31],'the cut keeps every word');
   const ask=calls.requests.at(-1);
   assert.ok(ask.editRequest.quote.length<=3000&&ask.editRequest.quote.endsWith('…'));
+});
+
+test('bringing back the words beside a word too short for a frame is refused, so that word stays cut',async()=>{
+  // “one a three”, close together: “a” is 20 ms, under a frame at 30 fps.
+  const times={W1:[1100,1490],W2:[1500,1520],W3:[1530,1900]};
+  const short=TRANSCRIPT.words.map(w=>times[w.id]?{...w,startMs:times[w.id][0],endMs:times[w.id][1]}:w);
+  const {editing,calls}=setup({transcript:{revision:'r1',words:short,cuts:[]}});
+  editing.selectWords(1,3);await editing.remove();
+  await editing.restoreWords(['W1']);
+  const before=editing.edits();
+  await assert.rejects(editing.restoreWords(['W3']),{message:TOO_SHORT_TEXT});
+  assert.deepEqual(editing.edits(),before,'nothing changes');
+  assert.deepEqual(calls.cancels,[],'its note stays open');
+});
+
+test('a cut with no words, made by moving the handles into a short pause, is brought back from that pause',async()=>{
+  const {editing}=setup();
+  editing.selectCut({id:'J1',atMs:5000});editing.adjust({startMs:4850,endMs:5050});await editing.remove();
+  const [cut]=editing.edits();assert.deepEqual(cut.wordIds,[]);
+  editing.selectPause(TRANSCRIPT.words[4],TRANSCRIPT.words[5]);
+  assert.deepEqual(editing.toRestore().map(e=>e.id),[cut.id]);
 });
