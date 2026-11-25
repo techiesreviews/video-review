@@ -1,13 +1,16 @@
 // Plays over preview removals. Looks ahead so the jump lands on the join rather than a frame late, and
 // starts the audio fade early instead of holding the jump back for it.
-import {jumpPlan} from './cut-core.js';
+import {jumpPlan,JOIN_FADE_MS} from './cut-core.js';
 
 // Only a safety net: seeks in a long-GOP file can take most of a second, and fading back in before one lands would click.
 const LANDED_LATEST_MS=5000;
+// The element's clock can trail the sound it has already handed to the speakers by about one audio buffer, so the
+// fade ends this much before the join: no sound from inside a cut gets out (TOOLS-463).
+const CLOCK_LEAD_MS=20;
 
 export function createCutPlayback({video,removals,fps,fade}){
   let armed=null,timer=null,jumping=false,watchdog=null;
-  const plan=()=>jumpPlan(video.currentTime*1000,removals(),{rate:video.playbackRate,horizonMs:Math.max(70,2000/fps())});
+  const plan=()=>jumpPlan(video.currentTime*1000,removals(),{rate:video.playbackRate,horizonMs:Math.max(70,2000/fps()),fadeMs:JOIN_FADE_MS+CLOCK_LEAD_MS});
 
   function cancel(){clearTimeout(timer);clearTimeout(watchdog);armed=null;jumping=false;fade.reset();}
   function landed(){if(!jumping)return;clearTimeout(watchdog);jumping=false;fade.fadeIn();}
