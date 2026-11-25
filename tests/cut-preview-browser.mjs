@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 const root=resolve('.'),temp=await mkdtemp(join(tmpdir(),'video-cut-preview-')),port=8894,base=`http://127.0.0.1:${port}`;
 const python=process.env.VIDEO_REVIEW_PYTHON||join(process.env.LOCALAPPDATA,'Programs/Python/Python313/python.exe');
 const media=join(temp,'tone.mp4'),durationMs=8000,fps=30,FRAME=1000/fps;
-const encoded=spawnSync('ffmpeg',['-v','error','-y','-f','lavfi','-i',process.env.CUT_PREVIEW_HEAVY?`testsrc2=s=1920x1080:r=${fps}:d=8,noise=alls=25:allf=t`:`color=c=0x1b1f3b:s=320x180:r=${fps}:d=8`,'-f','lavfi','-i','sine=frequency=440.25:sample_rate=48000:duration=8','-af','volume=4','-c:v','libx264','-preset','ultrafast',...(process.env.CUT_PREVIEW_GOP?['-g',process.env.CUT_PREVIEW_GOP]:[]),'-pix_fmt','yuv420p','-c:a','aac','-b:a','128k','-shortest',media],{windowsHide:true,encoding:'utf8'});
+const encoded=spawnSync('ffmpeg',['-v','error','-y','-f','lavfi','-i',process.env.CUT_PREVIEW_HEAVY?`testsrc2=s=1920x1080:r=${fps}:d=8,noise=alls=25:allf=t`:`color=c=0x1b1f3b:s=320x180:r=${fps}:d=8`,'-f','lavfi','-i',"aevalsrc=exprs='0.5*sin(2*PI*440.25*t)+0.3*sin(2*PI*1700*t)*(between(t,2,2.99999)+between(t,5,5.99999))':s=48000:d=8",'-c:v','libx264','-preset','ultrafast',...(process.env.CUT_PREVIEW_GOP?['-g',process.env.CUT_PREVIEW_GOP]:[]),'-pix_fmt','yuv420p','-c:a','aac','-b:a','128k','-shortest',media],{windowsHide:true,encoding:'utf8'});
 assert.equal(encoded.status,0,encoded.stderr);
 const words=[];for(let i=0;i<16;i++)words.push({id:'W'+i,text:'word'+i,startMs:i*500+50,endMs:i*500+450});
 const removed=[{id:'cut-a',startMs:2000,endMs:3000,wordIds:['W4','W5'],quote:'word4 word5',kind:'words'},{id:'cut-b',startMs:5000,endMs:6000,wordIds:['W10','W11'],quote:'word10 word11',kind:'words'}];
@@ -52,7 +52,18 @@ function spy(){
       return {index,seekWaitMs:ms(seeked-jump.frame),dropoutMs:gapStart>=0&&returned>=0?ms(returned-gapStart):0,heldBackMs:returned>=0&&restored>=0?ms(restored-returned):null,stepBefore:stepIn(before,from,to),stepAfter:stepIn(after,from,to)};
     });
   };
-  record.reset=()=>{record.jumps.length=0;record.seeked.length=0;record.frames.length=0;};
+  // The loudest the marker tone (only inside the removals) gets in any 10 ms of a tap between two sample frames (by
+  // default since the last reset): a Hann-windowed Goertzel, so the steady 440 Hz tone does not leak into the reading.
+  record.tone=async(name,freq,from=record.mark??0,to=Infinity)=>{
+    const data=await record.read(name),rate=record.context.sampleRate,n=Math.round(rate*.01),k=2*Math.cos(2*Math.PI*freq/rate);
+    const window=Float32Array.from({length:n},(_,i)=>.5-.5*Math.cos(2*Math.PI*i/(n-1))),sum=window.reduce((a,b)=>a+b,0);
+    let max=0;for(let at=Math.max(0,from);at+n<=Math.min(to,data.length);at+=n>>1){let s1=0,s2=0;for(let i=0;i<n;i++){const v=data[at+i]*window[i]+k*s1-s2;s2=s1;s1=v;}max=Math.max(max,2*Math.sqrt(Math.max(0,s1*s1+s2*s2-k*s1*s2))/sum);}
+    return +max.toFixed(4);
+  };
+  // Around each jump (from 50 ms before it to 100 ms after it lands), where cut audio could slip through. The file's
+  // own end, where the sound stops dead, is left out: that stop is heard at every pitch.
+  record.joinTone=async freq=>{const rate=record.context.sampleRate;let max=0;for(const jump of record.jumps){const seeked=record.seeked.find(f=>f>=jump.frame)??jump.frame;max=Math.max(max,await record.tone('after',freq,jump.frame-rate*.05,seeked+rate*.1));}return max;};
+  record.reset=()=>{record.jumps.length=0;record.seeked.length=0;record.frames.length=0;record.mark=stamp();};
 }
 const inRemoval=ms=>removed.some(r=>ms>=r.startMs&&ms<r.endMs);
 
@@ -78,10 +89,10 @@ try{
     await page.evaluate(()=>window.__spy.reset());await page.locator('#playCut').click();
     await page.waitForFunction(()=>document.querySelector('video').paused===false);
     await page.waitForFunction(()=>document.querySelector('video').ended,{timeout:20000});
-    const data=await page.evaluate(async()=>{const r=window.__spy;await new Promise(done=>setTimeout(done,400));return {jumps:r.jumps,frames:r.frames,joins:await r.joins(),gain:r.gain.gain.value};});
+    const data=await page.evaluate(async()=>{const r=window.__spy;await new Promise(done=>setTimeout(done,400));return {jumps:r.jumps,frames:r.frames,joins:await r.joins(),gain:r.gain.gain.value,cutHeard:await r.joinTone(1700)};});
     assert.equal(data.jumps.length,2,`${label}: one jump per removal.`);
     const lateness=data.jumps.map(j=>{const removal=removed.find(r=>Math.abs(r.endMs-j.toMs)<1);assert.ok(removal,`${label}: jumped to ${j.toMs}, which is not the end of a removal.`);return +(j.fromMs-removal.startMs).toFixed(1);});
-    return {lateness,framesShownInRemoval:data.frames.filter(inRemoval),joins:data.joins,gain:data.gain};
+    return {lateness,framesShownInRemoval:data.frames.filter(inRemoval),joins:data.joins,gain:data.gain,cutHeard:data.cutHeard};
   }
   const on=await playThrough('cuts on');
   console.log(JSON.stringify({cutsOn:on}));
@@ -95,6 +106,9 @@ try{
   assert.equal(on.joins.length,2,'Both joins were measured.');
   assert.ok(on.joins.some(join=>join.stepBefore>clickStep),'The raw sound before the fade clicks at a join, so the measurement can see a click.');
   for(const join of on.joins)assert.ok(join.stepAfter<=clickStep,`The fixed join fade must keep a join from clicking: largest step ${join.stepAfter}, ordinary tone ${normalStep.toFixed(3)}.`);
+  // No cut audio in the preview: the marker tone that lives only inside the removals never reaches the speakers at a join. (The
+  // player may land a few milliseconds late, but the fade has the sound at zero from the cut's start until it lands.)
+  assert.ok(on.cutHeard<.002,`cuts on: no cut audio is heard; the marker tone reached ${on.cutHeard} (it plays at 0.3).`);
 
   // Cuts off plays the original: the playhead runs straight through every removal, with no jump and no fade.
   await cuts.click();
@@ -103,7 +117,8 @@ try{
   await page.waitForFunction(()=>document.querySelector('video').currentTime<.1&&!document.querySelector('video').seeking);
   await page.evaluate(()=>window.__spy.reset());
   await page.locator('#play').click();await page.waitForFunction(()=>document.querySelector('video').ended,{timeout:20000});
-  const original=await page.evaluate(()=>({jumps:window.__spy.jumps.length,frames:window.__spy.frames}));
+  const original=await page.evaluate(async()=>({jumps:window.__spy.jumps.length,frames:window.__spy.frames,cutHeard:await window.__spy.tone('after',1700)}));
+  assert.ok(original.cutHeard>.2,`Cuts off: the marker tone is heard (${original.cutHeard}), so the check above can hear cut audio.`);
   assert.equal(original.jumps,0,'Cuts off: playback never jumps.');
   assert.ok(original.frames.filter(inRemoval).length>30,'Cuts off: the removed passages are played.');
   // Flipping it while playing takes effect at once: off, the playhead is let through a removal; on, it is skipped.
@@ -276,54 +291,59 @@ try{
   await page.locator('.transcript-word').nth(8).click();await page.locator('[data-transcript-action="remove"]').click();await page.waitForTimeout(250);
   assert.equal((await editsOnDisk()).length,edits+1,'The Delete button does the same.');
   await page.locator('#undoTranscriptCut').click();await page.waitForTimeout(250);assert.equal((await editsOnDisk()).length,edits);
-  // Deleted words stay in the transcript, struck through, with a Restore mark; the cut still skips them.
+  // Deleted words stay in the transcript, struck through, with no Restore button beside them; the cut still skips them.
   assert.equal(await page.locator('.transcript-word.removed-word:visible').count(),4,'The words of both cuts are still shown.');
   assert.deepEqual(await page.locator('.transcript-word.removed-word').allInnerTexts(),['word4','word5','word10','word11']);
   assert.match(await page.locator('.transcript-word.removed-word').first().evaluate(n=>getComputedStyle(n).textDecorationLine),/line-through/,'Deleted words are struck through.');
   assert.equal(await page.locator('.transcript-word').nth(4).getAttribute('aria-label'),'Deleted: word4, 0:02.050','A screen reader hears that the word is deleted.');
-  assert.equal(await page.locator('.restore-cut:visible').count(),2,'Each cut has its Restore mark.');
+  assert.equal(await page.locator('.restore-cut:not(.source-restore)').count(),0,'No Restore buttons in the text.');
   assert.match(await text('#cutPreviewStatus'),/Preview cut · 0:06\.000 · 2\.0 s removed$/,'The cut still skips the deleted words.');
-  // Selecting deleted words turns Delete into Restore; Backspace never cuts them twice.
-  await page.locator('.transcript-word').nth(4).click();await nextToWords('a deleted word');
+  const cutWords=async()=>(await editsOnDisk()).sort((x,y)=>x.startMs-y.startMs).map(e=>e.wordIds);
+  const removedAt=i=>page.locator('.transcript-word').nth(i).evaluate(n=>n.classList.contains('removed-word'));
+  const drag=async(from,to)=>{const p=await page.locator('.transcript-word').nth(from).boundingBox(),q=await page.locator('.transcript-word').nth(to).boundingBox();
+    await page.mouse.move(p.x+p.width/2,p.y+p.height/2);await page.mouse.down();await page.mouse.move(q.x+q.width/2,q.y+q.height/2,{steps:6});await page.mouse.up();await page.waitForTimeout(100);};
+  // A click on a deleted word brings back only that word.
+  await page.locator('.transcript-word').nth(4).click();await page.waitForTimeout(250);
+  assert.deepEqual(await cutWords(),[['W5'],['W10','W11']],'A click on a deleted word brings back only that word.');
+  assert.equal(await removedAt(4),false);
+  // Dragging over deleted words selects them: the first button is Restore, and Backspace never cuts them twice.
+  await page.keyboard.press('Escape');await drag(10,11);await nextToWords('deleted words');
+  assert.equal(await page.evaluate(()=>getSelection().toString()),'','The browser does not highlight the text itself.');
   assert.equal((await page.locator('#transcriptSelection button:visible').first().innerText()).trim(),'Restore','On deleted words the first button brings them back.');
-  await page.keyboard.press('Backspace');await page.waitForTimeout(250);assert.equal((await editsOnDisk()).length,edits,'Backspace does not cut deleted words again.');
+  await page.keyboard.press('Backspace');await page.waitForTimeout(250);assert.deepEqual(await cutWords(),[['W5'],['W10','W11']],'Backspace does not cut deleted words again.');
   await page.locator('[data-transcript-action="remove"]').click();await page.waitForTimeout(250);
-  assert.deepEqual((await editsOnDisk()).map(e=>e.id),['cut-b'],'Restore brings back only that cut.');
-  assert.equal(await page.locator('.transcript-word').nth(4).evaluate(n=>n.classList.contains('removed-word')),false);
-  assert.equal(await page.locator('.transcript-word.selected').first().innerText(),'word4','The words stay selected.');
+  assert.deepEqual(await cutWords(),[['W5']],'Restore brings back the selected words.');
+  assert.equal(await removedAt(10),false);
+  assert.equal(await page.locator('.transcript-word.selected').first().innerText(),'word10','The words stay selected.');
   assert.equal((await page.locator('#transcriptSelection button:visible').first().innerText()).trim(),'Delete','and the button is Delete again.');
   assert.equal(await text('#barStatus'),'Brought back. Backspace deletes it again.','Restore says the same as Undo.');assert.equal(await page.evaluate(()=>document.activeElement.id),'transcriptNote');
-  await page.locator('.transcript-word').nth(5).click({modifiers:['Shift']});await page.locator('[data-transcript-action="remove"]').click();await page.waitForTimeout(250);
-  assert.equal((await editsOnDisk()).length,edits,'Delete cuts them again.');
-  await page.keyboard.press('Escape');
-  const cutA=(await editsOnDisk()).find(e=>e.wordIds.includes('W4')).id;
-  await page.locator(`.restore-cut[data-edit-id="${cutA}"]`).click();await page.waitForTimeout(250);
-  assert.deepEqual((await editsOnDisk()).map(e=>e.id),['cut-b'],'One click on a Restore mark brings that cut back.');
-  await page.keyboard.press('Control+z');await page.waitForTimeout(250);assert.equal((await editsOnDisk()).length,0,'Ctrl+Z undoes the last cut that is left.');
-  assert.equal(await page.locator('.transcript-word.removed-word').count(),0);
-  // Delete over kept and deleted words cuts only the kept ones, so each word stays in one cut.
-  await page.keyboard.press('Escape');await page.locator('.transcript-word').nth(5).click();await page.locator('[data-transcript-action="remove"]').click();await page.waitForTimeout(250);
-  await page.locator('.transcript-word').nth(3).click();await page.locator('.transcript-word').nth(7).click({modifiers:['Shift']});await page.locator('[data-transcript-action="remove"]').click();await page.waitForTimeout(250);
-  let mixed=await editsOnDisk();
-  assert.deepEqual(mixed.map(e=>e.wordIds),[['W5'],['W3','W4'],['W6','W7']],'Two pieces, around the word already deleted.');
-  assert.equal(mixed[1].commentId,mixed[2].commentId,'The pieces share one note.');
-  const pieceNote=async()=>(await notesOnDisk()).find(n=>n.id===mixed[1].commentId);
-  assert.deepEqual((({quote,firstWordId,lastWordId})=>({quote,firstWordId,lastWordId}))((await pieceNote()).editRequest),{quote:'word3 word4 … word6 word7',firstWordId:'W3',lastWordId:'W7'},'The note names only the cut words.');
-  await page.keyboard.press('Escape');await page.locator(`.restore-cut[data-edit-id="${mixed[2].id}"]`).click();await page.waitForTimeout(250);
-  assert.deepEqual((await editsOnDisk()).map(e=>e.id),[mixed[0].id,mixed[1].id],'One piece comes back on its own.');
-  assert.equal((await pieceNote()).status,'open','Its note stays open while the other piece is still cut.');
-  await page.locator(`.restore-cut[data-edit-id="${mixed[1].id}"]`).click();await page.waitForTimeout(250);
-  assert.equal((await pieceNote()).status,'done','Once the last piece is back the note is resolved.');
-  await page.locator('.transcript-word').nth(5).click();await page.locator('.transcript-word').nth(7).click({modifiers:['Shift']});await page.locator('[data-transcript-action="remove"]').click();await page.waitForTimeout(250);
-  let fromDeleted=await editsOnDisk();assert.deepEqual(fromDeleted.at(-1).wordIds,['W6','W7'],'Starting on a deleted word: only the kept words are cut.');
-  assert.equal((await notesOnDisk()).find(n=>n.id===fromDeleted.at(-1).commentId).startMs,fromDeleted.at(-1).startMs,'and the note starts where the cut starts.');
-  await page.locator('#transcriptText').focus();await page.keyboard.press('Control+z');await page.waitForTimeout(250);assert.equal((await editsOnDisk()).length,1);
-  await page.locator('.transcript-word').nth(3).click();await page.locator('.transcript-word').nth(7).click({modifiers:['Shift']});await page.locator('[data-transcript-action="remove"]').click();await page.waitForTimeout(250);
-  mixed=await editsOnDisk();assert.equal(mixed.length,3);
-  await page.locator(`.restore-cut[data-edit-id="${mixed[0].id}"]`).click();await page.waitForTimeout(250);
-  assert.equal(await page.locator('.transcript-word').nth(5).evaluate(n=>n.classList.contains('removed-word')),false,'Restoring the earlier cut really brings its word back.');
+  await page.locator('[data-transcript-action="remove"]').click();await page.waitForTimeout(250);
+  assert.deepEqual(await cutWords(),[['W5'],['W10','W11']],'Delete cuts them again.');
+  // Delete over kept and deleted words makes one cut, which takes in the cut already there.
+  await page.keyboard.press('Escape');await page.keyboard.press('Escape');
+  await page.locator('.transcript-word').nth(3).click();await page.locator('.transcript-word').nth(7).click({modifiers:['Shift']});
+  assert.equal(await page.locator('.transcript-space.selected').count(),4,'The selection is one band, the spaces between the words included.');
+  await page.locator('[data-transcript-action="remove"]').click();await page.waitForTimeout(250);
+  assert.deepEqual(await cutWords(),[['W3','W4','W5','W6','W7'],['W10','W11']],'One cut over the kept and the deleted words.');
+  const joined=(await editsOnDisk()).find(e=>e.wordIds.includes('W3')),joinedNote=async()=>(await notesOnDisk()).find(n=>n.id===joined.commentId);
+  assert.equal((await joinedNote()).editRequest.quote,'word3 word4 word5 word6 word7','Its note names the whole cut.');
+  // A click on a word in the middle of a cut splits it in two, which share the note until the last word is back.
+  await page.keyboard.press('Escape');await page.locator('.transcript-word').nth(5).click();await page.waitForTimeout(250);
+  assert.deepEqual(await cutWords(),[['W3','W4'],['W6','W7'],['W10','W11']],'Words left on both sides make two cuts.');
+  const halves=(await editsOnDisk()).filter(e=>e.commentId===joined.commentId);assert.equal(halves.length,2,'The two cuts share the note.');
+  assert.ok(halves[0].endMs<=words[5].startMs&&halves[1].startMs>=words[5].endMs,'The brought-back word plays whole.');
+  for(const i of [3,4,6])await page.locator('.transcript-word').nth(i).click(),await page.waitForTimeout(250);
+  assert.deepEqual(await cutWords(),[['W7'],['W10','W11']]);assert.equal((await joinedNote()).status,'open','The note stays open while one of its words is still cut.');
+  await page.locator('.transcript-word').nth(7).click();await page.waitForTimeout(250);
+  assert.equal((await joinedNote()).status,'done','Once its last word is back the note is resolved.');
+  // A drag that starts on a deleted word joins the same way, and Ctrl+Z puts back the cut it took in.
+  const takenIn=(await editsOnDisk())[0];
+  await page.keyboard.press('Escape');await drag(10,12);await page.locator('[data-transcript-action="remove"]').click();await page.waitForTimeout(250);
+  assert.deepEqual(await cutWords(),[['W10','W11','W12']],'Starting on a deleted word: one cut.');
+  const fromDeleted=(await editsOnDisk())[0];
+  assert.equal((await notesOnDisk()).find(n=>n.id===fromDeleted.commentId).startMs,fromDeleted.startMs,'and the note starts where the cut starts.');
   await page.keyboard.press('Escape');await page.locator('#transcriptText').focus();await page.keyboard.press('Control+z');await page.waitForTimeout(250);
-  assert.equal((await editsOnDisk()).length,0,'Ctrl+Z brings back both pieces of that Delete at once.');
+  assert.deepEqual(await editsOnDisk(),[takenIn],'Ctrl+Z puts back the cut that Delete took in, as it was.');
   // The bar also opens next to a pause, and follows the words when the transcript scrolls.
   await page.keyboard.press('Escape');
   await writeFile(join(temp,'transcripts/tone.json'),JSON.stringify({words,cuts:[],revision:'synthetic',draftEdits:removed}));
@@ -365,13 +385,13 @@ try{
   await nextToWords('phone');
   await mkdir('data/test-artifacts',{recursive:true});await page.screenshot({path:'data/test-artifacts/cut-preview-mobile.png',fullPage:true});
   for(const scheme of ['light','dark']){
-    await page.emulateMedia({colorScheme:scheme});await page.locator('.transcript-word').nth(4).click();await nextToWords(`phone ${scheme}`);
+    await page.emulateMedia({colorScheme:scheme});await page.locator('.transcript-word').nth(6).click();await nextToWords(`phone ${scheme}`);
     await page.screenshot({path:`data/test-artifacts/edit-bar-phone-${scheme}.png`});
   }
   await page.emulateMedia({colorScheme:'light'});
   await page.setViewportSize({width:1440,height:1040});await page.locator('.transcript-word').nth(1).click();await page.keyboard.type('Tigh');await page.screenshot({path:'data/test-artifacts/cut-preview-desktop.png'});
   assert.deepEqual(errors,[]);
-  console.log('PASS: play whole cut, the one cuts switch (on plays the cut, off plays the original, mouse, Space, Enter, remembered, reduced motion), the fixed join fade, one clock, ask agent on a word and a frame, the edit bar (next to the words, autofocus, Tab, Backspace, Delete, Ctrl+Z, no-agent line, no typed text lost, deleted words shown and restored), all-removed cut, phone layout.');
+  console.log('PASS: play whole cut, the one cuts switch (on plays the cut, off plays the original, mouse, Space, Enter, remembered, reduced motion), the fixed join fade, no cut audio at a join, one clock, ask agent on a word and a frame, the edit bar (next to the words, autofocus, Tab, Backspace, Delete, Ctrl+Z, no-agent line, no typed text lost, deleted words shown, a click brings one word back, drag and Shift+click make one cut), all-removed cut, phone layout.');
 }finally{
   await browser?.close();server.kill();await new Promise(r=>server.once('exit',r));assert.equal(dirname(temp),resolve(tmpdir()));assert.ok(basename(temp).startsWith('video-cut-preview-'));await rm(temp,{recursive:true,force:true});
 }

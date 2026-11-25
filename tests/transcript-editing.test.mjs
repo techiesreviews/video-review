@@ -635,6 +635,6 @@ test('the panel only draws: the editing rules and saves live in transcript-editi
   const {readFile}=await import('node:fs/promises');
   const panel=await readFile(new URL('../web/transcript-panel.js',import.meta.url),'utf8');
   assert.match(panel,/import \{createTranscriptEditing[,\w]*\} from '\.\/transcript-editing\.js';/,'the panel uses the editing module');
-  for(const rule of ['makeRemoval','keptRuns','lastCutGroup','cutsToRestore','nextWordAfterDelete','wordSelection','removalBounds','cutNotes','notePending','draftEdits:'])
+  for(const rule of ['makeRemoval','piecesLeft','joinedCut','lastCutGroup','cutsToRestore','nextWordAfterDelete','wordSelection','removalBounds','cutNotes','notePending','draftEdits:'])
     assert.ok(!panel.includes(rule),`${rule} belongs in transcript-editing.js, not the page`);
 });

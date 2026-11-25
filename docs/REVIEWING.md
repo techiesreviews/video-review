@@ -125,9 +125,17 @@ IDs and frames from when it was asked. Other request types are unchanged and hav
 ## See the original words and restore a passage
 
 The transcript always shows every original word. Words deleted in this review stay in place, struck through and dimmed,
-and pauses keep their original length (a shortened pause shows both lengths). Click **Restore** beside any removal, or
-select deleted words and press **Restore** in the edit bar (the first button reads Restore on words that are all deleted);
-other cuts remain. Playback and the exported cut list still skip the deleted words.
+and pauses keep their original length (a shortened pause shows both lengths); the waveform is greyed where a cut is.
+Click a deleted word to bring back just that word: a cut with words left on both sides becomes two cuts. To bring back
+several, drag over them and press **Restore** in the edit bar (the first button reads Restore on words that are all
+deleted); other cuts remain. Playback and the exported cut list still skip the deleted words.
+
+Drag across words, or click one and Shift+click another, to select whole words; the selection shows as one band in the
+transcript and one on the waveform. **Delete** makes one cut, and takes in any deleted words next to or inside it. The
+cut's edges come from the sound itself: the real pause around the words (or the quietest moment, when words run
+together), keeping the longer of the two pauses, on whole video frames. The local server measures each video's
+loudness once and keeps it; online, the decoded waveform supplies it. Each join fades over 15 ms on the kept side, in
+the preview and in the exported cut list (`audioFadeMs`), and the preview never plays sound from inside a cut.
 
 The attached transcript may also contain an `original` section with the full source recording's word timings,
 duration and source identity. Its word IDs must match those in the derived review transcript. This section is

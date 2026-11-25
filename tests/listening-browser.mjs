@@ -85,10 +85,16 @@ try{
  await page.waitForSelector('.source-removal');
  assert.equal(await page.locator('.source-word').count(),2,'The transcript always includes words already missing from the rendered cut.');
  assert.equal(await page.locator('.transcript-word.removed-word:visible').count(),2,'Deleted words stay in the transcript, marked.');
- await page.locator(`.restore-cut[data-edit-id="${firstEdit}"]`).click();
+ assert.equal(await page.locator('.restore-cut:not(.source-restore)').count(),0,'No inline Restore buttons: a crossed-out word is clicked to bring it back.');
+ await page.locator('.transcript-word').nth(12).click();
  await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===1);
  edits=JSON.parse(await readFile(join(temp,'transcripts/listening.json'),'utf8')).draftEdits;assert.equal(edits.length,1);assert.equal(edits[0].id,lastEdit);
  assert.equal(await page.locator('.transcript-word').nth(12).evaluate(n=>n.classList.contains('removed-word')),false);
+ // The waveform is greyed where the cut is, and left clear elsewhere.
+ await page.keyboard.press('Escape');await page.locator('#waveformZoom').selectOption('fit');
+ {const shade=ms=>page.locator('#waveformCanvas').evaluate((n,ms)=>{const a=Number(n.dataset.startMs),b=Number(n.dataset.endMs),r=n.width/n.clientWidth,x=Math.round((ms-a)/(b-a)*n.clientWidth*r),y=Math.round(18.5*r);return [...n.getContext('2d').getImageData(x,y,1,1).data];},ms);
+  const cut=await shade((edits[0].startMs+edits[0].endMs)/2),clear=await shade(edits[0].startMs-400);
+  assert.deepEqual(cut,[18,17,24,255],'A cut stretch is greyed on the waveform.');assert.equal(clear[3],0,'Kept audio is not greyed.');}
  await page.locator('.source-word').filter({hasText:'Ending'}).click();
  await mkdir('data/test-artifacts',{recursive:true});await page.screenshot({path:'data/test-artifacts/original-transcript-desktop.png'});
  await page.locator('#restoreOriginalSelection').click();

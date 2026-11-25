@@ -17,8 +17,9 @@ export function envelope(db){
   if(!db.length)return {db,threshold:-Infinity,floor:-100,peak:-100};
   const sorted=Float32Array.from(db).sort();
   const floor=sorted[Math.floor(sorted.length*0.1)],peak=sorted[Math.floor(sorted.length*0.995)];
-  // Silence: within 12 dB of the room noise, but never closer than 45 dB below the loudest speech.
-  return {db,threshold:Math.max(floor+12,peak-45),floor,peak};
+  // Silence: within 12 dB of the room noise, but never closer than 45 dB below the loudest speech, and always at least
+  // 12 dB below it, so sound with no quiet parts at all (music, a steady tone) has no pauses rather than only pauses.
+  return {db,threshold:Math.min(Math.max(floor+12,peak-45),peak-12),floor,peak};
 }
 
 /** The server's loudness file: one byte every HOP_MS, the level in half dB below full scale (0 to 200). */
