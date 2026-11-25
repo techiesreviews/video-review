@@ -1,8 +1,9 @@
 import {audioPeaks,waveformWindow,zoomWaveformWindow,adjustBoundary} from './waveform-core.js';
 import {clock} from './time-format.js';
+import {removedRanges} from './cut-core.js';
 const $=s=>document.querySelector(s);
 const stamp=ms=>clock(ms,{places:3,hours:false});
-export function createWaveform({media,seek,pause,onRange,onAudition}){
+export function createWaveform({media,seek,pause,onRange,onAudition,onSamples=()=>{}}){
   const panel=$('#waveformPanel'),canvas=$('#waveformCanvas'),wrap=$('#waveformWrap'),ctx=canvas.getContext('2d'),overview=$('#waveformOverview'),overviewWrap=$('#waveformOverviewWrap'),overviewCtx=overview.getContext('2d');
   let duration=0,fps=30,range=null,removed=[],peaks=null,peakMax=1,bucketMs=8,at=0,generation=0,loading=false,source=null,request=null,drag=null,view={startMs:0,endMs:1},spanMs=4000;
   let visible=true;try{visible=localStorage.getItem('techies-review-waveform')!=='false';}catch{}
@@ -31,14 +32,18 @@ export function createWaveform({media,seek,pause,onRange,onAudition}){
     custom.textContent=size<1000?(size/1000).toFixed(2)+' s':(size/1000).toFixed(1)+' s';
     zoom.value=!zoomed()?'fit':preset?String(preset):'custom';
     ctx.fillStyle='#353340';ctx.fillRect(0,40,w,1);
-    for(const [a,b] of removed){ctx.fillStyle='#643e3a';ctx.fillRect(x(a,w),19,x(b,w)-x(a,w),46);}
-    if(range){ctx.fillStyle='#49416e';ctx.fillRect(x(range.startMs,w),18,x(range.endMs,w)-x(range.startMs,w),48);}
+    // Cut stretches sit on a darker band with dimmed bars; the selection is one band with bright edges and bright bars.
+    for(const [a,b] of removed){ctx.fillStyle='#121118';ctx.fillRect(x(a,w),17,x(b,w)-x(a,w),50);}
+    if(range){const a=x(range.startMs,w),b=x(range.endMs,w);ctx.fillStyle='rgba(98,93,245,0.32)';ctx.fillRect(a,17,b-a,50);ctx.fillStyle='#8f8bff';ctx.fillRect(a,17,1,50);ctx.fillRect(b-1,17,1,50);}
     if(peaks){
-      ctx.fillStyle='#b3adc9';
+      let cut=0;
       for(let px=0;px<w;px+=2){
+        const ms=view.startMs+(view.endMs-view.startMs)*(px+1)/w;
         const a=Math.max(0,Math.floor((view.startMs+(view.endMs-view.startMs)*px/w)/bucketMs));
         const b=Math.min(peaks.length,Math.ceil((view.startMs+(view.endMs-view.startMs)*(px+2)/w)/bucketMs));
         let peak=0;for(let j=a;j<b;j++)peak=Math.max(peak,peaks[j]);
+        while(cut<removed.length&&removed[cut][1]<=ms)cut++;
+        ctx.fillStyle=range&&ms>=range.startMs&&ms<range.endMs?'#ecebff':cut<removed.length&&ms>=removed[cut][0]?'#4a4756':'#b3adc9';
         const height=Math.max(1,Math.min(44,peak/peakMax*44));ctx.fillRect(px,41-height/2,1.5,height);
       }
     }
@@ -68,7 +73,8 @@ export function createWaveform({media,seek,pause,onRange,onAudition}){
       const Offline=window.OfflineAudioContext||window.webkitOfflineAudioContext;if(!Offline)throw Error('This browser cannot decode a local waveform. Try Chrome or Edge.');
       const audio=await new Offline(1,1,8000).decodeAudioData(data);if(token!==generation)return;
       if(Math.abs(audio.duration*1000-duration)>Math.max(300,duration*.001))throw Error('Audio duration does not match this review copy.');
-      const result=audioPeaks(Array.from({length:audio.numberOfChannels},(_,i)=>audio.getChannelData(i)),audio.sampleRate);
+      const channels=Array.from({length:audio.numberOfChannels},(_,i)=>audio.getChannelData(i)),result=audioPeaks(channels,audio.sampleRate);
+      onSamples(channels,audio.sampleRate);
       peaks=result.peaks;peakMax=.00001;for(const value of peaks)peakMax=Math.max(peakMax,value);bucketMs=result.bucketMs;source=url;
       status('');$('#buildWaveform').hidden=true;draw();
     }catch(error){if(token===generation&&error.name!=='AbortError')status(error.name==='EncodingError'?'This browser could not read the audio. Try an MP4 review copy.':error.message);}
@@ -101,7 +107,7 @@ export function createWaveform({media,seek,pause,onRange,onAudition}){
   return {
     load(video){generation++;request?.abort();duration=video?.durationMs||0;fps=video?.fps||30;at=0;range=null;zoomView=null;removed=[];peaks=null;source=null;loading=false;$('#buildWaveform').hidden=false;$('#buildWaveform').disabled=!video;status('');this.setRange(null);draw();},
     setRange(next){if(next&&!drag&&zoomView&&zoomView.endMs-zoomView.startMs>=duration-1)zoomView=null;range=next;if(range&&zoomView&&!drag&&(range.startMs<view.startMs||range.endMs>view.endMs))zoomView=waveformWindow(duration,(range.startMs+range.endMs)/2,range,view.endMs-view.startMs);$('#waveformRange').hidden=!range;if(range){$('#waveformIn').value=(range.startMs/1000).toFixed(3);$('#waveformOut').value=(range.endMs/1000).toFixed(3);$('#waveformCutLength').textContent=((range.endMs-range.startMs)/1000).toFixed(3)+' s to remove';}$('#auditionWaveformCut').disabled=!range;draw();},
-    setCuts(edits){removed=edits.map(e=>[e.startMs,e.endMs]);draw();},
+    setCuts(edits){removed=removedRanges(edits);draw();},
     tick(ms){const next=Math.floor(ms/40);if(next===Math.floor(at/40))return;at=ms;if(zoomView&&!drag&&(at<view.startMs||at>view.endMs))zoomView=waveformWindow(duration,at,null,view.endMs-view.startMs);draw();},
     reflow:draw,
   };

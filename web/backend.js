@@ -4,6 +4,7 @@
 //             While an agent is connected, one tab relays comments and the agent's changes through the Worker.
 import { applyChange, applyRender, checkVideo, describe, timecode, RULES } from './review-core.js';
 import { normalizeTranscript, searchLibrary, storeTranscript } from './transcript-core.js';
+import { envelopeFromBytes } from './cut-boundary.js';
 
 async function api(route,body,signal){const r=await fetch(route,{...(body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{cache:'no-store'}),...(signal?{signal}:{})});const result=await r.json();if(!r.ok)throw Error(result.error||'Could not save.');return result;}
 // The agent-status and open-video polls give up after three seconds, so a stalled server cannot hold them open. Comment refresh has no such deadline.
@@ -56,6 +57,13 @@ function localBackend(events){
     async restoreVideo(id){return api('/api/library',{action:'restore',videoId:id});},
     async addPath(path,title){const video=await api('/api/library',{action:'add',path,title});videos=await api('/api/videos');return video;},
     async transcript(v){return api('/api/transcript/'+encodeURIComponent(v.id));},
+    // How loud the video is every 5 ms, measured once on this computer (loudness.py), for cutting words at real pauses.
+    // Null when it cannot be measured (no ffmpeg, no sound): cuts then use the waveform's decode or the word times.
+    async loudness(v){
+      const current=videos.find(x=>x.id===v.id)||v;
+      try{const r=await fetch(`/api/loudness/${encodeURIComponent(v.id)}?v=${encodeURIComponent(current.fileVersion||'')}`,{cache:'no-store'});return r.ok?envelopeFromBytes(new Uint8Array(await r.arrayBuffer())):null;}
+      catch{return null;}
+    },
     // editsOnly: only the preview cuts changed; the server refuses it when the saved words are no longer these.
     async saveTranscript(v,data,{editsOnly=false}={}){return api('/api/transcript/'+encodeURIComponent(v.id),{...normalizeTranscript(data,v.durationMs,v.fps),...(editsOnly?{editsOnly:true}:{})});},
   };

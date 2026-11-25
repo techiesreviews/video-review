@@ -55,6 +55,8 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
     try{return await Promise.race([entry.promise,late]);}finally{cancel?.();}
   }
   const loudnessNow=()=>loudness.get(video?.id)?.env||null;
+  /** True once a video's loudness is in (measured on the server, or from the waveform's decode). */
+  const hasLoudness=videoId=>!!loudness.get(videoId)?.env;
 
   function flushNote(){
     cancelNoteTimer?.();cancelNoteTimer=null;
@@ -390,6 +392,6 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
     get noteId(){return note.id;},
     edits,
     clear,selectWords,selectCut,selectPause,selectSource,wholeGap,adjust,selectedIds,toRestore,bounds,
-    setLoudness,remove,undo,restore,restoreWords,send,editNote,noteTyped,flushNote,alreadyAsked,askRestore,target,changeContext,
+    setLoudness,hasLoudness,remove,undo,restore,restoreWords,send,editNote,noteTyped,flushNote,alreadyAsked,askRestore,target,changeContext,
   };
 }

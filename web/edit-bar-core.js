@@ -129,22 +129,6 @@ export function cutsToRestore(edits=[],wordIds=[]){
   const gone=deletedIds(edits);if(!wordIds.every(id=>gone.has(id)))return [];
   const ids=new Set(wordIds);return edits.filter(e=>(e.wordIds||[]).some(id=>ids.has(id)));
 }
-/** Where each cut's Restore mark goes: before the first of its words in the transcript, else before the first word at or
- *  after its start (a pause), else on the last word. */
-export function cutMarks(words,edits=[]){
-  return edits.map(edit=>{
-    const ids=new Set(edit.wordIds||[]);let index=words.findIndex(w=>ids.has(w.id));
-    if(index<0)index=words.findIndex(w=>w.startMs>=edit.startMs);
-    if(index<0)index=words.length-1;
-    return {id:edit.id,index};
-  });
-}
-/** The runs of words a..b still in the cut, as [first, last] index pairs: what a Delete over kept and deleted words cuts. */
-export function keptRuns(words,a,b,gone){
-  const runs=[];
-  for(let i=a;i<=b;i++){if(gone.has(words[i].id))continue;const last=runs.at(-1);if(last&&last[1]===i-1)last[1]=i;else runs.push([i,i]);}
-  return runs;
-}
 /** How many cuts at the end came from one Delete: they share its note (commentId). Cuts without one stand alone. */
 export function lastCutGroup(edits=[]){
   const id=edits.at(-1)?.commentId;if(!edits.length)return 0;if(!id)return 1;
