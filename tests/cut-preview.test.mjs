@@ -310,3 +310,22 @@ test('with the cuts off, playing straight through a removal never jumps',t=>{
   playback.tick();t.mock.timers.tick(50);
   assert.deepEqual(video.seeks,[]);assert.deepEqual(calls,[]);
 });
+
+test('the export keeps exactly the ranges the preview plays, with the same fade on the kept side of each join',async()=>{
+  // Two word cuts found in the audio (TOOLS-463), at a whole and at a broken frame rate.
+  const {envelope,HOP_MS}=await import('../web/cut-boundary.js');
+  const {removalBounds,exportCut}=await import('../web/cut-core.js');
+  const {wordSelection}=await import('../web/transcript-core.js');
+  const durationMs=10000,db=new Float32Array(durationMs/HOP_MS).fill(-80);
+  const words=Array.from({length:9},(_,i)=>({id:'W'+i,text:'w'+i,startMs:i*1000+100,endMs:i*1000+800}));
+  for(const w of words)for(let i=(w.startMs+30)/HOP_MS;i<(w.endMs-20)/HOP_MS;i++)db[i]=-20;
+  const env=envelope(db);
+  for(const fps of [30,29.97]){
+    const transcript={revision:'r',words},draftEdits=[[2,3],[6,6]].map(([a,b],n)=>({id:'e'+n,...removalBounds(transcript,wordSelection(words,a,b),durationMs,fps,env)}));
+    const cut=exportCut({...transcript,draftEdits},{id:'v',fps,durationMs});
+    const exported=cut.keepRanges.map(([a,b])=>[Math.round(a*1000/fps),Math.round(b*1000/fps)]);
+    assert.deepEqual(exported,keptRanges(durationMs,draftEdits),`${fps} fps: the export plays what the preview plays`);
+    assert.equal(cut.audioFadeMs,JOIN_FADE_MS,'the export carries the preview\'s fade');
+    assert.equal(cut.audioFadeSide,'kept','the fade sits on the kept side of each join, in the export as in the preview');
+  }
+});

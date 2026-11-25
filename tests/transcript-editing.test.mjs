@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import {createTranscriptEditing} from '../web/transcript-editing.js';
 import {applyChange} from '../web/review-core.js';
 import {normalizeTranscript,sameWords,storeTranscript} from '../web/transcript-core.js';
+import {HOP_MS,envelope} from '../web/cut-boundary.js';
 
 const VIDEO={id:'v',title:'Test',fileName:'test.mp4',durationMs:10000,fps:30};
 const TEXT=['zero','one','two','three','four','five','six','seven','eight','nine'];
@@ -66,29 +67,49 @@ test('a Delete on selected words saves one cut with their ids, linked to its not
   assert.equal(editing.busy,false);
 });
 
-test('a Delete over words already deleted splits into one piece per kept run, sharing one note',async()=>{
-  const {editing,calls}=setup();
+/** The test transcript's loudness: each word is speech (-20 dB) from 30 ms after its transcript start to 20 ms before
+ *  its end, with silence (-80 dB) between, as the server would measure it. */
+function loudness(){
+  const db=new Float32Array(VIDEO.durationMs/HOP_MS).fill(-80);
+  for(const w of TRANSCRIPT.words)for(let i=(w.startMs+30)/HOP_MS;i<(w.endMs-20)/HOP_MS;i++)db[i]=-20;
+  return envelope(db);
+}
+/** True when no cut covers any of the word's speech. */
+const heard=(editing,i)=>editing.edits().every(e=>e.endMs<=i*1000+130||e.startMs>=i*1000+780);
+
+test('a Delete over words already deleted (dragged across them) makes one cut with all of them, sharing one note',async()=>{
+  const {editing,calls}=setup();editing.setLoudness('v',loudness());
   editing.selectWords(2);await editing.remove();
+  const inner=editing.edits()[0];
   editing.selectWords(0,4);
   assert.deepEqual(editing.toRestore(),[],'some words are still in the cut, so the button deletes');
   const result=await editing.remove();
-  const pieces=editing.edits().slice(1);
-  assert.deepEqual(pieces.map(words),[['W0','W1'],['W3','W4']]);
-  assert.equal(pieces[0].commentId,pieces[1].commentId);
+  assert.deepEqual(editing.edits().map(words),[['W0','W1','W2','W3','W4']],'the earlier cut joins the new one');
+  const [cut]=editing.edits();
+  assert.ok(cut.startMs<=inner.startMs&&cut.endMs>=inner.endMs,'nothing the earlier cut removed comes back');
   const ask=calls.requests[1];
-  assert.equal(ask.text,'Remove from cut: “zero one … three four”');
+  assert.equal(ask.text,'Remove from cut: “zero one two three four”');
   assert.equal(ask.editRequest.firstWordId,'W0');assert.equal(ask.editRequest.lastWordId,'W4');
-  assert.equal(ask.startMs,pieces[0].startMs);assert.equal(ask.endMs,pieces[1].endMs);
+  assert.equal(ask.startMs,cut.startMs);assert.equal(ask.endMs,cut.endMs);
   assert.equal(result.next,5);
 });
 
-test('Undo brings the split pieces back together and closes their one note',async()=>{
-  const {editing,calls}=setup();
+test('a Delete next to a cut joins it, so the run of deleted words is one cut',async()=>{
+  const {editing}=setup();editing.setLoudness('v',loudness());
+  editing.selectWords(3);await editing.remove();
+  editing.selectWords(1,2);await editing.remove();
+  assert.deepEqual(editing.edits().map(words),[['W1','W2','W3']]);
+  assert.ok(heard(editing,0)&&heard(editing,4),'the words either side stay');
+});
+
+test('Undo of a Delete that took in earlier cuts brings them back as they were, and closes only its own note',async()=>{
+  const {editing,calls}=setup();editing.setLoudness('v',loudness());
   editing.selectWords(2);await editing.remove();
+  const inner=editing.edits()[0];
   editing.selectWords(0,4);await editing.remove({typed:'cut it'});
   const commentId=editing.edits().at(-1).commentId;
   const undone=await editing.undo();
-  assert.deepEqual(editing.edits().map(words),[['W2']],'both pieces of the last Delete are back, the earlier cut stays');
+  assert.deepEqual(editing.edits(),[inner],'the earlier cut is back, exactly as it was');
   assert.deepEqual(calls.cancels,[commentId]);
   assert.equal(undone.note,'cut it','the note typed with the Delete comes back for the box');
   assert.equal(undone.first,0);assert.equal(undone.last,4);
@@ -97,21 +118,59 @@ test('Undo brings the split pieces back together and closes their one note',asyn
   assert.equal(await editing.undo(),null,'nothing left to undo');
 });
 
-test('Restore on deleted words brings back each cut they are in; the note closes with its last piece',async()=>{
-  const {editing,calls}=setup();
-  editing.selectWords(2);await editing.remove();
-  editing.selectWords(0,4);await editing.remove();
-  const [first,second,third]=editing.edits();
-  editing.selectWords(0,1);
-  assert.deepEqual(editing.toRestore().map(e=>e.id),[second.id]);
-  let back=await editing.restore([second.id],{keep:true});
+test('restoring one word in the middle of a cut splits it in two, keeping its outer edges and its note',async()=>{
+  const {editing,calls}=setup();editing.setLoudness('v',loudness());
+  editing.selectWords(1,3);await editing.remove();
+  const [cut]=editing.edits();
+  const back=await editing.restoreWords(['W2']);
+  assert.deepEqual(editing.edits().map(words),[['W1'],['W3']]);
+  const [left,right]=editing.edits();
+  assert.equal(left.startMs,cut.startMs);assert.equal(right.endMs,cut.endMs);
+  assert.ok(heard(editing,2),'all of the restored word plays');
+  assert.ok(!heard(editing,1)&&!heard(editing,3),'the words either side stay cut');
+  assert.equal(left.commentId,cut.commentId);assert.equal(right.commentId,cut.commentId);
+  assert.deepEqual(calls.cancels,[],'the note still has words in the cut');
+  assert.equal(back.first,2);assert.equal(back.last,2);
+  await editing.restoreWords(['W1']);
+  assert.deepEqual(editing.edits().map(words),[['W3']]);
+  await editing.restoreWords(['W3']);
+  assert.deepEqual(editing.edits(),[]);
+  assert.deepEqual(calls.cancels,[cut.commentId],'the note closes with its last word');
+});
+
+test('restoring a word at the edge of a cut shortens it; without loudness the cut still stops at that word',async()=>{
+  const {editing}=setup();
+  editing.selectWords(1,3);await editing.remove();
+  await editing.restoreWords(['W3']);
+  assert.deepEqual(editing.edits().map(words),[['W1','W2']]);
+  assert.ok(heard(editing,3),'the restored word plays');
+});
+
+test('Restore on a selection of deleted words brings back just those words; the note closes with its last word',async()=>{
+  const {editing,calls}=setup();editing.setLoudness('v',loudness());
+  editing.selectWords(1,4);await editing.remove();
+  const [cut]=editing.edits();
+  editing.selectWords(1,2);
+  assert.deepEqual(editing.toRestore().map(e=>e.id),[cut.id],'every selected word is deleted, so the button restores');
+  let back=await editing.restoreWords(editing.selectedIds(),{keep:true});
   assert.equal(back.noteResolved,false);
-  assert.deepEqual(calls.cancels,[],'the note still has a piece in the cut');
-  assert.deepEqual(editing.selectedIds(),['W0','W1'],'keep leaves the selection as it was');
-  back=await editing.restore([third.id]);
-  assert.deepEqual(calls.cancels,[third.commentId]);
+  assert.deepEqual(editing.edits().map(words),[['W3','W4']]);
+  assert.deepEqual(calls.cancels,[],'the note still has words in the cut');
+  assert.deepEqual(editing.selectedIds(),['W1','W2'],'keep leaves the selection as it was');
+  back=await editing.restoreWords(['W3','W4']);
+  assert.deepEqual(calls.cancels,[cut.commentId]);
   assert.equal(editing.selection,null);
-  assert.deepEqual(editing.edits().map(e=>e.id),[first.id]);
+  assert.deepEqual(editing.edits(),[]);
+});
+
+test('a selected pause that is cut offers Restore, which brings that pause back',async()=>{
+  const {editing}=setup();
+  editing.selectPause(TRANSCRIPT.words[3],TRANSCRIPT.words[4]);await editing.remove();
+  const [edit]=editing.edits();
+  editing.selectPause(TRANSCRIPT.words[3],TRANSCRIPT.words[4]);
+  assert.deepEqual(editing.toRestore().map(e=>e.id),[edit.id]);
+  await editing.restore([edit.id]);
+  assert.deepEqual(editing.edits(),[]);
 });
 
 test('a join is selected around its cut point; a note on it goes to the agent with the join id',async()=>{

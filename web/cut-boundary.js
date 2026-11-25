@@ -1,0 +1,114 @@
+// Where a word cut starts and ends, found in the audio itself (TOOLS-463). Transcript word times are a starting guess;
+// the cut moves to the real silence (or the quietest moment) around the words, keeps the natural pause, then snaps to
+// the quietest frame line. The loudness comes once per video: from the local server (loudness.py), or, online, from
+// the waveform the browser already decoded.
+
+export const HOP_MS=5;            // loudness measured every 5 ms, over a 10 ms window
+const WINDOW_MS=10;
+// Further out, the short silence inside a word ("sam-p-le") starts to pass for the pause between words.
+const SEARCH_BEFORE_MS=100;       // look this far outside the words for their silence
+const SEARCH_INSIDE_MS=80;        // and at most this far inside them (transcripts are often early or late)
+const VALLEY_MS=60;               // no silence: the quietest moment within ±60 ms of the transcript edge
+const MIN_SILENCE_MS=20;          // a quiet run shorter than this is not a pause
+const LONGEST_PAUSE_MS=2000;      // a pause reaching past the search window is followed this much further
+
+/** The loudness envelope from dB values every HOP_MS: the values, and the line below which the audio counts as quiet. */
+export function envelope(db){
+  if(!db.length)return {db,threshold:-Infinity,floor:-100,peak:-100};
+  const sorted=Float32Array.from(db).sort();
+  const floor=sorted[Math.floor(sorted.length*0.1)],peak=sorted[Math.floor(sorted.length*0.995)];
+  // Silence: within 12 dB of the room noise, but never closer than 45 dB below the loudest speech.
+  return {db,threshold:Math.max(floor+12,peak-45),floor,peak};
+}
+
+/** The server's loudness file: one byte every HOP_MS, the level in half dB below full scale (0 to 200). */
+export function envelopeFromBytes(bytes){
+  const db=new Float32Array(bytes.length);
+  for(let i=0;i<bytes.length;i++)db[i]=bytes[i]?-bytes[i]/2:0;
+  return envelope(db);
+}
+
+/** Loudness from decoded samples (one array per channel), as the server measures it. */
+export function envelopeFromSamples(channels,sampleRate){
+  const hop=Math.round(sampleRate*HOP_MS/1000),win=Math.round(sampleRate*WINDOW_MS/1000);
+  const length=channels[0]?.length||0,db=new Float32Array(Math.ceil(length/hop));
+  for(let i=0;i<db.length;i++){
+    let sum=0,n=0;const from=i*hop,to=Math.min(length,from+win);
+    for(const channel of channels)for(let j=from;j<to;j++){sum+=channel[j]*channel[j];n++;}
+    db[i]=n?Math.max(-100,10*Math.log10(sum/n+1e-12)):-100;
+  }
+  return envelope(db);
+}
+
+const at=(env,ms)=>env.db[Math.max(0,Math.min(env.db.length-1,Math.floor(ms/HOP_MS)))];
+const quiet=(env,ms)=>at(env,ms)<env.threshold;
+/** Average loudness in a short window around a time: how loud a cut there would land. */
+function levelAround(env,ms,half=8){
+  let sum=0,n=0;
+  for(let t=ms-half;t<=ms+half;t+=HOP_MS){sum+=10**(at(env,t)/10);n++;}
+  return 10*Math.log10(sum/n);
+}
+
+/** The pause nearest to a transcript edge, or the quietest moment near it when the words run together. */
+function findGap(env,edgeMs,lo,hi){
+  const runs=[];let start=null;
+  for(let t=lo;t<=hi;t+=HOP_MS){
+    if(quiet(env,t)){if(start===null)start=t;}
+    else if(start!==null){runs.push([start,t]);start=null;}
+  }
+  if(start!==null)runs.push([start,hi]);
+  // A pause reaching the edge of the search window keeps going: measure all of it.
+  for(const run of runs){
+    while(run[0]>0&&quiet(env,run[0]-HOP_MS)&&run[0]>lo-LONGEST_PAUSE_MS)run[0]-=HOP_MS;
+    while(quiet(env,run[1])&&run[1]<hi+LONGEST_PAUSE_MS)run[1]+=HOP_MS;
+  }
+  const pauses=runs.filter(([a,b])=>b-a>=MIN_SILENCE_MS);
+  if(pauses.length){
+    const distance=([a,b])=>edgeMs<a?a-edgeMs:edgeMs>b?edgeMs-b:0;
+    const [a,b]=pauses.reduce((best,run)=>distance(run)<distance(best)?run:best);
+    return {startMs:a,endMs:b,silent:true};
+  }
+  let best=edgeMs,bestDb=Infinity;
+  for(let t=Math.max(lo,edgeMs-VALLEY_MS);t<=Math.min(hi,edgeMs+VALLEY_MS);t+=HOP_MS){
+    // A dip far from the transcript edge is more likely inside a word ("c-an"), so distance costs 0.15 dB per ms.
+    const level=levelAround(env,t,5)+Math.abs(t-edgeMs)*0.15;
+    if(level<bestDb){bestDb=level;best=t;}
+  }
+  return {startMs:best,endMs:best,silent:false};
+}
+
+/** The frame line inside [lo, hi] where the cut lands quietest; ties go to the one nearest the aim. */
+function quietestFrame(env,aimMs,lo,hi,step){
+  let best=null,bestDb=Infinity;
+  for(let f=Math.ceil(lo/step-0.001);f*step<=hi+0.001;f++){
+    const ms=f*step,level=levelAround(env,ms)+Math.abs(ms-aimMs)*0.02; // a little pull towards the aim
+    if(level<bestDb){bestDb=level;best=ms;}
+  }
+  // A pause shorter than a frame holds no frame line: take the quietest one just around it.
+  return best??quietestFrame(env,aimMs,lo-step/2,hi+step/2,step);
+}
+
+/**
+ * The cut for words[first..last]: {startMs, endMs, aimStartMs, aimEndMs, silent}. startMs and endMs are on frame lines
+ * (what plays and what exports); aim* are the exact audio points. The search never reaches past the middle of a
+ * neighbouring word, and of the two pauses around the words the longer one stays, shared out between the two sides.
+ */
+export function cleanCut(words,first,last,env,{fps=30,durationMs}){
+  const step=1000/fps,s=words[first].startMs,e=words[last].endMs,length=e-s;
+  const before=words[first-1],after=words[last+1];
+  const inside=Math.min(SEARCH_INSIDE_MS,length*0.3);
+  const loStart=before?Math.max(before.startMs+(before.endMs-before.startMs)/2,s-SEARCH_BEFORE_MS):Math.max(0,s-SEARCH_BEFORE_MS);
+  const hiEnd=after?Math.min(after.startMs+(after.endMs-after.startMs)/2,e+SEARCH_BEFORE_MS):Math.min(durationMs,e+SEARCH_BEFORE_MS);
+  const g1=findGap(env,s,loStart,s+inside),g2=findGap(env,e,e-inside,hiEnd);
+  if(!before)g1.startMs=Math.max(0,g1.startMs);
+  if(!after)g2.endMs=Math.min(durationMs,g2.endMs);
+  // Keep one natural pause: the longer of the two. The shorter pause goes with the words.
+  const len1=g1.endMs-g1.startMs,len2=g2.endMs-g2.startMs,keep=Math.max(len1,len2);
+  const keepBefore=len1+len2?keep*len1/(len1+len2):0;
+  const aimStartMs=g1.startMs+keepBefore,aimEndMs=g2.endMs-(keep-keepBefore);
+  // Frame lines: stay inside the pause (or within most of a frame either side of a valley), aiming at the split point.
+  const pad=step*0.75;
+  const startMs=quietestFrame(env,aimStartMs,g1.silent?g1.startMs:g1.startMs-pad,g1.silent?Math.max(g1.startMs,Math.min(g1.endMs,aimStartMs+pad)):g1.endMs+pad,step);
+  const endMs=quietestFrame(env,aimEndMs,g2.silent?Math.min(g2.endMs,Math.max(g2.startMs,aimEndMs-pad)):g2.startMs-pad,g2.silent?g2.endMs:g2.endMs+pad,step);
+  return {startMs:Math.max(0,startMs),endMs:Math.min(durationMs,Math.max(endMs,startMs+step)),aimStartMs,aimEndMs,silent:[g1.silent,g2.silent]};
+}
