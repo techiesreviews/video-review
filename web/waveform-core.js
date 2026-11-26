@@ -16,6 +16,21 @@ export async function audioPeaks(channels,sampleRate,bucketMs=8,{pause=nextTask}
   }
   return {peaks,bucketMs:step/sampleRate*1000,durationMs:length/sampleRate*1000};
 }
+/** The same peaks, measured as a long recording's sound comes in a stretch at a time (TOOLS-479). peaks holds every
+ *  bucket of a recording of totalSamples, zero where no sound came yet; add(channels, at) measures decoded samples that
+ *  start at sample `at` of the recording. */
+export function peakMeter(sampleRate,totalSamples,bucketMs=8){
+  const step=Math.max(1,Math.round(sampleRate*bucketMs/1000)),peaks=new Float32Array(Math.ceil(totalSamples/step));
+  function add(channels,at){
+    const length=channels[0]?.length||0;
+    for(let i=Math.floor(at/step);i<peaks.length&&i*step<at+length;i++){
+      const from=Math.max(0,i*step-at),to=Math.min(length,(i+1)*step-at);let peak=peaks[i];
+      for(const channel of channels)for(let j=from;j<to;j++){const value=Math.abs(channel[j]);if(value>peak)peak=value;}
+      peaks[i]=peak;
+    }
+  }
+  return {peaks,bucketMs:step/sampleRate*1000,add};
+}
 export function waveformWindow(durationMs,atMs,range=null,spanMs=8000){
   const size=Math.min(durationMs,Math.max(spanMs,range?range.endMs-range.startMs+1600:0));
   const centre=range?(range.startMs+range.endMs)/2:atMs;

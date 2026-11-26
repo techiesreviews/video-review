@@ -2,7 +2,7 @@ import {chromium} from 'playwright';
 import assert from 'node:assert/strict';
 
 const base='https://video.techies.tools';
-for(const name of ['','app.js','backend.js','cut-core.js','cut-preferences.json','transcript-core.js','transcript-panel.js','transcript-editing.js','edit-bar-core.js','waveform-core.js','waveform-panel.js','library-panel.js','review-core.js','time-format.js','review-rules.json','style.css']){
+for(const name of ['','app.js','backend.js','cut-core.js','cut-preferences.json','transcript-core.js','transcript-panel.js','transcript-editing.js','edit-bar-core.js','waveform-core.js','waveform-panel.js','mp4-audio.js','library-panel.js','review-core.js','time-format.js','review-rules.json','style.css']){
   const response=await fetch(base+'/'+name+'?release=listening-20261028');
   const text=await response.text();assert.equal(response.status,200);
   // A browser takes a JSON module only with a JSON type; without it the whole page stops.
