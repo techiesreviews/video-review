@@ -98,6 +98,15 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
   const decodedLoudness=videoId=>!!loudness.get(videoId)?.from;
   /** The video plays this file now: loudness decoded from another file (before a new render) no longer fits, so it goes. */
   function mediaChanged(videoId,src){const entry=loudness.get(videoId);if(entry?.from&&entry.from!==src)loudness.delete(videoId);}
+  /** A waveform build of this file stopped before its end (a read failed, or the video was changed): the loudness it had
+   *  measured so far goes with its bars, so a cut is not placed by sound the waveform does not show. A server
+   *  measurement it stood in for is in its place again. A build that finished is the whole video's loudness, and stays. */
+  function decodeStopped(src){
+    for(const [videoId,entry] of loudness){
+      if(entry.from!==src||entry.env&&entry.env.readyMs==null)continue;
+      if(entry.standsFor)loudness.set(videoId,entry.standsFor);else loudness.delete(videoId);
+    }
+  }
 
   function flushNote(){
     cancelNoteTimer?.();cancelNoteTimer=null;
@@ -495,6 +504,6 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
     get noteId(){return note.id;},
     edits,
     clear,selectWords,selectCut,selectPause,selectSource,wholeGap,adjust,selectedIds,toRestore,bounds,
-    setLoudness,hasLoudness,decodedLoudness,mediaChanged,remove,undo,restore,restoreWords,send,editNote,noteTyped,flushNote,alreadyAsked,askRestore,target,changeContext,
+    setLoudness,hasLoudness,decodedLoudness,mediaChanged,decodeStopped,remove,undo,restore,restoreWords,send,editNote,noteTyped,flushNote,alreadyAsked,askRestore,target,changeContext,
   };
 }

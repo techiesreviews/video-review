@@ -888,6 +888,39 @@ test('a decode whose loudness is still being measured stands in once it is in, a
   assert.deepEqual(patient.edits().map(e=>[e.startMs,e.endMs]),onDecode,'the waiting Delete cuts on the decode');
 });
 
+test('a waveform build that stops part way takes its loudness with it, so a cut matches the bars shown (TOOLS-481)',async()=>{
+  // Loudness from a build part way in says how far it reaches (readyMs); here that is past word 1, which the tests cut.
+  const partWay=env=>({...env,readyMs:VIDEO.durationMs});
+  const flat=()=>envelope(new Float32Array(VIDEO.durationMs/HOP_MS).fill(-20));
+  const cutWith=async(...steps)=>{const {editing}=setup();for(const step of steps)await step(editing);editing.selectWords(1);await editing.remove();return editing.edits().map(e=>[e.startMs,e.endMs]);};
+  const onWords=await cutWith(),onServer=await cutWith(e=>e.setLoudness('v',loudness()));
+  assert.notDeepEqual(await cutWith(e=>e.setLoudness('v',partWay(loudness()),{from:'blob:a'})),onWords,'while the build runs, a cut in the part that is in goes by the sound');
+  // The build stops (a read fails, or the video is changed): its bars are gone, and so is the loudness behind them.
+  const stopped=await cutWith(
+    e=>e.setLoudness('v',partWay(loudness()),{from:'blob:a'}),
+    e=>{e.decodeStopped('blob:b');assert.ok(e.hasLoudness('v'),'another file\'s build stopping leaves it');},
+    e=>{e.decodeStopped('blob:a');assert.ok(!e.hasLoudness('v')&&!e.decodedLoudness('v'),'the part-way loudness is gone');},
+  );
+  assert.deepEqual(stopped,onWords,'a Delete after the build stopped follows the word times');
+  // So is one that had handed nothing over yet.
+  const early=held(),{editing}=setup();
+  editing.setLoudness('v',early.promise,{from:'blob:a'});editing.decodeStopped('blob:a');
+  early.resolve(null);await early.promise;await null;
+  assert.ok(!editing.hasLoudness('v')&&!editing.decodedLoudness('v'),'a build stopped in its first stretch leaves nothing');
+  // A server measurement the decode stood in for is in its place again: a Delete waits for it, and cuts on it.
+  const server=held(),{editing:waiting}=setup();
+  waiting.setLoudness('v',server.promise);waiting.setLoudness('v',partWay(flat()),{from:'blob:a'});
+  waiting.decodeStopped('blob:a');
+  assert.ok(!waiting.hasLoudness('v')&&!waiting.decodedLoudness('v'),'the server\'s measurement, still coming, is what the video has');
+  waiting.selectWords(1);const removing=waiting.remove();
+  server.resolve(loudness());await removing;
+  assert.deepEqual(waiting.edits().map(e=>[e.startMs,e.endMs]),onServer,'the Delete cuts on the server\'s measurement');
+  // A build that finished is the whole video's loudness: it stays when a later build of the same file stops.
+  const whole=setup().editing;
+  whole.setLoudness('v',loudness(),{from:'blob:a'});whole.decodeStopped('blob:a');
+  assert.ok(whole.hasLoudness('v')&&whole.decodedLoudness('v'),'a finished decode stays');
+});
+
 // Saved history after a click-back (TOOLS-463): a cut holds, of the cuts it took in, only what is still cut under it.
 
 test('a pause cut joined into a word Delete stays in its history when one of the words comes back, so Undo puts it back',async()=>{
