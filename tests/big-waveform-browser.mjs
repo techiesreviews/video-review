@@ -110,7 +110,19 @@ try{
   // there is no such refresh), which that refresh would undo part way through a build. So it is kept off: to the app,
   // the page is in a background tab.
   await page.addInitScript(()=>Object.defineProperty(document,'hidden',{get:()=>true}));
-  await page.addInitScript(()=>{const Native=window.OfflineAudioContext;window.decodeRates=[];window.OfflineAudioContext=class extends Native{constructor(...args){super(...args);window.decodeRates.push(this.sampleRate);}};});
+  // Every decode's rate is noted. While refuseStretches is set, the browser refuses sound read in stretches (frames in
+  // ADTS, which start with FF F1) as one that cannot decode them does, and still decodes a whole file.
+  await page.addInitScript(()=>{
+    const Native=window.OfflineAudioContext;window.decodeRates=[];window.refuseStretches=false;
+    window.OfflineAudioContext=class extends Native{
+      constructor(...args){super(...args);window.decodeRates.push(this.sampleRate);}
+      decodeAudioData(data,...rest){
+        const head=new Uint8Array(data,0,2);
+        if(window.refuseStretches&&head[0]===0xFF&&head[1]===0xF1)return Promise.reject(new DOMException('Unable to decode audio data','EncodingError'));
+        return super.decodeAudioData(data,...rest);
+      }
+    };
+  });
   // While heldPauses is a list, the pauses between stretches (a message, nextTask in cut-boundary.js) wait in it.
   await page.addInitScript(()=>{
     const Native=window.MessageChannel;window.heldPauses=null;
@@ -287,20 +299,33 @@ try{
   assert.ok(blobReads.length>3&&blobReads.every(read=>read.range&&read.status===206),`the chosen file is read in ranges: ${JSON.stringify(blobReads.slice(0,3))}`);
   const blobTotal=stretchReads(blobReads.map(read=>span(read.range)),'from the chosen file').reduce((n,read)=>n+read,0);
   const allStatuses=await page.evaluate(()=>window.statuses);
+  // Chooses another file and plays it, as online; returns once Build waveform has ended, built or with a message.
+  const choose=async path=>{
+    await picker.setInputFiles(path);
+    await play(await page.evaluate(()=>window.blobs.push(URL.createObjectURL(document.querySelector('input[type=file][hidden]').files[0]))-1));
+  };
+  const built=async()=>{
+    await page.locator('#buildWaveform').click();
+    await page.waitForFunction(()=>{const button=document.querySelector('#buildWaveform');return button.hidden||!button.disabled&&document.querySelector('#waveformStatus').textContent;},null,{timeout:120000});
+    return page.locator('#waveformStatus').innerText();
+  };
+  // A file small enough to decode whole (the 70 MB copy) whose sound the browser refuses in stretches is decoded whole
+  // instead, as before TOOLS-479 (TOOLS-481): the waveform builds, and a Delete is placed by the sound.
+  await choose(small);
+  await page.evaluate(()=>{window.refuseStretches=true;});
+  assert.equal(await built(),'','a small file the browser cannot read in stretches builds its waveform from the whole file');
+  await page.evaluate(()=>{window.refuseStretches=false;});
+  assert.equal(await page.locator('#buildWaveform').isHidden(),true,'and Build waveform is done');
+  assert.equal(await barAt(45400),true,'its bars, all the way in');
+  await word(10).click();await page.locator('.bar-delete').click();
+  await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===5);
+  bySound((await onDisk()).find(c=>c.wordIds[0]==='W10'),10,'word 10\'s cut, on the whole file\'s decode,');
   // A 3 GB file whose sound cannot be read in stretches (here a fragmented MP4) says why and what to do instead.
-  await picker.setInputFiles(fragmented);
-  await page.evaluate(()=>window.blobs.push(URL.createObjectURL(document.querySelector('input[type=file][hidden]').files[0])));
-  await play(2);
-  await page.locator('#buildWaveform').click();
-  await page.waitForFunction(()=>!document.querySelector('#buildWaveform').disabled&&document.querySelector('#waveformStatus').textContent);
-  assert.match(await page.locator('#waveformStatus').innerText(),/fragmented.*Make a review copy of this video to build its waveform\./,'a file it cannot read says what to do');
+  await choose(fragmented);
+  assert.match(await built(),/fragmented.*Make a review copy of this video to build its waveform\./,'a file it cannot read says what to do');
   // One with no sound says only that: a review copy of it would have no sound either.
-  await picker.setInputFiles(silent);
-  await page.evaluate(()=>window.blobs.push(URL.createObjectURL(document.querySelector('input[type=file][hidden]').files[0])));
-  await play(3);
-  await page.locator('#buildWaveform').click();
-  await page.waitForFunction(()=>!document.querySelector('#buildWaveform').disabled&&document.querySelector('#waveformStatus').textContent);
-  assert.equal(await page.locator('#waveformStatus').innerText(),'This video has no sound track.','a video with no sound says so, and nothing more');
+  await choose(silent);
+  assert.equal(await built(),'This video has no sound track.','a video with no sound says so, and nothing more');
   assert.ok(!allStatuses.some(text=>/smaller|large/i.test(text)),`no "file too large" message: ${JSON.stringify([...new Set(allStatuses)])}`);
   assert.deepEqual(errors,[],'no page errors');
   console.log(`PASS: a 3 GB review copy with video of real weight builds its waveform in ${seen.length} stretches (${seen.join(', ')}%), reads ${mb(total)} MB of it in ${reads.length} reads of ${mb(Math.max(...reads.map(read=>read.bytes)))} MB at most (${perStretch.map(mb).join(', ')} MB a stretch, for ${layout.map(part=>mb(part.sound)).join(', ')} MB of sound), cuts on the part that is in, and lines up with the whole decode (${lineUp.differ} of ${lineUp.steps} loudness steps differ); chosen as a file, it stops cleanly part way and reads ${mb(blobTotal)} MB in ranges.`);
