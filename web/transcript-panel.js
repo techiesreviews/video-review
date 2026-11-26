@@ -20,8 +20,9 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   let carriedNote='';
   // The loudness under chosen words or a chosen join came in or went (a build's next stretch, a build that stopped, the
   // server's measurement): the cut shown on the waveform is worked out again, so Delete saves the cut that is shown and
-  // Hear cut plays it. Times set with the handles stay as they are (bounds keeps them).
-  const showCutAgain=()=>{const chosen=editing.selection;if(chosen&&chosen.kind!=='source')waveform.setRange(editing.bounds());};
+  // Hear cut plays it. Times set with the handles stay as they are (bounds keeps them). This runs after every stretch of
+  // a build, so a cut that has not moved is left alone, with the view and a time being typed (moveRange).
+  const showCutAgain=()=>{const chosen=editing.selection;if(chosen&&chosen.kind!=='source')waveform.moveRange(editing.bounds());};
   // What is selected and what an edit does live in transcript-editing.js; this file draws it and passes clicks in.
   const editing=createTranscriptEditing({saveTranscript:(v,data,options)=>backendRef.saveTranscript(v,data,options),request,updateRequest,cancelRequest,onError:error=>showError(error.message),onLoudnessChange:showCutAgain});
   // The local app measures each video's loudness on the server (backend.loudness); online, or when the server has no
