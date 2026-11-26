@@ -94,14 +94,19 @@ function quietestFrame(env,aimMs,lo,hi,step){
  * no sound for them. startMs and endMs are on frame lines
  * (what plays and what exports); aim* are the exact audio points. The search never reaches past the middle of a
  * neighbouring word, and of the two pauses around the words the longer one stays, shared out between the two sides.
+ * clear: [before, after], true where the word on that side plays again (it was clicked back). On such a side the cut
+ * stops at the frame line before that word's sound (the pause's far edge, or with no pause the quietest point), so
+ * none of it is cut, and the cut is not stretched to a whole frame: the caller refuses a cut left shorter than one.
  */
-export function cleanCut(words,first,last,env,{fps=30,durationMs}){
+export function cleanCut(words,first,last,env,{fps=30,durationMs,clear=[false,false]}){
   const step=1000/fps,s=words[first].startMs,e=words[last].endMs,length=e-s;
   const before=words[first-1],after=words[last+1];
   const inside=Math.min(SEARCH_INSIDE_MS,length*0.3);
   const loStart=before?Math.max(before.startMs+(before.endMs-before.startMs)/2,s-SEARCH_BEFORE_MS):Math.max(0,s-SEARCH_BEFORE_MS);
   const hiEnd=after?Math.min(after.startMs+(after.endMs-after.startMs)/2,e+SEARCH_BEFORE_MS):Math.min(durationMs,e+SEARCH_BEFORE_MS);
-  const g1=findGap(env,s,loStart,s+inside),g2=findGap(env,e,e-inside,hiEnd);
+  // Nor past the middle of the first or last word itself: a short one would take the pause on its far side for its edge.
+  const insideFirst=Math.min(inside,(words[first].endMs-s)/2),insideLast=Math.min(inside,(e-words[last].startMs)/2);
+  const g1=findGap(env,s,loStart,s+insideFirst),g2=findGap(env,e,e-insideLast,hiEnd);
   // Both edges in one pause: the words make no sound the loudness can see, so it cannot place the cut (null).
   if(g1.endMs>g2.startMs)return null;
   if(!before)g1.startMs=Math.max(0,g1.startMs);
@@ -112,7 +117,14 @@ export function cleanCut(words,first,last,env,{fps=30,durationMs}){
   const aimStartMs=g1.startMs+keepBefore,aimEndMs=g2.endMs-(keep-keepBefore);
   // Frame lines: stay inside the pause (or within most of a frame either side of a valley), aiming at the split point.
   const pad=step*0.75;
-  const startMs=quietestFrame(env,aimStartMs,g1.silent?g1.startMs:g1.startMs-pad,g1.silent?Math.max(g1.startMs,Math.min(g1.endMs,aimStartMs+pad)):g1.endMs+pad,step);
-  const endMs=quietestFrame(env,aimEndMs,g2.silent?Math.min(g2.endMs,Math.max(g2.startMs,aimEndMs-pad)):g2.startMs-pad,g2.silent?g2.endMs:g2.endMs+pad,step);
-  return {startMs:Math.max(0,startMs),endMs:Math.min(durationMs,Math.max(endMs,startMs+step)),aimStartMs,aimEndMs,silent:[g1.silent,g2.silent]};
+  let startMs=quietestFrame(env,aimStartMs,g1.silent?g1.startMs:g1.startMs-pad,g1.silent?Math.max(g1.startMs,Math.min(g1.endMs,aimStartMs+pad)):g1.endMs+pad,step);
+  let endMs=quietestFrame(env,aimEndMs,g2.silent?Math.min(g2.endMs,Math.max(g2.startMs,aimEndMs-pad)):g2.startMs-pad,g2.silent?g2.endMs:g2.endMs+pad,step);
+  // Beside a word that plays again the cut may not pass where that word's sound ends or starts (the far edge of the
+  // pause, or the quietest point): it takes the nearest frame line on its own side of it.
+  const soundEndsMs=g1.silent?g1.startMs:aimStartMs,soundStartsMs=g2.silent?g2.endMs:aimEndMs;
+  if(clear[0]&&startMs<soundEndsMs-0.001)startMs=Math.ceil(soundEndsMs/step-0.001)*step;
+  if(clear[1]&&endMs>soundStartsMs+0.001)endMs=Math.floor(soundStartsMs/step+0.001)*step;
+  // A Delete of a sound shorter than a frame still cuts one whole frame.
+  if(!clear[0]&&!clear[1])endMs=Math.max(endMs,startMs+step);
+  return {startMs:Math.max(0,startMs),endMs:Math.min(durationMs,endMs),aimStartMs,aimEndMs,silent:[g1.silent,g2.silent]};
 }
