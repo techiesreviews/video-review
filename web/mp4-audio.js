@@ -18,6 +18,8 @@ const RATES=[96000,88200,64000,48000,44100,32000,24000,22050,16000,12000,11025,8
 export const LEAD_FRAMES=2;
 
 export class NotReadable extends Error{}
+// A video with no sound to read: another copy of it would have none either (noSound tells the waveform not to offer one).
+const noSound=message=>Object.assign(new NotReadable(message),{noSound:true});
 
 const u32=(b,i)=>(b[i]<<24|b[i+1]<<16|b[i+2]<<8|b[i+3])>>>0;
 const u64=(b,i)=>u32(b,i)*2**32+u32(b,i+4);
@@ -80,7 +82,8 @@ function esdsConfig(bytes,box){
   while(at<box.end){
     const {tag,length}=descriptor(),end=at+length;
     if(tag===3){const flags=bytes[at+2];at+=3;if(flags&128)at+=2;if(flags&64)at+=1+bytes[at];if(flags&32)at+=2;continue;}
-    if(tag===4){if(bytes[at]!==0x40)throw new NotReadable('This video\'s sound is not AAC.');at+=13;continue;}
+    // MPEG-4 AAC (0x40), or AAC marked the MPEG-2 way: Main, LC, SSR (0x66-0x68).
+    if(tag===4){if(![0x40,0x66,0x67,0x68].includes(bytes[at]))throw new NotReadable('This video\'s sound is not AAC.');at+=13;continue;}
     if(tag===5)return bytes.subarray(at,end);
     at=end;
   }
@@ -103,7 +106,8 @@ function sampleEntryConfig(bytes,entry){
  * The sound track of a moov box: where each AAC frame lies in the file (offsets, sizes), when it starts (starts, in the
  * track's timescale, one more at the end), the ADTS fields (config), and how the track sits on the video's clock: the
  * first `skip` ticks of the track are not played (the encoder's start-up frame, from the edit list) and the track
- * starts `delayMs` after the video does. durationMs is how long it plays.
+ * starts `delayMs` after the video does. Play ends at tick `end` (the edit's end on a trimmed video), and the frames
+ * listed are only those that start before it. durationMs is how long it plays.
  */
 export function soundTrack(moov){
   const damaged=()=>new NotReadable('The video file\'s index is damaged.');
@@ -122,10 +126,10 @@ export function soundTrack(moov){
     const scale=u32(moov,mdhd.body+(moov[mdhd.body]===1?20:12));
     const stsd=box('stsd'),entry=boxes(moov,stsd.body+8,stsd.end)[0];if(!entry)throw damaged();
     const config=audioConfig(sampleEntryConfig(moov,entry)??[]);
-    // Every table's count is checked against the table's own length, and the tables against each other, before any
-    // memory is set aside: a damaged count must not ask for gigabytes.
+    // Every table's count is checked against the table's own length, and the tables against each other, before the
+    // frame lists are made: a damaged count must not ask for gigabytes (at most MOST_FRAMES, a few hundred megabytes).
     const stsz=box('stsz'),fixed=u32(moov,stsz.body+4),count=u32(moov,stsz.body+8);
-    if(!count)throw new NotReadable('The video file\'s index lists no sound.');
+    if(!count)throw noSound('The video file\'s index lists no sound.');
     const fits=(table,head,entries,size)=>table.body+head+entries*size<=table.end;
     if(count>MOST_FRAMES||!fixed&&!fits(stsz,12,count,4))throw damaged();
     const stts=box('stts'),timeRuns=u32(moov,stts.body+4);if(!fits(stts,8,timeRuns,8))throw damaged();
@@ -165,7 +169,7 @@ export function soundTrack(moov){
     return {offsets:offsets.subarray(0,kept),sizes:sizes.subarray(0,kept),starts:starts.subarray(0,kept+1),scale,config,skip,delayMs,end,
       durationMs:delayMs+(Math.min(end,starts[kept])-skip)/scale*1000};
   }
-  throw new NotReadable('This video has no sound track.');
+  throw noSound('This video has no sound track.');
 }
 
 /** A 7-byte ADTS header for one AAC frame of `size` bytes. */
