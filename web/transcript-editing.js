@@ -55,8 +55,8 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
   let note={id:null,base:''},pendingNote=null,cancelNoteTimer=null;
   // Notes typed with a Delete, by comment id: Undo hands them back to the box.
   const cutNotes=new Map();
-  // The loudness of each video by id ({env, promise, waited, from, standsFor}, see setLoudness). The cuts a Delete took into its own cut
-  // are saved on that cut (takenIn), so its Undo brings them back as they were, also after a reload.
+  // The loudness of each video by id ({env, promise, waited, from, standsFor}, see setLoudness). The cuts a Delete took
+  // into its own cut are saved on that cut (takenIn), so its Undo brings them back as they were, also after a reload.
   const loudness=new Map();
 
   const edits=()=>transcript?.draftEdits||[];

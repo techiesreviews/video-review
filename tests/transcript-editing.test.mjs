@@ -849,7 +849,7 @@ test('a decode that comes in while the server still measures stands in for it; t
     e=>e.setLoudness('v',flat(),{from:'blob:b'}),
     async e=>{later.resolve(loudness());await later.promise;assert.ok(!e.decodedLoudness('v'),'the server measurement replaces the second decode');},
   );
-  assert.deepEqual(twice,onServer);
+  assert.deepEqual(twice,onServer,'the Delete after both decodes cuts on the server\'s measurement');
 });
 
 // Saved history after a click-back (TOOLS-463): a cut holds, of the cuts it took in, only what is still cut under it.
