@@ -78,7 +78,14 @@ test('loudness from a long decode is measured in slices, so the page keeps answe
   for(const ms of [30010,45000,59995])assert.equal(env.db[ms/HOP_MS],-100,`silence at ${ms} ms`);
 });
 
-test('Build waveform never holds more decoded audio than an hour of stereo at 8 kHz did, and uses 16 kHz only for the loudness (TOOLS-475)',()=>{
+test('the pause between slices is not a timer, which a browser slows to one a second in a hidden tab (TOOLS-475)',async()=>{
+  const timer=globalThis.setTimeout;let timers=0;
+  globalThis.setTimeout=(...args)=>{timers++;return timer(...args);};
+  try{await boundary.nextTask();}finally{globalThis.setTimeout=timer;}
+  assert.equal(timers,0);
+});
+
+test('Build waveform, for mono or stereo, never holds more decoded audio than an hour of stereo at 8 kHz did, and uses 16 kHz only for the loudness (TOOLS-475)',()=>{
   // decodeAudioData keeps every channel at the decode's rate: an hour of stereo at 8 kHz is 57.6 million samples
   // (about 230 MB), the most Build waveform held before TOOLS-473.
   const before=3600*8000*2,minute=60000;
