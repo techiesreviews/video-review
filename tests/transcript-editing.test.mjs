@@ -852,6 +852,42 @@ test('a decode that comes in while the server still measures stands in for it; t
   assert.deepEqual(twice,onServer,'the Delete after both decodes cuts on the server\'s measurement');
 });
 
+test('a decode whose loudness is still being measured stands in once it is in, and never over a server measurement that came first (TOOLS-475)',async()=>{
+  const flat=()=>envelope(new Float32Array(VIDEO.durationMs/HOP_MS).fill(-20));
+  const cut=async env=>{const {editing}=setup();editing.setLoudness('v',env);editing.selectWords(1);await editing.remove();return editing.edits().map(e=>[e.startMs,e.endMs]);};
+  const onDecode=await cut(flat()),onServer=await cut(loudness());
+  // The decode is measured while the server still measures: a Delete waits for it, and the server still wins later.
+  const server=held(),decode=held(),{editing}=setup();
+  editing.setLoudness('v',server.promise);editing.setLoudness('v',decode.promise,{from:'blob:a'});
+  assert.ok(!editing.hasLoudness('v')&&editing.decodedLoudness('v'),'not in yet, but from a decode');
+  editing.selectWords(1);const removing=editing.remove();
+  decode.resolve(flat());await removing;
+  assert.deepEqual(editing.edits().map(e=>[e.startMs,e.endMs]),onDecode,'the waiting Delete cuts on the decode');
+  server.resolve(loudness());await server.promise;
+  assert.ok(editing.hasLoudness('v')&&!editing.decodedLoudness('v'),'the server measurement takes its place');
+  // The server's measurement comes in before the decode's: the decode does not take over when it is in.
+  const first=held(),slow=held(),other=setup().editing;
+  other.setLoudness('v',first.promise);other.setLoudness('v',slow.promise,{from:'blob:a'});
+  first.resolve(loudness());await first.promise;slow.resolve(flat());await slow.promise;await null;
+  assert.ok(other.hasLoudness('v')&&!other.decodedLoudness('v'),'the server measurement stays');
+  other.selectWords(1);await other.remove();
+  assert.deepEqual(other.edits().map(e=>[e.startMs,e.endMs]),onServer,'and a Delete cuts on it');
+  // A Delete already waiting when the server's measurement comes in first cuts on it at once, with the decode still
+  // being measured.
+  const early=held(),late=held(),waiting=setup().editing;
+  waiting.setLoudness('v',early.promise);waiting.setLoudness('v',late.promise,{from:'blob:a'});
+  waiting.selectWords(1);const removal=waiting.remove();
+  early.resolve(loudness());await new Promise(done=>setImmediate(done));
+  assert.deepEqual(waiting.edits().map(e=>[e.startMs,e.endMs]),onServer,'the waiting Delete cuts on the server\'s measurement');
+  late.resolve(flat());await removal;
+  // A server with nothing to give does not end the wait: the waiting Delete cuts on the decode when it is in.
+  const empty=held(),decoding=held(),patient=setup().editing;
+  patient.setLoudness('v',empty.promise);patient.setLoudness('v',decoding.promise,{from:'blob:a'});
+  patient.selectWords(1);const pending=patient.remove();
+  empty.resolve(null);await empty.promise;await null;decoding.resolve(flat());await pending;
+  assert.deepEqual(patient.edits().map(e=>[e.startMs,e.endMs]),onDecode,'the waiting Delete cuts on the decode');
+});
+
 // Saved history after a click-back (TOOLS-463): a cut holds, of the cuts it took in, only what is still cut under it.
 
 test('a pause cut joined into a word Delete stays in its history when one of the words comes back, so Undo puts it back',async()=>{

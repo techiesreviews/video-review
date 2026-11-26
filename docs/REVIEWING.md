@@ -138,9 +138,13 @@ transcript and one on the waveform. The playing word has a soft ground with an u
 selected; inside a selection it shows as a white underline. **Delete** makes one cut, and takes in any deleted words
 next to or inside it. The cut's edges come from the sound itself: the real pause around the words (or the quietest
 moment, when words run together), keeping the longer of the two pauses, on whole video frames. The local server
-measures each video's loudness once and keeps it; online, the decoded waveform supplies it, decoded at the same 16 kHz
-the server measures at, so a word's last soft sound ("s", "f", "th") is kept the same way. Each join fades over 15 ms
-on the kept side in the exported cut list (`audioFadeMs`). The preview's fade ends 20 ms before each cut, because the
+measures each video's loudness once and keeps it; online, the decoded waveform supplies it once **Build waveform** has
+run (until then, cuts follow the transcript's word times; a Delete just after the build waits a moment for the
+measurement). For a recording of up to 30 minutes it decodes at the same 16 kHz the server measures at, so a word's
+last soft sound ("s", "f", "th") is kept the same way. A longer recording decodes at 8 kHz, as before, so the tab holds
+no more audio than it did for an hour: online, its cut edges can clip a word's last soft sound. With the server's
+loudness in, the waveform decodes at 8 kHz for the bars only. Each join fades over 15 ms on the kept side in the
+exported cut list (`audioFadeMs`). The preview's fade ends 20 ms before each cut, because the
 player's clock trails the sound it has already sent, so the preview never plays sound from inside a cut.
 
 The attached transcript may also contain an `original` section with the full source recording's word timings,

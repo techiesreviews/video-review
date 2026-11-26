@@ -66,9 +66,18 @@ test('comments follow retained source material after recuts and removed comments
   assert.equal(comments[0].sourceSpans[0].sourceStartFrame,90);
 });
 
-test('waveform preserves channel peaks and uses the decoded audio clock',()=>{
-  const p=audioPeaks([Float32Array.from([0,.5,0,0,-.8,0,0,0]),Float32Array.from([0,-.5,0,0,0,0,0,0])],1000,4);
+test('waveform preserves channel peaks and uses the decoded audio clock',async()=>{
+  const p=await audioPeaks([Float32Array.from([0,.5,0,0,-.8,0,0,0]),Float32Array.from([0,-.5,0,0,0,0,0,0])],1000,4);
   assert.equal(p.bucketMs,4);assert.equal(p.durationMs,8);assert.equal(p.peaks[0],.5);assert.ok(Math.abs(p.peaks[1]-.8)<.00001);
+});
+test('the bars of a long recording are measured in slices, so the page keeps answering between them (TOOLS-475)',async()=>{
+  // A minute at 8 kHz with one loud sample every 10 seconds; each slice is followed by a pause that gives the page back.
+  const rate=8000,samples=new Float32Array(60*rate);for(let s=0;s<60;s+=10)samples[s*rate+3]=.9;
+  let pauses=0;
+  const p=await audioPeaks([samples],rate,8,{pause:async()=>{pauses++;}});
+  assert.ok(pauses>=3,`a minute of audio is measured in several slices: ${pauses}`);
+  assert.equal(p.peaks.length,7500);
+  assert.deepEqual([...p.peaks].flatMap((peak,i)=>peak?[i]:[]),[0,1250,2500,3750,5000,6250],'every loud sample is found');
 });
 test('waveform windows include both cut handles and stay inside the file',()=>{
   assert.deepEqual(waveformWindow(10000,1000,null,4000),{startMs:0,endMs:4000});

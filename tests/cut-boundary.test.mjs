@@ -56,13 +56,52 @@ test('the server\'s loudness bytes read back as dB, half a dB per step',()=>{
   assert.ok(env.threshold>-100&&env.threshold<0);
 });
 
-test('loudness from decoded samples: a tone reads near -3 dB, silence at the floor',()=>{
+test('loudness from decoded samples: a tone reads near -3 dB, silence at the floor',async()=>{
   const rate=8000,samples=new Float32Array(rate);
   for(let i=0;i<rate/2;i++)samples[i]=Math.sin(2*Math.PI*440*i/rate);
-  const env=envelopeFromSamples([samples],rate);
+  const env=await envelopeFromSamples([samples],rate);
   assert.equal(env.db.length,rate/(rate*HOP_MS/1000));
   assert.ok(Math.abs(env.db[10]+3)<0.5,`tone ${env.db[10]}`);
   assert.equal(env.db.at(-1),-100);
+});
+
+test('loudness from a long decode is measured in slices, so the page keeps answering between them (TOOLS-475)',async()=>{
+  // A minute at 16 kHz: a tone for the first 30 seconds, then silence. Each slice is followed by a pause that gives the
+  // page back, and the result is the same as measured in one go.
+  const rate=boundary.LOUDNESS_RATE,samples=new Float32Array(60*rate);
+  for(let i=0;i<30*rate;i++)samples[i]=Math.sin(2*Math.PI*440*i/rate);
+  let pauses=0;
+  const env=await envelopeFromSamples([samples],rate,{pause:async()=>{pauses++;}});
+  assert.ok(pauses>=3,`a minute of audio is measured in several slices: ${pauses}`);
+  assert.equal(env.db.length,60000/HOP_MS);
+  for(const ms of [10,14990,29000])assert.ok(Math.abs(env.db[ms/HOP_MS]+3)<0.5,`tone at ${ms} ms: ${env.db[ms/HOP_MS]}`);
+  for(const ms of [30010,45000,59995])assert.equal(env.db[ms/HOP_MS],-100,`silence at ${ms} ms`);
+});
+
+test('the pause between slices is not a timer, which a browser slows to one a second in a hidden tab (TOOLS-475)',async()=>{
+  const timer=globalThis.setTimeout;let timers=0;
+  globalThis.setTimeout=(...args)=>{timers++;return timer(...args);};
+  try{await boundary.nextTask();}finally{globalThis.setTimeout=timer;}
+  assert.equal(timers,0);
+  // It is a real pause: it does not end within the same task, so the page can answer a click before the next slice.
+  let done=false;const pause=boundary.nextTask().then(()=>{done=true;});
+  for(let i=0;i<10;i++)await null;
+  assert.equal(done,false,'not over within the same task');
+  await pause;assert.equal(done,true);
+});
+
+test('Build waveform, for mono or stereo, never holds more decoded audio than an hour of stereo at 8 kHz did, and uses 16 kHz only for the loudness (TOOLS-475)',()=>{
+  // decodeAudioData keeps every channel at the decode's rate: an hour of stereo at 8 kHz is 57.6 million samples
+  // (about 230 MB), the most Build waveform held before TOOLS-473.
+  const before=3600*8000*2,minute=60000;
+  assert.equal(boundary.decodeRate(60*minute,true),8000,'an hour: 8 kHz, as before, even with no loudness yet');
+  assert.equal(boundary.decodeRate(30*minute,true),boundary.LOUDNESS_RATE,'half an hour with no loudness yet: the loudness rate');
+  assert.equal(boundary.decodeRate(31*minute,true),8000,'past half an hour: 8 kHz');
+  for(const minutes of [1,10,20,30,31,45,60,90,180]){
+    assert.equal(boundary.decodeRate(minutes*minute,false),8000,`${minutes} min with the loudness in: bars only, 8 kHz`);
+    const rate=boundary.decodeRate(minutes*minute,true);
+    assert.ok(rate===8000||minutes*60*rate*2<=before,`${minutes} min: no more samples than before (${rate} Hz)`);
+  }
 });
 
 test('a word the loudness shows no sound for is cut on its transcript times, not as a one-frame cut',()=>{
@@ -111,7 +150,7 @@ test('a short word at the edge of a cut, run into its neighbour, is cut too: the
   assert.ok(second.startMs>=980&&second.startMs<=1020,`"a test" starts where "a" starts, not in the pause after it: ${second.startMs}`);
 });
 
-test('online loudness is decoded at the server\'s rate, which keeps a word\'s last soft sound out of the cut (TOOLS-473)',()=>{
+test('online loudness is decoded at the server\'s rate, which keeps a word\'s last soft sound out of the cut (TOOLS-473)',async()=>{
   // "this next ... end": "this" ends in an "s", a 60 ms burst of 5–7 kHz noise (950–1010), then 50 ms of pause before
   // "next". Deleting "next" must start the cut after the "s". A decode at 8 kHz holds nothing above 4 kHz, so there the
   // "s" is silence, the pause looks 110 ms long, and the cut starts inside the "s".
@@ -130,7 +169,8 @@ test('online loudness is decoded at the server\'s rate, which keeps a word\'s la
     return samples;
   }
   const words=[word('a','this',500,1000),word('b','next',1060,1500),word('c','end',1610,2400)];
-  const cutAt=rate=>cleanCut(words,1,1,envelopeFromSamples([decoded(rate)],rate),{fps:30,durationMs:3000});
-  assert.ok(cutAt(boundary.LOUDNESS_RATE).startMs>=1010,`at the server's rate the "s" stays: ${cutAt(boundary.LOUDNESS_RATE).startMs}`);
-  assert.ok(cutAt(8000).startMs<1010,`at 8 kHz the cut would clip the "s": ${cutAt(8000).startMs}`);
+  const cutAt=async rate=>cleanCut(words,1,1,await envelopeFromSamples([decoded(rate)],rate),{fps:30,durationMs:3000});
+  const sharp=await cutAt(boundary.LOUDNESS_RATE),low=await cutAt(8000);
+  assert.ok(sharp.startMs>=1010,`at the server's rate the "s" stays: ${sharp.startMs}`);
+  assert.ok(low.startMs<1010,`at 8 kHz the cut would clip the "s": ${low.startMs}`);
 });
