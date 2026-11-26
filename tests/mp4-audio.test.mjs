@@ -108,6 +108,11 @@ test('a damaged table is refused before any memory is set aside for it: counts p
   refused({stsc:full('stsc',0,u32(2**30),u32(1),u32(3),u32(1))},'more chunk runs than the table holds');
   refused({stsc:full('stsc',0,u32(1),u32(1),u32(2),u32(1))},'chunks that hold fewer frames than it has');
   refused({offsets:full('stco',0,u32(2**30),u32(1000))},'more chunk offsets than the table holds');
+  // A frame of 4 GB would be read and copied whole; no AAC frame is larger than 8184 bytes (8191 with its ADTS header).
+  refused({stsz:full('stsz',0,u32(2**32-1),u32(3))},'one size of 4 GB for every frame');
+  refused({stsz:full('stsz',0,u32(0),u32(3),u32(100),u32(2**32-1),u32(100))},'one frame of 4 GB among small ones');
+  refused({stsz:full('stsz',0,u32(0),u32(3),u32(100),u32(8185),u32(100))},'one frame a byte too large for its header');
+  assert.equal(soundTrack(movie({frames:[100,8184,100],chunks})).sizes[1],8184,'the largest frame a header can carry is read');
 });
 
 test('a trimmed video plays only its edit: the sound ends where the edit does, and frames past it are not read',()=>{
