@@ -46,7 +46,7 @@ function afterTimer(run,ms){const timer=setTimeout(run,ms);return ()=>clearTimeo
  * returns it; updateRequest(id, text) changes a comment's text; cancelRequest(id) closes a comment whose cut is gone.
  * onError(error) hears about a note saved in the background that failed. schedule(run, ms) returns a cancel function.
  */
-export function createTranscriptEditing({saveTranscript,request,updateRequest,cancelRequest=async()=>{},onError=()=>{},schedule=afterTimer}){
+export function createTranscriptEditing({saveTranscript,request,updateRequest,cancelRequest=async()=>{},onError=()=>{},onLoudnessChange=()=>{},schedule=afterTimer}){
   let transcript=null,video=null,selection=null,anchor=null,sourceAnchor=null;
   // A new transcript (another video, a new render, an agent's import) starts a new generation; a save begun in an
   // older one must not land on the new words.
@@ -67,16 +67,25 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
    *  A decode that comes in while the server still measures stands in for it (standsFor) until the server's
    *  measurement arrives, which then takes its place again; a server with nothing to give leaves the decode. */
   function setLoudness(videoId,value,{from=null}={}){
-    if(!value)return void loudness.delete(videoId);
+    if(!value)return loudnessChange(()=>loudness.delete(videoId));
     const before=loudness.get(videoId);
     const standsFor=from&&before?(before.from?before.standsFor:before.env?null:before):null;
-    const entry={env:null,promise:null,waited:false,from,standsFor};loudness.set(videoId,entry);
-    if(typeof value.then!=='function'){entry.env=value;return;}
+    const entry={env:null,promise:null,waited:false,from,standsFor};
+    if(typeof value.then!=='function')return loudnessChange(()=>{entry.env=value;loudness.set(videoId,entry);});
+    loudnessChange(()=>loudness.set(videoId,entry));
     entry.promise=Promise.resolve(value).then(env=>{
-      entry.env=env||null;
-      if(entry.env&&loudness.get(videoId)?.standsFor===entry)loudness.set(videoId,entry);
+      loudnessChange(()=>{
+        entry.env=env||null;
+        if(entry.env&&loudness.get(videoId)?.standsFor===entry)loudness.set(videoId,entry);
+      });
       return entry.env;
     },()=>null);
+  }
+  /** Changes the loudness kept (run). When the open video's loudness is another one after it (in, gone, or a newer
+   *  one), the panel is told (onLoudnessChange), so the cut it shows for a selection is the cut a Delete saves. */
+  function loudnessChange(run){
+    const before=loudnessNow();run();
+    if(loudnessNow()!==before)onLoudnessChange();
   }
   /** The open video's loudness now, or after a short wait while it is still being measured; null without it. Only the
    *  first edit waits: once a wait ran out, later edits cut on the word times until the measurement is in. A decode
@@ -97,7 +106,20 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
   /** True when the video's loudness came from a waveform decode, which a newer decode replaces. */
   const decodedLoudness=videoId=>!!loudness.get(videoId)?.from;
   /** The video plays this file now: loudness decoded from another file (before a new render) no longer fits, so it goes. */
-  function mediaChanged(videoId,src){const entry=loudness.get(videoId);if(entry?.from&&entry.from!==src)loudness.delete(videoId);}
+  function mediaChanged(videoId,src){const entry=loudness.get(videoId);if(entry?.from&&entry.from!==src)loudnessChange(()=>loudness.delete(videoId));}
+  /** A waveform build of this file stopped before its end (a read failed, or the video was changed): the loudness it had
+   *  measured so far goes with its bars, so a cut is not placed by sound the waveform does not show. A server
+   *  measurement it stood in for is in its place again. A build that finished is the whole video's loudness and is not
+   *  touched here; a later build of the same file puts its own part-way loudness in its place as soon as it starts
+   *  (setLoudness), so when that build stops, cuts follow the word times until a build has run to its end. */
+  function decodeStopped(src){
+    loudnessChange(()=>{
+      for(const [videoId,entry] of loudness){
+        if(entry.from!==src||entry.env&&entry.env.readyMs==null)continue;
+        if(entry.standsFor)loudness.set(videoId,entry.standsFor);else loudness.delete(videoId);
+      }
+    });
+  }
 
   function flushNote(){
     cancelNoteTimer?.();cancelNoteTimer=null;
@@ -495,6 +517,6 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
     get noteId(){return note.id;},
     edits,
     clear,selectWords,selectCut,selectPause,selectSource,wholeGap,adjust,selectedIds,toRestore,bounds,
-    setLoudness,hasLoudness,decodedLoudness,mediaChanged,remove,undo,restore,restoreWords,send,editNote,noteTyped,flushNote,alreadyAsked,askRestore,target,changeContext,
+    setLoudness,hasLoudness,decodedLoudness,mediaChanged,decodeStopped,remove,undo,restore,restoreWords,send,editNote,noteTyped,flushNote,alreadyAsked,askRestore,target,changeContext,
   };
 }

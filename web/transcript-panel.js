@@ -3,7 +3,6 @@ import {skipRemoved,previewDuration,exportCut,removedRanges,playbackRemovals} fr
 import {createWaveform} from './waveform-panel.js';
 import {barKey,suggestion,recentNotes,afterDelete,broughtBackLine,sentLine,barSpotOffWords,deletedIds,pauseOfCut} from './edit-bar-core.js';
 import {createTranscriptEditing,REFUSED_TEXT,REMOVED_TEXT} from './transcript-editing.js';
-import {envelopeFromSamples} from './cut-boundary.js';
 import {clock} from './time-format.js';
 
 const $=s=>document.querySelector(s);
@@ -19,8 +18,14 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   // A note typed on a selection a reload could not bring back: the next selection on the same video gets it. A later
   // refusal with no note typed keeps it.
   let carriedNote='';
+  // The loudness under chosen words or a chosen join came in or went (a build's next stretch, a build that stopped, the
+  // server's measurement): the cut shown on the waveform is worked out again, so Delete saves the cut that is shown and
+  // Hear cut plays it. Times set with the handles stay as they are (bounds keeps them). This runs after every stretch of
+  // a build, so a cut that has not moved is left alone, and one that has keeps a zoomed view and a time being typed
+  // (moveRange). A selection too short to cut has no cut (bounds gives none): one appears, or goes, with the loudness.
+  const showCutAgain=()=>{const chosen=editing.selection;if(chosen&&chosen.kind!=='source')waveform.moveRange(editing.bounds());};
   // What is selected and what an edit does live in transcript-editing.js; this file draws it and passes clicks in.
-  const editing=createTranscriptEditing({saveTranscript:(v,data,options)=>backendRef.saveTranscript(v,data,options),request,updateRequest,cancelRequest,onError:error=>showError(error.message)});
+  const editing=createTranscriptEditing({saveTranscript:(v,data,options)=>backendRef.saveTranscript(v,data,options),request,updateRequest,cancelRequest,onError:error=>showError(error.message),onLoudnessChange:showCutAgain});
   // The local app measures each video's loudness on the server (backend.loudness); online, or when the server has no
   // ffmpeg, the waveform's own decode gives it once Build waveform has read the audio. A decode that is in while the
   // server still measures stands in until the server's result arrives (setLoudness). Without either, cuts fall back to
@@ -29,7 +34,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   // The decode's loudness is measured in slices; until it is in, a Delete waits for it as it waits for the server's.
   media.addEventListener('loadstart',()=>{if(videoRef)editing.mediaChanged(videoRef.id,media.currentSrc);});
   const needsLoudness=()=>!!videoRef&&(!editing.hasLoudness(videoRef.id)||editing.decodedLoudness(videoRef.id));
-  const waveform=createWaveform({media,seek,pause,onRange:adjustSelection,needsLoudness,onSamples:(channels,rate)=>{if(needsLoudness())editing.setLoudness(videoRef.id,envelopeFromSamples(channels,rate),{from:media.currentSrc});},onAudition:range=>{playContext(Math.max(0,range.startMs-750),Math.min(videoRef.durationMs,range.endMs+750));auditionRange=range;}});
+  const waveform=createWaveform({media,seek,pause,onRange:adjustSelection,needsLoudness,onLoudness:value=>{if(needsLoudness())editing.setLoudness(videoRef.id,value,{from:media.currentSrc});},onLoudnessLost:src=>editing.decodeStopped(src),onAudition:range=>{playContext(Math.max(0,range.startMs-750),Math.min(videoRef.durationMs,range.endMs+750));auditionRange=range;}});
   try{pauseThreshold=Number(localStorage.getItem('techies-review-pause-threshold'))||450;}catch{}
   if(![250,450,650,1000].includes(pauseThreshold))pauseThreshold=450;
   $('#pauseThreshold').value=String(pauseThreshold);

@@ -1,0 +1,248 @@
+// Reading an MP4's sound a stretch at a time (TOOLS-479). The MP4s here are built box by box in the test, so each test
+// says exactly what the file's index holds: where every frame of the sound lies, and how the track sits on the clock.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readIndex,soundTrack,audioConfig,adtsHeader,stretches,byteRanges,adtsFile,placement,NotReadable,LEAD_FRAMES,LONGEST_READ} from '../web/mp4-audio.js';
+
+const bytes=(...parts)=>{const out=new Uint8Array(parts.reduce((n,p)=>n+p.length,0));let at=0;for(const p of parts){out.set(p,at);at+=p.length;}return out;};
+const u8=(...values)=>Uint8Array.from(values);
+const u16=n=>u8(n>>8&255,n&255);
+const u32=n=>u8(n>>>24&255,n>>16&255,n>>8&255,n&255);
+const u64=n=>bytes(u32(Math.floor(n/2**32)),u32(n%2**32));
+const text=s=>Uint8Array.from(s,c=>c.charCodeAt(0));
+const box=(type,...parts)=>{const body=bytes(...parts);return bytes(u32(body.length+8),text(type),body);};
+const full=(type,version,...parts)=>box(type,u8(version,0,0,0),...parts);
+
+// AAC-LC, 48 kHz, two channels: object type 2, frequency index 3, channel layout 2.
+const LC_48K_STEREO=u8(0x11,0x90);
+function esds(asc,objectType=0x40){
+  const decoderConfig=bytes(u8(objectType,0x15,0,0,0),u32(128000),u32(128000),u8(5,asc.length),asc);
+  return full('esds',0,u8(3,3+2+decoderConfig.length),u16(1),u8(0),u8(4,decoderConfig.length-2),decoderConfig.subarray(0,13),decoderConfig.subarray(13));
+}
+function mp4a(asc,{version=0,wave=false,objectType}={}){
+  const fields=bytes(new Uint8Array(6),u16(1),u16(version),new Uint8Array(6),u16(2),u16(16),new Uint8Array(4),u32(48000<<16));
+  const extra=new Uint8Array(version===1?16:0);
+  const config=esds(asc,objectType);
+  return box('mp4a',fields,extra,wave?box('wave',box('frma',text('mp4a')),config):config);
+}
+/**
+ * A moov with a video track and a sound track. frames: the sound's frame sizes; chunks: [offset, frames in it] in
+ * order; edits: [[segmentTicks, mediaTime]] on the movie's 1000 ticks a second (mediaTime -1 is an empty edit).
+ */
+function movie({frames,chunks,edits=[[0,1024]],scale=48000,frameTicks=1024,asc=LC_48K_STEREO,entry=mp4a(asc),wide=false,without=null,replace={},more=[]}){
+  const runs=[];chunks.forEach(([,n],c)=>{if(runs.at(-1)?.[1]!==n)runs.push([c+1,n]);});
+  const offsets=wide?full('co64',0,u32(chunks.length),...chunks.map(([at])=>u64(at))):full('stco',0,u32(chunks.length),...chunks.map(([at])=>u32(at)));
+  const tables={stsd:full('stsd',0,u32(1),entry),
+    stts:full('stts',0,u32(1),u32(frames.length),u32(frameTicks)),
+    stsc:full('stsc',0,u32(runs.length),...runs.map(([first,n])=>bytes(u32(first),u32(n),u32(1)))),
+    stsz:full('stsz',0,u32(0),u32(frames.length),...frames.map(u32)),
+    offsets,...replace};
+  const stbl=box('stbl',...Object.entries(tables).filter(([name])=>name!==without).map(([,table])=>table));
+  const sound=box('trak',full('tkhd',0,new Uint8Array(80)),
+    box('edts',full('elst',0,u32(edits.length),...edits.map(([segment,media])=>bytes(u32(segment),u32(media>>>0),u32(1<<16))))),
+    box('mdia',full('mdhd',0,u32(0),u32(0),u32(scale),u32(frames.length*frameTicks),u32(0)),
+      full('hdlr',0,u32(0),text('soun'),new Uint8Array(13)),box('minf',stbl)));
+  const video=box('trak',full('tkhd',0,new Uint8Array(80)),
+    box('mdia',full('mdhd',0,u32(0),u32(0),u32(30000),u32(0),u32(0)),full('hdlr',0,u32(0),text('vide'),new Uint8Array(13)),box('minf',box('stbl'))));
+  return box('moov',full('mvhd',0,u32(0),u32(0),u32(1000),u32(0),new Uint8Array(80)),video,sound,...more);
+}
+/** A file made of parts laid at offsets, the rest zero, read as read(start, end) would read the real one. */
+function file(size,parts){
+  const reads=[];
+  const read=async(start,end)=>{
+    assert.ok(start>=0&&end<=size&&start<end,`a read inside the file: ${start}-${end}`);reads.push([start,end]);
+    const out=new Uint8Array(end-start);
+    for(const [at,part] of parts){const a=Math.max(start,at),b=Math.min(end,at+part.length);if(a<b)out.set(part.subarray(a-at,b-at),a-start);}
+    return out;
+  };
+  return {size,read,reads};
+}
+// A frame's bytes: its number over and over, so a test sees which frame landed where.
+const frame=(i,size)=>new Uint8Array(size).fill(i%251+1);
+
+test('the index of a recording of gigabytes is found past its media data, reading only box headers and the index',async()=>{
+  const GB3=3*1024**3,frames=[300,280,310];
+  const ftyp=box('ftyp',text('isom'),u32(0),text('isom'));
+  const mdatHeader=bytes(u32(1),text('mdat'),u64(GB3));
+  const moov=movie({frames,chunks:[[ftyp.length+16,3]]});
+  const big=file(ftyp.length+GB3+moov.length,[[0,ftyp],[ftyp.length,mdatHeader],[ftyp.length+GB3,moov]]);
+  const index=await readIndex(big.read,big.size);
+  assert.deepEqual(index,moov);
+  const read=big.reads.reduce((n,[a,b])=>n+b-a,0);
+  assert.ok(read<moov.length+64,`only headers and the index are read: ${read} bytes`);
+});
+
+test('a file that is not an MP4, one with no index (still recording, or fragmented) and one cut short are refused',async()=>{
+  const riff=file(64,[[0,bytes(u32(64),text('RIFF'))]]);
+  await assert.rejects(readIndex(riff.read,riff.size),e=>e instanceof NotReadable&&/not an MP4/.test(e.message));
+  const ftyp=box('ftyp',text('isom'),u32(0)),moof=box('moof',new Uint8Array(8)),mdat=box('mdat',new Uint8Array(32));
+  const fragmented=file(ftyp.length+moof.length+mdat.length,[[0,ftyp],[ftyp.length,moof],[ftyp.length+moof.length,mdat]]);
+  await assert.rejects(readIndex(fragmented.read,fragmented.size),e=>e instanceof NotReadable&&/fragmented/.test(e.message));
+  const short=file(ftyp.length+16,[[0,ftyp],[ftyp.length,bytes(u32(1000),text('mdat'))]]);
+  await assert.rejects(readIndex(short.read,short.size),e=>e instanceof NotReadable&&/not a complete MP4/.test(e.message));
+});
+
+test('a fragmented MP4 as recorders write it (an index of empty tables, the frames in fragments) and a damaged index are refused, so the whole file is decoded instead (or, over 512 MB, a review copy is asked for)',async()=>{
+  // OBS, a browser's MediaRecorder and ffmpeg's frag_keyframe write a moov with mvex and no frames in its tables.
+  const ftyp=box('ftyp',text('isom'),u32(0)),moov=movie({frames:[],chunks:[],more:[box('mvex',full('trex',0,new Uint8Array(20)))]});
+  const moof=box('moof',new Uint8Array(8)),mdat=box('mdat',new Uint8Array(32));
+  const recorded=file(ftyp.length+moov.length+moof.length+mdat.length,[[0,ftyp],[ftyp.length,moov],[ftyp.length+moov.length,moof],[ftyp.length+moov.length+moof.length,mdat]]);
+  const index=await readIndex(recorded.read,recorded.size);
+  assert.throws(()=>soundTrack(index),e=>e instanceof NotReadable&&/fragmented/.test(e.message));
+  // Empty tables without mvex: nothing to read either.
+  assert.throws(()=>soundTrack(movie({frames:[],chunks:[]})),e=>e instanceof NotReadable);
+  for(const without of ['stsd','stts','stsc','stsz','offsets'])
+    assert.throws(()=>soundTrack(movie({frames:[100,100],chunks:[[1000,2]],without})),e=>e instanceof NotReadable&&/damaged/.test(e.message),`no ${without}`);
+});
+
+test('a damaged table is refused before any memory is set aside for it: counts past the table\'s end or that disagree',()=>{
+  const frames=[100,100,100],chunks=[[1000,3]],refused=(replace,why)=>{
+    // A count read as two billion frames would set aside gigabytes; the refusal must come first, as NotReadable.
+    assert.throws(()=>soundTrack(movie({frames,chunks,replace})),e=>e instanceof NotReadable&&/damaged/.test(e.message),why);
+  };
+  refused({stsz:full('stsz',0,u32(0),u32(2**31),...frames.map(u32))},'more frame sizes than the table holds');
+  refused({stsz:full('stsz',0,u32(100),u32(2**31)),stts:full('stts',0,u32(1),u32(2**31),u32(1024)),stsc:full('stsc',0,u32(1),u32(1),u32(2**31),u32(1))},
+    'one size for two billion frames, with times and chunks that agree');
+  refused({stts:full('stts',0,u32(2**30),u32(3),u32(1024))},'more time entries than the table holds');
+  refused({stts:full('stts',0,u32(1),u32(2),u32(1024))},'times for fewer frames than it has');
+  refused({stsc:full('stsc',0,u32(2**30),u32(1),u32(3),u32(1))},'more chunk runs than the table holds');
+  refused({stsc:full('stsc',0,u32(1),u32(1),u32(2),u32(1))},'chunks that hold fewer frames than it has');
+  refused({offsets:full('stco',0,u32(2**30),u32(1000))},'more chunk offsets than the table holds');
+  // A frame of 4 GB would be read and copied whole; no AAC frame is larger than 8184 bytes (8191 with its ADTS header).
+  refused({stsz:full('stsz',0,u32(2**32-1),u32(3))},'one size of 4 GB for every frame');
+  refused({stsz:full('stsz',0,u32(0),u32(3),u32(100),u32(2**32-1),u32(100))},'one frame of 4 GB among small ones');
+  refused({stsz:full('stsz',0,u32(0),u32(3),u32(100),u32(8185),u32(100))},'one frame a byte too large for its header');
+  assert.equal(soundTrack(movie({frames:[100,8184,100],chunks})).sizes[1],8184,'the largest frame a header can carry is read');
+});
+
+test('a trimmed video plays only its edit: the sound ends where the edit does, and frames past it are not read',()=>{
+  // 100 s of sound stored, an edit of 10 s from the start-up frame on, as an editor's trim leaves it.
+  const frames=new Array(4688).fill(10),chunks=[[100,4688]];
+  const trimmed=soundTrack(movie({frames,chunks,edits:[[10000,1024]]}));
+  assert.ok(Math.abs(trimmed.durationMs-10000)<1e-9,`10 s play: ${trimmed.durationMs}`);
+  const endTick=1024+10*48000,kept=Math.ceil(endTick/1024);
+  assert.equal(trimmed.sizes.length,kept,'only the frames that play are read');
+  const parts=stretches(trimmed),rate=16000;
+  assert.equal(parts.at(-1)[1],kept);
+  assert.equal(placement(trimmed,...parts.at(-1),rate).to,10*rate,'the last stretch ends at 10 s');
+  // An edit a little longer than the sound (a rounded length) plays the whole sound.
+  const rounded=soundTrack(movie({frames:new Array(48).fill(10),chunks:[[100,48]],edits:[[1003,1024]]}));
+  assert.ok(Math.abs(rounded.durationMs-47*1024/48)<1e-9,`all 47 frames play: ${rounded.durationMs}`);
+  assert.equal(rounded.sizes.length,48);
+});
+
+test('every frame of the sound is found where its chunk puts it, across runs of chunks of different sizes',()=>{
+  const frames=[100,101,102,103,104,105,106,107];
+  // Three frames in each of the first two chunks, then two; video lies between the chunks.
+  const chunks=[[1000,3],[5000,3],[9000,2]];
+  const track=soundTrack(movie({frames,chunks}));
+  assert.deepEqual([...track.sizes],frames);
+  assert.deepEqual([...track.offsets],[1000,1100,1201,5000,5103,5207,9000,9106]);
+  assert.deepEqual([...track.starts],[0,1024,2048,3072,4096,5120,6144,7168,8192]);
+  assert.equal(track.scale,48000);
+  assert.deepEqual(track.config,{profile:1,frequency:3,channels:2,sampleRate:48000});
+});
+
+test('64-bit chunk offsets, past 4 GB, are read whole',()=>{
+  const at=5*1024**3+12345;
+  const track=soundTrack(movie({frames:[50,60],chunks:[[at,2]],wide:true}));
+  assert.deepEqual([...track.offsets],[at,at+50]);
+});
+
+test('the edit list: the encoder\'s start-up frame is skipped, and a track that starts late starts late on the clock',()=>{
+  const frames=new Array(48).fill(10),chunks=[[100,48]];
+  const plain=soundTrack(movie({frames,chunks}));
+  assert.equal(plain.skip,1024);assert.equal(plain.delayMs,0);
+  assert.ok(Math.abs(plain.durationMs-47*1024/48)<1e-9,`47 frames play: ${plain.durationMs}`);
+  const late=soundTrack(movie({frames,chunks,edits:[[500,-1],[1003,1024]]}));
+  assert.equal(late.skip,1024);assert.equal(late.delayMs,500);
+  assert.ok(Math.abs(late.durationMs-(500+47*1024/48))<1e-9);
+  const none=soundTrack(movie({frames,chunks,edits:[[1000,0]]}));
+  assert.equal(none.skip,0);
+});
+
+test('AAC settings: plain AAC, HE-AAC named by its core, a MOV\'s wave box; MP3 sound is refused',()=>{
+  assert.deepEqual(audioConfig(LC_48K_STEREO),{profile:1,frequency:3,channels:2,sampleRate:48000});
+  // HE-AAC at 48 kHz: object type 5, core frequency index 6 (24 kHz), two channels, output index 3, core object type 2.
+  // 00101 0110 0010 0011 00010 000
+  assert.deepEqual(audioConfig(u8(0b00101011,0b00010001,0b10001000,0)),{profile:1,frequency:6,channels:2,sampleRate:24000});
+  // A mono 44.1 kHz LC: 00010 0100 0001 000.
+  assert.deepEqual(audioConfig(u8(0b00010010,0b00001000)),{profile:1,frequency:4,channels:1,sampleRate:44100});
+  // 00010 1111 (a frequency written out in full, which ADTS cannot name) 0010.
+  assert.throws(()=>audioConfig(u8(0b00010111,0b10010000,0,0,0)),/unusual sample rate/,'an unlisted frequency');
+  assert.throws(()=>audioConfig(u8(0b00010001,0b11000000)),/channel layout/,'channel layout 8');
+  assert.throws(()=>audioConfig(u8(0b00111000,0b10010000)),NotReadable,'not AAC (object type 7)');
+  const mov=soundTrack(movie({frames:[10],chunks:[[0,1]],entry:mp4a(LC_48K_STEREO,{version:1,wave:true})}));
+  assert.equal(mov.config.frequency,3);
+  assert.throws(()=>soundTrack(movie({frames:[10],chunks:[[0,1]],entry:mp4a(LC_48K_STEREO,{objectType:0x6B})})),e=>e instanceof NotReadable&&/not AAC/.test(e.message));
+  // AAC marked the MPEG-2 way (Main, LC, SSR) carries the same settings and decodes the same.
+  for(const objectType of [0x66,0x67,0x68])assert.equal(soundTrack(movie({frames:[10],chunks:[[0,1]],entry:mp4a(LC_48K_STEREO,{objectType})})).config.frequency,3,`object type ${objectType.toString(16)}`);
+  // A video with no sound, or none listed, says so, and is marked so that no other file is suggested instead.
+  assert.throws(()=>soundTrack(movie({frames:[],chunks:[]})),e=>e instanceof NotReadable&&e.noSound===true);
+  assert.throws(()=>soundTrack(movie({frames:[10],chunks:[[0,1]],entry:box('Opus',new Uint8Array(28))})),e=>e instanceof NotReadable&&/not AAC/.test(e.message));
+});
+
+test('the ADTS header carries the profile, frequency, channels and the frame length with its header',()=>{
+  assert.deepEqual([...adtsHeader({profile:1,frequency:3,channels:2},100)],[0xFF,0xF1,0x4C,0x80,0x0D,0x7F,0xFC]);
+  assert.throws(()=>adtsHeader({profile:1,frequency:3,channels:2},8190),NotReadable);
+});
+
+test('stretches cover every frame once, each about 20 seconds long',()=>{
+  const track=soundTrack(movie({frames:new Array(3000).fill(10),chunks:[[0,3000]]}));
+  const parts=stretches(track);
+  assert.equal(parts[0][0],0);assert.equal(parts.at(-1)[1],3000);
+  for(let i=1;i<parts.length;i++)assert.equal(parts[i][0],parts[i-1][1],'one starts where the last ended');
+  for(const [first,last] of parts.slice(0,-1)){const s=(track.starts[last]-track.starts[first])/track.scale;assert.ok(s>19.9&&s<=20,`${s} s`);}
+});
+
+test('a stretch is read in few ranges: frames close together in one read, frames far apart in their own',async()=>{
+  const frames=[100,100,100,100],chunks=[[1000,2],[2000,1],[5_000_000,1]];
+  const track=soundTrack(movie({frames,chunks}));
+  assert.deepEqual(byteRanges(track,0,4),[[1000,2100],[5_000_000,5_000_100]]);
+  const disk=file(5_000_200,frames.map((size,i)=>[track.offsets[i],frame(i,size)]));
+  const adts=await adtsFile(track,1,4,disk.read);
+  assert.deepEqual(disk.reads,[[1100,2100],[5_000_000,5_000_100]]);
+  assert.equal(adts.length,3*107);
+  for(let k=0;k<3;k++){
+    assert.deepEqual([...adts.subarray(k*107,k*107+7)],[...adtsHeader(track.config,100)]);
+    assert.ok(adts.subarray(k*107+7,(k+1)*107).every(v=>v===k+2),`frame ${k+1} follows its header`);
+  }
+});
+
+test('a joined read stops at 4 MB (TOOLS-481): on a real recording a video frame lies between each two sound frames, and a stretch joined into one read would hold all of that video',async()=>{
+  // 20 s of sound, each frame 100 KB after the last, as beside video of about 37 Mbit/s: every gap is small enough to join.
+  const frames=new Array(938).fill(200),chunks=frames.map((_,i)=>[1000+i*100_000,1]);
+  const track=soundTrack(movie({frames,chunks}));
+  const [first,last]=stretches(track)[0];
+  assert.ok(last-first>900,`one stretch of about 20 s: ${last-first} frames`);
+  const ranges=byteRanges(track,first,last),longest=Math.max(...ranges.map(([start,end])=>end-start));
+  assert.ok(longest<=LONGEST_READ&&LONGEST_READ===4*1024*1024,`no read is longer than 4 MB: the longest is ${longest} bytes`);
+  // Still joined as far as the limit lets it: about 4 MB a read, not a read for every frame.
+  assert.ok(ranges.length<=Math.ceil((track.offsets[last-1]+200-track.offsets[first])/LONGEST_READ)+1,`${ranges.length} reads for ${last-first} frames`);
+  for(let i=1;i<ranges.length;i++)assert.ok(ranges[i][0]>=ranges[i-1][1],'the reads go forward through the file, none twice');
+  const disk=file(1000+frames.length*100_000,frames.map((size,i)=>[track.offsets[i],frame(i,size)]));
+  const adts=await adtsFile(track,first,last,disk.read);
+  assert.deepEqual(disk.reads,ranges);
+  assert.equal(adts.length,(last-first)*207);
+  for(let k=0;k<last-first;k++)assert.ok(adts.subarray(k*207+7,(k+1)*207).every(v=>v===(first+k)%251+1),`frame ${first+k} is in its place`);
+  // A limit smaller than one frame still reads that frame, on its own.
+  assert.deepEqual(byteRanges(track,0,3,256*1024,100),[[1000,1200],[101_000,101_200],[201_000,201_200]]);
+});
+
+test('stretches lie end to end on the video\'s clock: the start-up frame and each stretch\'s lead frames are dropped',()=>{
+  const rate=16000,track=soundTrack(movie({frames:new Array(3000).fill(10),chunks:[[0,3000]]}));
+  const parts=stretches(track);let end=0;
+  for(const [first,last] of parts){
+    const {lead,drop,from,to}=placement(track,first,last,rate);
+    assert.equal(lead,Math.max(0,first-LEAD_FRAMES));
+    assert.equal(from,end,'each stretch starts where the last one ended');end=to;
+    // The decode starts at frame `lead`; dropping `drop` samples lands on frame `first` (or on the skip, for the first).
+    const startTick=Math.max(track.starts[first],track.skip);
+    assert.ok(Math.abs(drop-(startTick-track.starts[lead])/track.scale*rate)<=0.5);
+  }
+  assert.ok(Math.abs(end-track.durationMs/1000*rate)<=1,'the last ends where the sound does');
+  const first=placement(track,...parts[0],rate);
+  assert.equal(first.from,0);assert.equal(first.drop,Math.round(1024/48000*rate),'the start-up frame is not played');
+  const late=soundTrack(movie({frames:new Array(100).fill(10),chunks:[[0,100]],edits:[[500,-1],[2000,1024]]}));
+  assert.equal(placement(late,0,50,rate).from,8000,'half a second of silence first');
+});

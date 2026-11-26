@@ -151,8 +151,9 @@ These need Bash and Node as well as Python, but no `npm install`:
 bash scripts/agents/run-tests.sh
 node tests/transcript-panel-browser.mjs
 node tests/listening-browser.mjs
+node tests/big-waveform-browser.mjs
 node tests/cut-preview-browser.mjs
 node tests/overview-browser.mjs
 ```
 
-`npm run check:browser` runs the four browser checks in that order. The tests cover local video range requests, comment persistence, timestamp validation, origin checks, the MCP tools, and the transcript, cut and waveform logic, using temporary data directories. The first three browser checks need Python, ffmpeg and Playwright and make their own small test video; the listening and cut-preview checks outside Windows need `VIDEO_REVIEW_PYTHON=python3`. The transcript-panel check edits a transcript at desktop and phone width. The last opens the overview page on a phone-sized screen and needs Playwright and Python, but no ffmpeg. What each suite checks is in the comments and assertion messages in its file.
+`npm run check:browser` runs these browser checks in that order, after the backend, sync and join-fade checks. The tests cover local video range requests, comment persistence, timestamp validation, origin checks, the MCP tools, and the transcript, cut and waveform logic, using temporary data directories. The first four browser checks need Python, ffmpeg and Playwright and make their own small test video; the listening and cut-preview checks outside Windows need `VIDEO_REVIEW_PYTHON=python3` (the big-waveform check picks `python3` itself). The big-waveform check turns its test video into a 3 GB review copy that takes no disk space (a sparse file; on Windows it marks the file sparse with `fsutil`). The transcript-panel check edits a transcript at desktop and phone width. The last opens the overview page on a phone-sized screen and needs Playwright and Python, but no ffmpeg. What each suite checks is in the comments and assertion messages in its file.

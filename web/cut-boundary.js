@@ -20,6 +20,9 @@ const MOST_SAMPLES=3600*BARS_RATE*2;
 export function decodeRate(durationMs,needsLoudness){
   return needsLoudness&&durationMs/1000*LOUDNESS_RATE*2<=MOST_SAMPLES?LOUDNESS_RATE:BARS_RATE;
 }
+/** The rate an MP4 read in stretches decodes at (TOOLS-479): it holds one stretch at a time, whatever the length, so the
+ *  loudness rate whenever the decode supplies the loudness. */
+export const stretchRate=needsLoudness=>needsLoudness?LOUDNESS_RATE:BARS_RATE;
 // Measuring a long decode takes a while; it runs in slices with a pause after each, so the page keeps answering clicks.
 // The pause is a message, not a timer: a browser slows timers to one a second in a hidden tab.
 export const nextTask=()=>new Promise(resolve=>{
@@ -35,14 +38,17 @@ const VALLEY_MS=60;               // no silence: the quietest moment within ±60
 const MIN_SILENCE_MS=20;          // a quiet run shorter than this is not a pause
 const LONGEST_PAUSE_MS=2000;      // a pause reaching past the search window is followed this much further
 
+// The room noise and the loudest speech: the levels a tenth of the steps and all but 0.5% of them are below.
+const FLOOR_AT=0.1,PEAK_AT=0.995;
+/** The envelope of dB values with that floor and peak. Silence: within 12 dB of the room noise, but never closer than
+ *  45 dB below the loudest speech, and always at least 12 dB below it, so sound with no quiet parts at all (music, a
+ *  steady tone) has no pauses rather than only pauses. */
+const quietLine=(db,floor,peak)=>({db,threshold:Math.min(Math.max(floor+12,peak-45),peak-12),floor,peak});
 /** The loudness envelope from dB values every HOP_MS: the values, and the line below which the audio counts as quiet. */
 export function envelope(db){
   if(!db.length)return {db,threshold:-Infinity,floor:-100,peak:-100};
   const sorted=Float32Array.from(db).sort();
-  const floor=sorted[Math.floor(sorted.length*0.1)],peak=sorted[Math.floor(sorted.length*0.995)];
-  // Silence: within 12 dB of the room noise, but never closer than 45 dB below the loudest speech, and always at least
-  // 12 dB below it, so sound with no quiet parts at all (music, a steady tone) has no pauses rather than only pauses.
-  return {db,threshold:Math.min(Math.max(floor+12,peak-45),peak-12),floor,peak};
+  return quietLine(db,sorted[Math.floor(sorted.length*FLOOR_AT)],sorted[Math.floor(sorted.length*PEAK_AT)]);
 }
 
 /** The server's loudness file: one byte every HOP_MS, the level in half dB below full scale (0 to 200). */
@@ -68,6 +74,42 @@ export async function envelopeFromSamples(channels,sampleRate,{pause=nextTask}={
     await pause();
   }
   return envelope(db);
+}
+
+/** The same loudness, measured as a long recording's sound comes in a stretch at a time (TOOLS-479), so the decoded
+ *  sound never has to be kept: add(channels, at) measures decoded samples that start at sample `at` of a recording of
+ *  totalSamples. envelope(readySamples) is the loudness of the first readySamples, with readyMs saying how far it
+ *  reaches; with every sample in (done), it is the whole recording's, as envelopeFromSamples measures it.
+ *  The envelope part way in costs little whatever the length, so it can be handed over after every stretch: its steps
+ *  are a view of the meter's own (readySamples only grows), and its floor and peak come from a count of the steps per
+ *  0.01 dB rather than a sort, so they are within 0.01 dB of the sorted ones. */
+export function loudnessMeter(sampleRate,totalSamples){
+  const hop=Math.round(sampleRate*HOP_MS/1000),win=Math.round(sampleRate*WINDOW_MS/1000),steps=Math.ceil(totalSamples/hop);
+  const sums=new Float64Array(steps),counts=new Uint32Array(steps);
+  // Steps already measured for good, and how many of them fall in each 0.01 dB from -100 dB up (louder ones in the top).
+  const levels=new Float32Array(steps),BINS=12001,bins=new Uint32Array(BINS);let measuredSteps=0;
+  const level=i=>counts[i]?Math.max(-100,10*Math.log10(sums[i]/counts[i]+1e-12)):-100;
+  const levelAt=rank=>{for(let b=0,seen=0;b<BINS;b++){seen+=bins[b];if(seen>rank)return -100+b/100;}return -100+(BINS-1)/100;};
+  function add(channels,at){
+    const length=channels[0]?.length||0;
+    for(let i=Math.max(0,Math.floor((at-win)/hop)+1);i<steps&&i*hop<at+length;i++){
+      const from=Math.max(0,i*hop-at),to=Math.min(length,i*hop+win-at);if(to<=from)continue;
+      let sum=0;for(const channel of channels)for(let j=from;j<to;j++)sum+=channel[j]*channel[j];
+      sums[i]+=sum;counts[i]+=(to-from)*channels.length;
+    }
+  }
+  function measured(readySamples,done=false){
+    if(done){const db=new Float32Array(Math.ceil(readySamples/hop));for(let i=0;i<db.length;i++)db[i]=level(i);return envelope(db);}
+    // A step's window is only complete once the samples after it are in.
+    const ready=Math.max(measuredSteps,Math.min(steps,Math.floor((readySamples-win)/hop)+1));
+    for(;measuredSteps<ready;measuredSteps++){
+      const db=levels[measuredSteps]=level(measuredSteps);
+      bins[Math.max(0,Math.min(BINS-1,Math.floor((db+100)*100)))]++;
+    }
+    const db=levels.subarray(0,ready);
+    return {...(ready?quietLine(db,levelAt(Math.floor(ready*FLOOR_AT)),levelAt(Math.floor(ready*PEAK_AT))):envelope(db)),readyMs:ready*HOP_MS};
+  }
+  return {add,envelope:measured};
 }
 
 const at=(env,ms)=>env.db[Math.max(0,Math.min(env.db.length-1,Math.floor(ms/HOP_MS)))];
@@ -135,6 +177,9 @@ export function cleanCut(words,first,last,env,{fps=30,durationMs,clear=[false,fa
   const inside=Math.min(SEARCH_INSIDE_MS,length*0.3);
   const loStart=before?Math.max(before.startMs+(before.endMs-before.startMs)/2,s-SEARCH_BEFORE_MS):Math.max(0,s-SEARCH_BEFORE_MS);
   const hiEnd=after?Math.min(after.startMs+(after.endMs-after.startMs)/2,e+SEARCH_BEFORE_MS):Math.min(durationMs,e+SEARCH_BEFORE_MS);
+  // Loudness still coming in (readyMs, see loudnessMeter) cannot place a cut whose search reaches past what is in: such
+  // a cut follows the word times (null), as with no loudness at all.
+  if(env.readyMs!=null&&hiEnd+LONGEST_PAUSE_MS+step>env.readyMs)return null;
   // Nor past the middle of the first or last word itself: a short one would take the pause on its far side for its edge.
   const insideFirst=Math.min(inside,(words[first].endMs-s)/2),insideLast=Math.min(inside,(e-words[last].startMs)/2);
   const g1=findGap(env,s,loStart,s+insideFirst),g2=findGap(env,e,e-insideLast,hiEnd);
