@@ -56,7 +56,10 @@ scrolling down zooms out. This changes only the view, never the cut or playback 
 returns to the full recording. The overview stays available while zoomed in.
 
 1. Press **Build waveform** to decode the loaded video's audio locally in the browser. No upload, paid service,
-   or new transcription is involved. Use an MP4 review copy if the browser cannot decode the original format.
+   or new transcription is involved. An MP4 or MOV with AAC sound, of any size, is read about 20 seconds at a time:
+   the waveform fills in from left to right, and the part already shown works as below while the rest comes in.
+   Other files are decoded whole, up to 512 MB; use an MP4 review copy if the browser cannot decode the original
+   format or the file is larger.
 2. Select a word, phrase or pause. The waveform shows the proposed removal, including the normal breath margins
    for a pause. Change **View** to zoom the time window.
 3. Drag the purple start or orange end handle, or enter the two times below the waveform. Arrow keys on a
@@ -140,10 +143,12 @@ next to or inside it. The cut's edges come from the sound itself: the real pause
 moment, when words run together), keeping the longer of the two pauses, on whole video frames. The local server
 measures each video's loudness once and keeps it; online, the decoded waveform supplies it once **Build waveform** has
 run (until then, cuts follow the transcript's word times; a Delete just after the build waits a moment for the
-measurement). For a recording of up to 30 minutes it decodes at the same 16 kHz the server measures at, so a word's
-last soft sound ("s", "f", "th") is kept the same way. A longer recording decodes at 8 kHz, as before, so the tab holds
-no more audio than it did for an hour: online, its cut edges can clip a word's last soft sound. With the server's
-loudness in, the waveform decodes at 8 kHz for the bars only. Each join fades over 15 ms on the kept side in the
+measurement). Read 20 seconds at a time, it decodes at the same 16 kHz the server measures at, whatever the length, so
+a word's last soft sound ("s", "f", "th") is kept the same way; the tab holds one stretch of sound at a time. While the
+waveform is still filling in, a cut whose pause lies in the part already shown (with about 2 seconds to spare) uses the
+sound, and one further on follows the word times. A file decoded whole decodes at 16 kHz up to 30 minutes and at 8 kHz
+beyond, as before, so the tab holds no more audio than it did for an hour: online, its cut edges can clip a word's last
+soft sound. With the server's loudness in, the waveform decodes at 8 kHz for the bars only. Each join fades over 15 ms on the kept side in the
 exported cut list (`audioFadeMs`). The preview's fade ends 20 ms before each cut, because the
 player's clock trails the sound it has already sent, so the preview never plays sound from inside a cut.
 

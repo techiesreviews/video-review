@@ -20,6 +20,9 @@ const MOST_SAMPLES=3600*BARS_RATE*2;
 export function decodeRate(durationMs,needsLoudness){
   return needsLoudness&&durationMs/1000*LOUDNESS_RATE*2<=MOST_SAMPLES?LOUDNESS_RATE:BARS_RATE;
 }
+/** The rate an MP4 read in stretches decodes at (TOOLS-479): it holds one stretch at a time, whatever the length, so the
+ *  loudness rate whenever the decode supplies the loudness. */
+export const stretchRate=needsLoudness=>needsLoudness?LOUDNESS_RATE:BARS_RATE;
 // Measuring a long decode takes a while; it runs in slices with a pause after each, so the page keeps answering clicks.
 // The pause is a message, not a timer: a browser slows timers to one a second in a hidden tab.
 export const nextTask=()=>new Promise(resolve=>{
@@ -68,6 +71,31 @@ export async function envelopeFromSamples(channels,sampleRate,{pause=nextTask}={
     await pause();
   }
   return envelope(db);
+}
+
+/** The same loudness, measured as a long recording's sound comes in a stretch at a time (TOOLS-479), so the decoded
+ *  sound never has to be kept: add(channels, at) measures decoded samples that start at sample `at` of a recording of
+ *  totalSamples. envelope(readySamples) is the loudness of the first readySamples, with readyMs saying how far it
+ *  reaches; with every sample in (done), it is the whole recording's, as envelopeFromSamples measures it. */
+export function loudnessMeter(sampleRate,totalSamples){
+  const hop=Math.round(sampleRate*HOP_MS/1000),win=Math.round(sampleRate*WINDOW_MS/1000),steps=Math.ceil(totalSamples/hop);
+  const sums=new Float64Array(steps),counts=new Uint32Array(steps);
+  function add(channels,at){
+    const length=channels[0]?.length||0;
+    for(let i=Math.max(0,Math.floor((at-win)/hop)+1);i<steps&&i*hop<at+length;i++){
+      const from=Math.max(0,i*hop-at),to=Math.min(length,i*hop+win-at);if(to<=from)continue;
+      let sum=0;for(const channel of channels)for(let j=from;j<to;j++)sum+=channel[j]*channel[j];
+      sums[i]+=sum;counts[i]+=(to-from)*channels.length;
+    }
+  }
+  function measured(readySamples,done=false){
+    // A step's window is only complete once the samples after it are in, except at the very end.
+    const ready=done?Math.ceil(readySamples/hop):Math.max(0,Math.min(steps,Math.floor((readySamples-win)/hop)+1));
+    const db=new Float32Array(ready);
+    for(let i=0;i<ready;i++)db[i]=counts[i]?Math.max(-100,10*Math.log10(sums[i]/counts[i]+1e-12)):-100;
+    const env=envelope(db);return done?env:{...env,readyMs:ready*HOP_MS};
+  }
+  return {add,envelope:measured};
 }
 
 const at=(env,ms)=>env.db[Math.max(0,Math.min(env.db.length-1,Math.floor(ms/HOP_MS)))];
@@ -136,6 +164,9 @@ export function cleanCut(words,first,last,env,{fps=30,durationMs,clear=[false,fa
   const loStart=before?Math.max(before.startMs+(before.endMs-before.startMs)/2,s-SEARCH_BEFORE_MS):Math.max(0,s-SEARCH_BEFORE_MS);
   const hiEnd=after?Math.min(after.startMs+(after.endMs-after.startMs)/2,e+SEARCH_BEFORE_MS):Math.min(durationMs,e+SEARCH_BEFORE_MS);
   // Nor past the middle of the first or last word itself: a short one would take the pause on its far side for its edge.
+  // Loudness still coming in (readyMs, see loudnessMeter) cannot place a cut whose search reaches past what is in: such
+  // a cut follows the word times (null), as with no loudness at all.
+  if(env.readyMs!=null&&hiEnd+LONGEST_PAUSE_MS+step>env.readyMs)return null;
   const insideFirst=Math.min(inside,(words[first].endMs-s)/2),insideLast=Math.min(inside,(e-words[last].startMs)/2);
   const g1=findGap(env,s,loStart,s+insideFirst),g2=findGap(env,e,e-insideLast,hiEnd);
   // Both edges in one pause: the words make no sound the loudness can see, so it cannot place the cut (null).

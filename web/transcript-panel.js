@@ -3,7 +3,6 @@ import {skipRemoved,previewDuration,exportCut,removedRanges,playbackRemovals} fr
 import {createWaveform} from './waveform-panel.js';
 import {barKey,suggestion,recentNotes,afterDelete,broughtBackLine,sentLine,barSpotOffWords,deletedIds,pauseOfCut} from './edit-bar-core.js';
 import {createTranscriptEditing,REFUSED_TEXT,REMOVED_TEXT} from './transcript-editing.js';
-import {envelopeFromSamples} from './cut-boundary.js';
 import {clock} from './time-format.js';
 
 const $=s=>document.querySelector(s);
@@ -29,7 +28,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   // The decode's loudness is measured in slices; until it is in, a Delete waits for it as it waits for the server's.
   media.addEventListener('loadstart',()=>{if(videoRef)editing.mediaChanged(videoRef.id,media.currentSrc);});
   const needsLoudness=()=>!!videoRef&&(!editing.hasLoudness(videoRef.id)||editing.decodedLoudness(videoRef.id));
-  const waveform=createWaveform({media,seek,pause,onRange:adjustSelection,needsLoudness,onSamples:(channels,rate)=>{if(needsLoudness())editing.setLoudness(videoRef.id,envelopeFromSamples(channels,rate),{from:media.currentSrc});},onAudition:range=>{playContext(Math.max(0,range.startMs-750),Math.min(videoRef.durationMs,range.endMs+750));auditionRange=range;}});
+  const waveform=createWaveform({media,seek,pause,onRange:adjustSelection,needsLoudness,onLoudness:value=>{if(needsLoudness())editing.setLoudness(videoRef.id,value,{from:media.currentSrc});},onAudition:range=>{playContext(Math.max(0,range.startMs-750),Math.min(videoRef.durationMs,range.endMs+750));auditionRange=range;}});
   try{pauseThreshold=Number(localStorage.getItem('techies-review-pause-threshold'))||450;}catch{}
   if(![250,450,650,1000].includes(pauseThreshold))pauseThreshold=450;
   $('#pauseThreshold').value=String(pauseThreshold);
