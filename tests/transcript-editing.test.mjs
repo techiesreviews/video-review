@@ -836,6 +836,20 @@ test('a decode that comes in while the server still measures stands in for it; t
   editing.setLoudness('v',none.promise);editing.setLoudness('v',flat(),{from:'blob:a'});
   none.resolve(null);await none.promise;
   assert.ok(editing.hasLoudness('v')&&editing.decodedLoudness('v'),'the decode stays');
+  // So does a server measurement that fails.
+  const failing=held(),failed=setup().editing;
+  failed.setLoudness('v',failing.promise);failed.setLoudness('v',flat(),{from:'blob:a'});
+  failing.reject(new Error('no loudness'));await failing.promise.catch(()=>{});await null;
+  assert.ok(failed.hasLoudness('v')&&failed.decodedLoudness('v'),'the decode stays after a failed measurement');
+  // A second decode while the server still measures replaces the first, and the server still wins in the end.
+  const later=held();
+  const twice=await cutWith(
+    e=>e.setLoudness('v',later.promise),
+    e=>e.setLoudness('v',flat(),{from:'blob:a'}),
+    e=>e.setLoudness('v',flat(),{from:'blob:b'}),
+    async e=>{later.resolve(loudness());await later.promise;assert.ok(!e.decodedLoudness('v'),'the server measurement replaces the second decode');},
+  );
+  assert.deepEqual(twice,onServer);
 });
 
 // Saved history after a click-back (TOOLS-463): a cut holds, of the cuts it took in, only what is still cut under it.

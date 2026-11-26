@@ -22,7 +22,8 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   // What is selected and what an edit does live in transcript-editing.js; this file draws it and passes clicks in.
   const editing=createTranscriptEditing({saveTranscript:(v,data,options)=>backendRef.saveTranscript(v,data,options),request,updateRequest,cancelRequest,onError:error=>showError(error.message)});
   // The local app measures each video's loudness on the server (backend.loudness); online, or when the server has no
-  // ffmpeg, the waveform's own decode gives it once Build waveform has read the audio. Without either, cuts fall back to
+  // ffmpeg, the waveform's own decode gives it once Build waveform has read the audio. A decode that is in while the
+  // server still measures stands in until the server's result arrives (setLoudness). Without either, cuts fall back to
   // the transcript's word times. A decode's loudness goes when a new render replaces the file (the next decode measures it).
   media.addEventListener('loadstart',()=>{if(videoRef)editing.mediaChanged(videoRef.id,media.currentSrc);});
   const waveform=createWaveform({media,seek,pause,onRange:adjustSelection,onSamples:(channels,rate)=>{if(videoRef&&(!editing.hasLoudness(videoRef.id)||editing.decodedLoudness(videoRef.id)))editing.setLoudness(videoRef.id,envelopeFromSamples(channels,rate),{from:media.currentSrc});},onAudition:range=>{playContext(Math.max(0,range.startMs-750),Math.min(videoRef.durationMs,range.endMs+750));auditionRange=range;}});
