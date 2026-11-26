@@ -155,8 +155,10 @@ export function createWaveform({media,seek,pause,onRange,onAudition,onLoudness=(
       if(track){
         try{await stretched(url,file,track,token,Offline);}
         catch(error){
-          // A file small enough to decode whole is decoded that way when reading it in stretches fails (the browser
-          // refuses a stretch, or the sound has more than one piece): its bars so far go, and the whole file is read.
+          // A file small enough to decode whole is decoded that way when reading it in stretches fails, whatever the
+          // failure (the browser refuses a stretch, a read fails, the index gives the sound another length than the
+          // video's), as every such file was before TOOLS-479: its bars so far go, and the whole file is read. The
+          // whole decode measures the sound itself, so it can still build where the index was wrong.
           if(token!==generation||error.name==='AbortError'||file.size>WHOLE_LIMIT)throw error;
           track=null;peaks=null;source=null;readyMs=Infinity;dropHanded();draw();status('Reading audio on this computer…');
         }
@@ -183,6 +185,17 @@ export function createWaveform({media,seek,pause,onRange,onAudition,onLoudness=(
     zoomView=zoomWaveformWindow(duration,view,at,delta);draw();
   },{passive:false});
   function change(edge,value){if(!range||!Number.isFinite(value))return;pause();range=adjustBoundary(range,edge,value,duration,fps);onRange({...range});draw();}
+  // The cut's two times, each in its box below the waveform, in seconds.
+  const TIME_BOXES=[['#waveformIn','startMs'],['#waveformOut','endMs']],seconds=ms=>(ms/1000).toFixed(3);
+  /** Shows the cut below the waveform: its two times, its length and Hear cut. A box named in `typed` keeps its text. */
+  function showRange(typed=[]){
+    $('#waveformRange').hidden=!range;
+    if(range){
+      for(const [id,edge] of TIME_BOXES)if(!typed.includes(id))$(id).value=seconds(range[edge]);
+      $('#waveformCutLength').textContent=seconds(range.endMs-range.startMs)+' s to remove';
+    }
+    $('#auditionWaveformCut').disabled=!range;draw();
+  }
   for(const [edge,id] of [['start','#waveformStart'],['end','#waveformEnd']]){
     $(id).dataset.edge=edge;
     $(id).onkeydown=e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();const value=e.key==='Home'?0:e.key==='End'?duration:range[edge+'Ms']+(e.key==='ArrowRight'?1:-1)*(e.shiftKey?5:1)*1000/fps;change(edge,value);}};
@@ -200,7 +213,15 @@ export function createWaveform({media,seek,pause,onRange,onAudition,onLoudness=(
   media.addEventListener('emptied',()=>{generation++;request?.abort();loading=false;peaks=null;source=null;readyMs=Infinity;dropHanded();$('#buildWaveform').hidden=false;$('#buildWaveform').disabled=false;status('');draw();});
   return {
     load(video){generation++;request?.abort();duration=video?.durationMs||0;fps=video?.fps||30;at=0;range=null;zoomView=null;removed=[];peaks=null;source=null;readyMs=Infinity;dropHanded();loading=false;$('#buildWaveform').hidden=false;$('#buildWaveform').disabled=!video;status('');this.setRange(null);draw();},
-    setRange(next){if(next&&!drag&&zoomView&&zoomView.endMs-zoomView.startMs>=duration-1)zoomView=null;range=next;if(range&&zoomView&&!drag&&(range.startMs<view.startMs||range.endMs>view.endMs))zoomView=waveformWindow(duration,(range.startMs+range.endMs)/2,range,view.endMs-view.startMs);$('#waveformRange').hidden=!range;if(range){$('#waveformIn').value=(range.startMs/1000).toFixed(3);$('#waveformOut').value=(range.endMs/1000).toFixed(3);$('#waveformCutLength').textContent=((range.endMs-range.startMs)/1000).toFixed(3)+' s to remove';}$('#auditionWaveformCut').disabled=!range;draw();},
+    setRange(next){if(next&&!drag&&zoomView&&zoomView.endMs-zoomView.startMs>=duration-1)zoomView=null;range=next;if(range&&zoomView&&!drag&&(range.startMs<view.startMs||range.endMs>view.endMs))zoomView=waveformWindow(duration,(range.startMs+range.endMs)/2,range,view.endMs-view.startMs);showRange();},
+    /** The cut of what is still selected moved by itself (its loudness came in, or went). A cut that has not moved
+     *  changes nothing. One that has is shown where it is now: the view stays where it was, and a time being typed in
+     *  a box stays in it. */
+    moveRange(next){
+      if(!range||!next||next.startMs===range.startMs&&next.endMs===range.endMs)return;
+      const typed=TIME_BOXES.filter(([id,edge])=>document.activeElement===$(id)&&$(id).value!==seconds(range[edge])).map(([id])=>id);
+      range=next;showRange(typed);
+    },
     setCuts(edits){removed=removedRanges(edits);draw();},
     tick(ms){const next=Math.floor(ms/40);if(next===Math.floor(at/40))return;at=ms;if(zoomView&&!drag&&(at<view.startMs||at>view.endMs))zoomView=waveformWindow(duration,at,null,view.endMs-view.startMs);draw();},
     reflow:draw,

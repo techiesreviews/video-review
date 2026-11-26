@@ -109,7 +109,9 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
   function mediaChanged(videoId,src){const entry=loudness.get(videoId);if(entry?.from&&entry.from!==src)loudnessChange(()=>loudness.delete(videoId));}
   /** A waveform build of this file stopped before its end (a read failed, or the video was changed): the loudness it had
    *  measured so far goes with its bars, so a cut is not placed by sound the waveform does not show. A server
-   *  measurement it stood in for is in its place again. A build that finished is the whole video's loudness, and stays. */
+   *  measurement it stood in for is in its place again. A build that finished is the whole video's loudness and is not
+   *  touched here; a later build of the same file puts its own part-way loudness in its place as soon as it starts
+   *  (setLoudness), so when that build stops, cuts follow the word times until a build has run to its end. */
   function decodeStopped(src){
     loudnessChange(()=>{
       for(const [videoId,entry] of loudness){

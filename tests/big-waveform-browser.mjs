@@ -326,8 +326,35 @@ try{
   // (Looked at last: the look lets go of the selection.)
   assert.equal(await barAt(9400),false,'and the bars of its first stretch are gone');
   await page.evaluate(()=>{window.failReads=null;window.blobReads=[];});
+  // A time being typed in a box below the waveform is not wiped by the stretches that come in while a word is chosen
+  // (word 16, whose sound is in the second stretch): not by the stretch that moves its cut from the word times to the
+  // sound, which moves the other time only, and not by the next one, which leaves the cut where it is. The typed time
+  // is taken when it is entered.
+  const nextStretch=async()=>{
+    await page.evaluate(()=>{window.releasePauses();window.heldPauses=[];});
+    await page.waitForFunction(()=>window.heldPauses?.length>0);
+  };
+  const byWords=[fromWords(16).startMs,fromWords(16).endMs].map(Math.round);
+  await word(16).click();
+  await page.evaluate(()=>{window.heldPauses=[];});
   await page.locator('#buildWaveform').click();
+  await page.waitForFunction(()=>window.heldPauses?.length>0);
+  assert.deepEqual(await shown(),byWords,'with the first stretch in, word 16\'s cut still follows the word times: its sound is further on');
+  await page.locator('#waveformIn').selectText();await page.keyboard.type('23.9');
+  await nextStretch();
+  assert.equal(await page.locator('#waveformIn').inputValue(),'23.9','a time being typed is still in its box after the stretch that moved the cut');
+  const endBySound=(await shown())[1];
+  assert.ok(endBySound>=16*1500+950&&endBySound!==byWords[1],`the cut's other time has moved to the sound: ${endBySound} (by the words ${byWords[1]})`);
+  await nextStretch();
+  assert.equal(await page.locator('#waveformIn').inputValue(),'23.9','and after a stretch that left the cut where it was');
+  assert.equal((await shown())[1],endBySound,'as is the cut\'s other time');
+  await page.keyboard.press('Enter');
+  assert.deepEqual(await shown(),[23900,endBySound],'the typed time is taken when it is entered');
+  await page.evaluate(()=>window.releasePauses());
   await page.waitForFunction(()=>document.querySelector('#buildWaveform').hidden,null,{timeout:120000});
+  assert.deepEqual(await shown(),[23900,endBySound],'and stays to the end of the build');
+  // Out of the box, so Escape lets go of the selection for the look at the bars.
+  await page.locator('#waveformIn').blur();
   assert.equal(await barAt(45400),true,'the chosen file\'s bars, all the way in');
   const blobReads=await page.evaluate(()=>window.blobReads);
   assert.ok(blobReads.length>3&&blobReads.every(read=>read.range&&read.status===206),`the chosen file is read in ranges: ${JSON.stringify(blobReads.slice(0,3))}`);
@@ -343,16 +370,27 @@ try{
     await page.waitForFunction(()=>{const button=document.querySelector('#buildWaveform');return button.hidden||!button.disabled&&document.querySelector('#waveformStatus').textContent;},null,{timeout:120000});
     return page.locator('#waveformStatus').innerText();
   };
+  // The 3 GB file, when the browser refuses its sound in stretches, is not decoded whole (it is over 512 MB): it says
+  // so, offers Build waveform again, and a Delete follows the word times.
+  await choose(big);
+  await page.evaluate(()=>{window.refuseStretches=true;});
+  const wholeReads=await page.evaluate(()=>window.blobReads.filter(read=>!read.range).length);
+  assert.equal(await built(),'This browser could not read the audio. Try an MP4 review copy.','a big file the browser cannot read in stretches says so');
+  assert.equal(await page.evaluate(()=>window.blobReads.filter(read=>!read.range).length),wholeReads,'and is not read whole');
+  assert.equal(await page.locator('#buildWaveform').isVisible(),true,'Build waveform is offered again');
+  await word(14).click();await page.locator('.bar-delete').click();
+  await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===6);
+  const refused=(await onDisk()).find(c=>c.wordIds[0]==='W14');
+  assert.deepEqual([refused.startMs,refused.endMs],[fromWords(14).startMs,fromWords(14).endMs],'a Delete after a refused build goes by the word times');
   // A file small enough to decode whole (the 70 MB copy) whose sound the browser refuses in stretches is decoded whole
   // instead, as before TOOLS-479 (TOOLS-481): the waveform builds, and a Delete is placed by the sound.
   await choose(small);
-  await page.evaluate(()=>{window.refuseStretches=true;});
   assert.equal(await built(),'','a small file the browser cannot read in stretches builds its waveform from the whole file');
   await page.evaluate(()=>{window.refuseStretches=false;});
   assert.equal(await page.locator('#buildWaveform').isHidden(),true,'and Build waveform is done');
   assert.equal(await barAt(45400),true,'its bars, all the way in');
   await word(10).click();await page.locator('.bar-delete').click();
-  await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===6);
+  await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===7);
   bySound((await onDisk()).find(c=>c.wordIds[0]==='W10'),10,'word 10\'s cut, on the whole file\'s decode,');
   // So is a small file whose index the page cannot read in stretches at all (a fragmented MP4, 70 MB): no stretch is
   // tried, the whole file is decoded, and its loudness places a Delete.
@@ -362,7 +400,7 @@ try{
   assert.equal(await page.evaluate(()=>window.decodeRates.length),decodes+1,'in one decode');
   assert.equal(await barAt(45400),true,'its bars, all the way in');
   await word(12).click();await page.locator('.bar-delete').click();
-  await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===7);
+  await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===8);
   bySound((await onDisk()).find(c=>c.wordIds[0]==='W12'),12,'word 12\'s cut, on the fragmented file\'s decode,');
   // A 3 GB file whose sound cannot be read in stretches (here a fragmented MP4) says why and what to do instead.
   await choose(fragmented);
