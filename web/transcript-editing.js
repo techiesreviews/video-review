@@ -79,12 +79,17 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
     },()=>null);
   }
   /** The open video's loudness now, or after a short wait while it is still being measured; null without it. Only the
-   *  first edit waits: once a wait ran out, later edits cut on the word times until the measurement is in. */
+   *  first edit waits: once a wait ran out, later edits cut on the word times until the measurement is in. A decode
+   *  standing in for the server's measurement ends the wait when it is in, and so does the server's measurement if it
+   *  comes first; either way the edit cuts on the one in place then, the server's when it has come. */
   async function loudnessSoon(){
-    const entry=loudness.get(video?.id);
+    const id=video?.id,entry=loudness.get(id);
     if(!entry||entry.env||!entry.promise||entry.waited)return entry?.env||null;
     entry.waited=true;let cancel=null;const late=new Promise(done=>{cancel=schedule(()=>done(null),LOUDNESS_WAIT_MS);});
-    try{return await Promise.race([entry.promise,late]);}finally{cancel?.();}
+    // A server with nothing to give does not end the wait: the decode still can.
+    const server=entry.standsFor?.promise?.then(env=>env||new Promise(()=>{}));
+    try{await Promise.race([entry.promise,late,server].filter(Boolean));}finally{cancel?.();}
+    return loudness.get(id)?.env||null;
   }
   const loudnessNow=()=>loudness.get(video?.id)?.env||null;
   /** True once a video's loudness is in (measured on the server, or from the waveform's decode). */
