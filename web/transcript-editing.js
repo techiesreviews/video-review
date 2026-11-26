@@ -4,7 +4,7 @@
 import {activeWordIndex,wordSelection,wordsInSpan} from './transcript-core.js';
 import {makeRemoval,previewDuration,removalBounds} from './cut-core.js';
 import {cleanCut} from './cut-boundary.js';
-import {cutsToRestore,deletedIds,lastCutGroup,nextWordAfterDelete} from './edit-bar-core.js';
+import {cutsToRestore,deletedIds,lastCutGroup,nextWordAfterDelete,pauseOfCut} from './edit-bar-core.js';
 import {clock} from './time-format.js';
 import {RULES} from './review-core.js';
 
@@ -143,8 +143,13 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
   function selectedIds(){return selection?.a!=null&&transcript?transcript.words.slice(selection.a,selection.b+1).map(w=>w.id):[];}
   /** The cuts that bring the selection back: when every selected word is deleted already, or a selected pause is cut. */
   function toRestore(){
-    // A pause's cuts include any cut that holds no words there (handles moved into a short pause).
-    if(selection?.kind==='pause')return edits().filter(e=>(e.kind==='pause'||!e.wordIds?.length)&&e.startMs<selection.endMs&&e.endMs>selection.startMs);
+    // A pause's cuts include any cut that holds no words there (handles moved into a short pause), and every cut with no
+    // words whose mark is this pause (handles moved inside a word beside it, see pauseOfCut).
+    if(selection?.kind==='pause'){
+      const words=transcript.words,here=selection.lastWordId?indexOf(selection.lastWordId):words.length;
+      return edits().filter(e=>(e.kind==='pause'||!e.wordIds?.length)&&e.startMs<selection.endMs&&e.endMs>selection.startMs
+        ||!e.wordIds?.length&&pauseOfCut(words,e)===here);
+    }
     return cutsToRestore(edits(),selectedIds());
   }
   /** The frame-aligned span a Delete would cut, or null for a selection too short for one. */
@@ -263,7 +268,7 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
     // What is selected now is what this Delete cuts, also when another word is clicked while it waits for the loudness.
     const picked=selection;
     return exclusive(async at=>{
-      const env=await loudnessFor(at);
+      const target=video,env=await loudnessFor(at);
       const wasWords=picked.kind==null&&picked.a!=null,said=String(typed).trim();
       // A span set with the waveform handles (precise) is an exact time span, so it is cut as it is.
       let chosen=picked,edit,kept=edits(),taken=[],letGo=[];
@@ -280,20 +285,29 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
         // No open note may claim a cut that was never saved.
         if(saved?.id&&!error.saved)await cancelRequest(saved.id).catch(onError);
         if(saved?.id&&error.saved&&said)cutNotes.set(saved.id,said);
-        if(error.saved)await closeJoined(letGo);
+        if(error.saved)await closeJoined(letGo,target);
         throw error;
       }
       if(said&&saved?.id)cutNotes.set(saved.id,said);
       const first=chosen.a,last=chosen.b;
       const next=wasWords?nextWordAfterDelete(transcript.words,[...deletedIds(edits())],first,last):-1;
-      await closeJoined(letGo);
+      await closeJoined(letGo,target);
+      // A new transcript that came in while those notes closed (another video opened): the Delete is saved, and its
+      // words are not selected on the new one, as an Undo or Restore ends (see commitThenClose).
+      if(stale(at))throw Object.assign(Error(RELOADED_TEXT),{saved:true,videoId:target.id});
       return {edit,pieces:[edit],wasWords,first,last,next,noteOpen,
         line:said?'Deleted, with your note. Ctrl+Z brings both back.':'Deleted. Ctrl+Z brings it back.'};
     });
   }
 
-  /** Closes the notes of cuts a Delete let go of (see joinedCut), saying their words stay cut. */
-  async function closeJoined(ids){for(const id of ids){await cancelRequest(id,{text:JOINED_TEXT}).catch(onError);cutNotes.delete(id);}}
+  /** Closes the notes of cuts a Delete let go of (see joinedCut), saying their words stay cut. A failed close is
+   *  reported only while the Delete's video is still open. */
+  async function closeJoined(ids,target){
+    for(const id of ids){
+      await cancelRequest(id,{text:JOINED_TEXT}).catch(error=>{if(video?.id===target.id)onError(error);});
+      cutNotes.delete(id);
+    }
+  }
   /** The cuts these took in when they were made, still waiting for their Undo, once each by id (the pieces of a cut
    *  split before historyLeft gave each its own part can hold the same one). */
   const takenBy=list=>[...new Map(list.flatMap(e=>e.takenIn||[]).map(e=>[e.id,e])).values()];

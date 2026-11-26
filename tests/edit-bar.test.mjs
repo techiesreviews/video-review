@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {barKey,suggestion,recentNotes,nextWordAfterDelete,sentLine,afterDelete,broughtBackLine,QUICK_PHRASES,barSpot,barSpotOffWords,deletedIds,cutsToRestore,lastCutGroup} from '../web/edit-bar-core.js';
+import {barKey,suggestion,recentNotes,nextWordAfterDelete,sentLine,afterDelete,broughtBackLine,QUICK_PHRASES,barSpot,barSpotOffWords,deletedIds,cutsToRestore,lastCutGroup,pauseOfCut} from '../web/edit-bar-core.js';
 
 const key=(k,extra={})=>({key:k,...extra});
 
@@ -118,6 +118,16 @@ test('a selection of only deleted words names the cuts that bring it back; any k
   assert.deepEqual(cutsToRestore(edits,['c','e']).map(e=>e.id),['e1','e3'],'two cuts, both come back');
   assert.deepEqual(cutsToRestore(edits,['b','d']),[],'d is still in the cut, so this is a selection to delete');
   assert.deepEqual(cutsToRestore(edits,[]),[],'a pause or join selection has no words to restore');
+});
+test('a cut with no words belongs to one pause: the one it lies in, or inside a word the nearer pause beside that word',()=>{
+  const around=[{startMs:100,endMs:800},{startMs:1100,endMs:1800}];
+  assert.equal(pauseOfCut(around,{startMs:850,endMs:1050}),1,'in the pause between the words');
+  assert.equal(pauseOfCut(around,{startMs:1200,endMs:1300}),1,'early in the second word: the pause before it');
+  assert.equal(pauseOfCut(around,{startMs:1600,endMs:1700}),2,'late in the second word: the pause after it, to the end');
+  assert.equal(pauseOfCut(around,{startMs:600,endMs:700}),1,'late in the first word: the pause after it');
+  assert.equal(pauseOfCut(around,{startMs:150,endMs:250}),0,'early in the first word: the pause from the start');
+  assert.equal(pauseOfCut(around,{startMs:0,endMs:60}),0);
+  assert.equal(pauseOfCut(around,{startMs:1900,endMs:2000}),2);
 });
 test('the pieces of one Delete share its note, so Ctrl+Z brings them all back at once',()=>{
   assert.equal(lastCutGroup([{commentId:'x'},{commentId:'y'},{commentId:'y'}]),2);

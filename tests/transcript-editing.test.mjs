@@ -571,6 +571,24 @@ for(const kind of ['Undo','Restore'])test(`an ${kind} whose note fails to close 
   assert.deepEqual(state.transcripts.v.draftEdits,[],'the saved cut stays removed');
 });
 
+for(const close of ['closes','fails to close'])test(`a Delete whose let-go note ${close} after another video opens ends as saved, so the old selection is not used on the new video`,async()=>{
+  // The 32nd Delete in a row reaches past the Undo depth, so it closes the oldest note while it ends (see joinedCut).
+  const many=Array.from({length:40},(_,i)=>({id:'W'+i,text:'w'+i,startMs:i*150+10,endMs:i*150+110}));
+  const {editing,state,calls,hold}=setup({transcript:{revision:'r1',words:many,cuts:[]}});
+  for(let i=0;i<31;i++){editing.selectWords(i);await editing.remove();}
+  assert.deepEqual(calls.cancels,[],'no note let go yet');
+  hold.cancel=held();const wait=hold.cancel;
+  editing.selectWords(31);const deleting=editing.remove();
+  while(!calls.cancels.length)await new Promise(r=>setTimeout(r));
+  editing.load(null,{...VIDEO,id:'w'});
+  if(close==='closes')wait.resolve();else wait.reject(Error('Network down'));
+  const error=await deleting.then(()=>null,error=>error);
+  assert.equal(error?.saved,true,'no result for the panel to seek or select with');
+  assert.equal(error.videoId,'v');
+  assert.deepEqual(calls.errors,[],'nothing said over the new video');
+  assert.ok(state.transcripts.v.draftEdits[0].wordIds.includes('W31'),'the Delete is saved on the old video');
+});
+
 test('a note that fails to close after the same video loads again is reported, and the Undo ends as saved',async()=>{
   const {editing,state,calls,hold}=setup();
   editing.selectWords(1);await editing.remove({typed:'why'});
@@ -760,6 +778,19 @@ test('a cut with no words, made by moving the handles into a short pause, is bro
   const [cut]=editing.edits();assert.deepEqual(cut.wordIds,[]);
   editing.selectPause(TRANSCRIPT.words[4],TRANSCRIPT.words[5]);
   assert.deepEqual(editing.toRestore().map(e=>e.id),[cut.id]);
+});
+
+// “four” is 4100–4800 ms and “five” 5100–5800 ms, with a pause between them.
+for(const [into,range] of [['the next word',{startMs:5300,endMs:5500}],['the word before',{startMs:4500,endMs:4700}]])test(`a pause cut whose handles moved inside ${into} is brought back from that pause, and its note closes`,async()=>{
+  const {editing,calls}=setup();
+  editing.selectPause(TRANSCRIPT.words[4],TRANSCRIPT.words[5]);editing.adjust(range);await editing.remove();
+  const [cut]=editing.edits();assert.deepEqual(cut.wordIds,[]);
+  assert.ok(cut.startMs>=range.startMs-34&&cut.endMs<=range.endMs+34,'the cut lies inside the word, outside the pause');
+  editing.selectPause(TRANSCRIPT.words[4],TRANSCRIPT.words[5]);
+  assert.deepEqual(editing.toRestore().map(e=>e.id),[cut.id],'the pause offers Restore');
+  await editing.restore(editing.toRestore().map(e=>e.id));
+  assert.deepEqual(editing.edits(),[]);
+  assert.deepEqual(calls.cancels,[cut.commentId]);
 });
 
 test('a note stays open while a later cut still holds its words in its saved history',async()=>{

@@ -1,7 +1,7 @@
 import {normalizeTranscript,activeWordIndex,originalOmissions} from './transcript-core.js';
 import {skipRemoved,previewDuration,exportCut,removedRanges,playbackRemovals} from './cut-core.js';
 import {createWaveform} from './waveform-panel.js';
-import {barKey,suggestion,recentNotes,afterDelete,broughtBackLine,sentLine,barSpotOffWords,deletedIds} from './edit-bar-core.js';
+import {barKey,suggestion,recentNotes,afterDelete,broughtBackLine,sentLine,barSpotOffWords,deletedIds,pauseOfCut} from './edit-bar-core.js';
 import {createTranscriptEditing,REFUSED_TEXT,REMOVED_TEXT} from './transcript-editing.js';
 import {envelopeFromSamples} from './cut-boundary.js';
 import {clock} from './time-format.js';
@@ -180,8 +180,8 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
       else{const draft=editing.noteId?'':noteBox.value;clear();carriedNote=draft||carriedNote;notice('That join changed elsewhere, so it is no longer selected.');}
     }
   }
-  /** A gap shorter than the pause setting still gets its pause mark while a cut with no words lies in it, so that cut
-   *  can be selected and brought back like any pause. */
+  /** A gap shorter than the pause setting still gets its pause mark while a cut with no words belongs to it (see
+   *  pauseOfCut), so that cut can be selected and brought back like any pause. */
   function drawCutPauses(){
     const wordless=editing.edits().filter(e=>!e.wordIds?.length),key=JSON.stringify(wordless.map(e=>[e.startMs,e.endMs]));
     if(key===drawnCutPauses)return;drawnCutPauses=key;
@@ -190,8 +190,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     const words=editing.transcript?.words||[];
     for(const cut of wordless){
       // Also before the first word or after the last one.
-      let i=words.findIndex(w=>w.startMs>=(cut.startMs+cut.endMs)/2);if(i<0)i=words.length;
-      const previous=words[i-1]||null,word=words[i]||null,startMs=previous?previous.endMs:0;
+      const i=pauseOfCut(words,cut),previous=words[i-1]||null,word=words[i]||null,startMs=previous?previous.endMs:0;
       if(!words.length||pauseNodes.some(n=>Number(n.dataset.startMs)===startMs))continue;
       const pause=element('button','transcript-join transcript-pause cut-only','');
       pause.type='button';pause.title='A cut pause; select it to bring it back';
@@ -212,7 +211,9 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     for(let i=0;i<wordNodes.length;i++){const word=transcript.words[i],removed=gone.has(word.id);wordNodes[i].classList.toggle('removed-word',removed);wordNodes[i].setAttribute('aria-label',removed?`Deleted: ${word.text}, ${stamp(word.startMs)}, press Enter to bring it back`:`${word.text}, ${stamp(word.startMs)}`);wordNodes[i].title=removed?`${stamp(word.startMs)} · click to bring this word back`:stamp(word.startMs);}
     markSpaces();
     const ranges=removedRanges(edits);
-    for(const gap of pauseNodes){const a=Number(gap.dataset.startMs),b=Number(gap.dataset.endMs),cut=ranges.reduce((n,[x,y])=>n+Math.max(0,Math.min(b,y)-Math.max(a,x)),0),seconds=ms=>(ms/1000).toFixed(1);gap.classList.toggle('removed-pause',cut>0);gap.textContent=cut>0?`${seconds(b-a)} → ${seconds(b-a-cut)} s pause`:`${seconds(b-a)} s pause`;}
+    // A cut with no words inside a word marks the pause it belongs to as cut, though none of that pause's time is.
+    const held=new Set(edits.filter(e=>!e.wordIds?.length).map(e=>{const i=pauseOfCut(transcript.words,e);return i?transcript.words[i-1].endMs:0;}));
+    for(const gap of pauseNodes){const a=Number(gap.dataset.startMs),b=Number(gap.dataset.endMs),cut=ranges.reduce((n,[x,y])=>n+Math.max(0,Math.min(b,y)-Math.max(a,x)),0),seconds=ms=>(ms/1000).toFixed(1);gap.classList.toggle('removed-pause',cut>0||held.has(a));gap.textContent=cut>0?`${seconds(b-a)} → ${seconds(b-a-cut)} s pause`:`${seconds(b-a)} s pause`;}
     if(transcript)renderOriginalOmissions();
     waveform.setCuts(edits);
     $('#cutPreviewBar').hidden=!edits.length;$('#undoTranscriptCut').disabled=busy;
