@@ -3,6 +3,7 @@
 // transcript, the comment list, timers) are passed in, so every rule runs in a test without a browser.
 import {activeWordIndex,wordSelection,wordsInSpan} from './transcript-core.js';
 import {makeRemoval,previewDuration,removalBounds} from './cut-core.js';
+import {cleanCut} from './cut-boundary.js';
 import {cutsToRestore,deletedIds,lastCutGroup,nextWordAfterDelete} from './edit-bar-core.js';
 import {clock} from './time-format.js';
 import {RULES} from './review-core.js';
@@ -293,7 +294,8 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
 
   /** Closes the notes of cuts a Delete let go of (see joinedCut), saying their words stay cut. */
   async function closeJoined(ids){for(const id of ids){await cancelRequest(id,{text:JOINED_TEXT}).catch(onError);cutNotes.delete(id);}}
-  /** The cuts these took in when they were made, still waiting for their Undo (a cut split in two holds them in both). */
+  /** The cuts these took in when they were made, still waiting for their Undo, once each by id (the pieces of a cut
+   *  split before historyLeft gave each its own part can hold the same one). */
   const takenBy=list=>[...new Map(list.flatMap(e=>e.takenIn||[]).map(e=>[e.id,e])).values()];
   /** Every cut in these cuts' saved history, at any depth, once each. */
   const heldBy=list=>{
@@ -302,16 +304,22 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
     return [...all.values()];
   };
 
-  /** Undo: brings back the last Delete, all its pieces together, puts back the cuts it took in as they were, and closes
-   *  its own note. keep: see commit. */
+  /** Undo: brings back the last Delete, all its pieces together, puts back the cuts it took in as its pieces still
+   *  hold them (as they were, less what was clicked back since: see historyLeft), and closes its own note.
+   *  keep: see commit. */
   function undo({keep=false}={}){
     if(!lastCutGroup(edits()))return Promise.resolve(null);
     return exclusive(async at=>{
       const count=lastCutGroup(edits()),undone=edits().slice(-count),edit=undone[0],said=cutNotes.get(edit.commentId)||'';
       const earlier=edits().slice(0,-count),before=takenBy(undone).filter(e=>!earlier.some(k=>k.id===e.id));
-      // Each cut goes back where it stood when it was taken in.
-      const list=[...earlier];
-      for(const {at:spot,...cut} of before.sort((x,y)=>(x.at??Infinity)-(y.at??Infinity)))list.splice(Math.min(spot??list.length,list.length),0,cut);
+      // Each cut goes back where it stood when it was taken in. A cut split in two since comes back as two parts with
+      // one place: they stand side by side (one Delete for the next Undo), and the places after them move up by one.
+      const list=[...earlier];let extra=0,lastSpot=null;
+      for(const {at:spot,...cut} of before.sort((x,y)=>(x.at??Infinity)-(y.at??Infinity))){
+        if(spot!=null&&spot===lastSpot)extra++;
+        lastSpot=spot;
+        list.splice(Math.min((spot??list.length)+extra,list.length),0,cut);
+      }
       const noteOpen=await commitThenClose(at,list,undone,{keep});
       const ids=undone.flatMap(e=>e.wordIds||[]);
       return {edit,undone,note:said,noteOpen,first:ids.length?indexOf(ids[0]):-1,last:ids.length?indexOf(ids.at(-1)):-1};
@@ -330,28 +338,52 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
     });
   }
 
+  /** The saved history left to a cut that lost words: of the cuts it took in, only what is still cut under it, so its
+   *  Undo never cuts again what plays, and a note closes exactly when nothing holds its cut any more.
+   *  Every cut taken in stays while a frame of its own time is still cut; one taken in for its words keeps the words it
+   *  shares with the cut that is left, and goes with its last one. What stays is trimmed to the cut that is left, and
+   *  its own history the same way, so no saved cut reaches outside the cut that holds it.
+   *  was: the cut before it lost the words; now: what is left of it. seen: the ids kept so far in this click-back; a
+   *  cut held by a second piece gets a new id there, so both parts can stand in one list after Undo. */
+  function historyLeft(history,was,now,seen){
+    const step=1000/video.fps,had=new Set(was.wordIds),has=new Set(now.wordIds),left=[];
+    for(const {takenIn,...earlier} of history||[]){
+      const byWords=earlier.wordIds.some(id=>had.has(id)),ids=byWords?earlier.wordIds.filter(id=>has.has(id)):earlier.wordIds;
+      const startMs=Math.max(earlier.startMs,now.startMs),endMs=Math.min(earlier.endMs,now.endMs);
+      if(endMs-startMs<step-0.5||!ids.length&&byWords)continue;
+      const mine=new Set(ids),lostWords=ids.length<earlier.wordIds.length;
+      const cut={...earlier,id:seen.has(earlier.id)?crypto.randomUUID():earlier.id,startMs,endMs,wordIds:ids,
+        ...(lostWords?{quote:transcript.words.filter(w=>mine.has(w.id)).map(w=>w.text).join(' ')}:{})};
+      seen.add(earlier.id);
+      const inner=historyLeft(takenIn,earlier,cut,seen);
+      left.push(inner.length?{...cut,takenIn:inner}:cut);
+    }
+    return left;
+  }
   /** The cut left of edit once the words in `back` play again: one piece per run of words still cut. A piece keeps the
-   *  cut's own edge where it reaches it, and on the restored side ends at the silence before the restored word. */
-  function piecesLeft(edit,back,env){
+   *  cut's own edge where it reaches it, and on the restored side ends at the silence before the restored word (with
+   *  loudness and no silence there: at the frame line before the quietest point, so none of that word stays cut).
+   *  Each piece keeps the part of the saved history still cut under it (see historyLeft). */
+  function piecesLeft(edit,back,env,seen){
     const step=1000/video.fps,words=transcript.words,at=edit.wordIds.map(indexOf).filter(i=>i>=0).sort((x,y)=>x-y);
     const cut=at.filter(i=>!back.has(words[i].id)),runs=[];
     for(const i of cut){const run=runs.at(-1);if(run&&i===run[1]+1)run[1]=i;else runs.push([i,i]);}
-    const pieces=[];
+    const pieces=[],{takenIn:history,...rest}=edit;
     for(const [i,j] of runs){
-      let found=null;
-      try{found=removalBounds(transcript,wordSelection(words,i,j),video.durationMs,video.fps,env);}catch{}
+      // Which sides of the piece have a word that plays again; the other side is the cut's own edge.
+      const clear=[i!==at[0],j!==at.at(-1)];
+      let found=env?cleanCut(words,i,j,env,{fps:video.fps,durationMs:video.durationMs,clear}):null;
+      // No loudness, or no sound it can see for these words: from the word times.
+      if(!found)try{found=removalBounds(transcript,wordSelection(words,i,j),video.durationMs,video.fps);}catch{}
       // No room for a frame-aligned cut from the word times alone: stop a whole frame clear of the restored words.
-      let startMs=i===at[0]?edit.startMs:found?found.startMs:Math.ceil(words[i-1].endMs/step)*step;
-      let endMs=j===at.at(-1)?edit.endMs:found?found.endMs:Math.floor(words[j+1].startMs/step)*step;
+      let startMs=!clear[0]?edit.startMs:found?found.startMs:Math.ceil(words[i-1].endMs/step)*step;
+      let endMs=!clear[1]?edit.endMs:found?found.endMs:Math.floor(words[j+1].startMs/step)*step;
       startMs=Math.round(Math.max(edit.startMs,startMs));endMs=Math.round(Math.min(edit.endMs,endMs));
       // Too short for a frame: dropping it would bring back words that were not clicked, so nothing changes instead.
       if(endMs-startMs<step-0.5)throw Error(TOO_SHORT_TEXT);
-      const ids=words.slice(i,j+1).map(w=>w.id),mine=new Set(ids);
-      // A piece holds only the earlier cuts inside it, so splitting a cut over and over does not copy its whole history.
-      const takenIn=(edit.takenIn||[]).filter(e=>e.wordIds?.length?e.wordIds.some(id=>mine.has(id)):e.startMs<endMs&&e.endMs>startMs);
-      const {takenIn:_,...rest}=edit;
-      pieces.push({...rest,id:pieces.length?crypto.randomUUID():edit.id,startMs,endMs,wordIds:ids,quote:wordSelection(words,i,j).quote,
-        ...(takenIn.length?{takenIn}:{})});
+      const piece={...rest,id:pieces.length?crypto.randomUUID():edit.id,startMs,endMs,wordIds:words.slice(i,j+1).map(w=>w.id),quote:wordSelection(words,i,j).quote};
+      const takenIn=historyLeft(history,edit,piece,seen);
+      pieces.push(takenIn.length?{...piece,takenIn}:piece);
     }
     return pieces;
   }
@@ -361,18 +393,10 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
     const back=new Set(ids),touches=e=>e.kind!=='pause'&&(e.wordIds||[]).some(id=>back.has(id));
     if(!edits().some(touches))return Promise.resolve(null);
     return exclusive(async at=>{
-      const env=await loudnessFor(at),noted=new Set(cutNotes.keys());
-      const touched=edits().filter(touches),cutNow=edits().flatMap(e=>touches(e)?piecesLeft(e,back,env):[e]);
-      // A cut a Delete took in has its note closed too, once none of its words is cut any more; its pieces stop holding it.
-      // At any depth of the saved history.
-      const stillCut=deletedIds(cutNow),closing=new Set(heldBy(touched).filter(e=>!(e.wordIds||[]).some(id=>stillCut.has(id))).map(e=>e.id));
-      const strip=list=>list.filter(e=>!closing.has(e.id)).map(e=>{
-        if(!e.takenIn)return e;
-        const {takenIn,...rest}=e,left=strip(takenIn);
-        return left.length?{...rest,takenIn:left}:rest;
-      });
-      const remaining=cutNow.map(e=>e.takenIn?strip([e])[0]:e);
-      await commitThenClose(at,remaining,[...touched,...heldBy(touched).filter(e=>closing.has(e.id))],{keep});
+      const env=await loudnessFor(at),noted=new Set(cutNotes.keys()),seen=new Set();
+      const touched=edits().filter(touches),cutNow=edits().flatMap(e=>touches(e)?piecesLeft(e,back,env,seen):[e]);
+      // The pieces hold only what is still cut (see historyLeft), so the note of every cut no longer held closes here.
+      await commitThenClose(at,cutNow,[...touched,...heldBy(touched)],{keep});
       const where=[...back].map(indexOf).filter(i=>i>=0);
       return {back:touched,noteResolved:touched.some(e=>noted.has(e.commentId)&&!cutNotes.has(e.commentId)),
         first:where.length?Math.min(...where):-1,last:where.length?Math.max(...where):-1};

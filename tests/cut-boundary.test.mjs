@@ -72,3 +72,27 @@ test('a word the loudness shows no sound for is cut on its transcript times, not
   assert.ok(cut.startMs<=1200&&cut.endMs>=1500,`covers the word's transcript span: ${cut.startMs}–${cut.endMs}`);
   assert.ok(cut.startMs>=1000&&cut.endMs<=1700,'and leaves its neighbours alone');
 });
+
+test('beside a word that plays again, a cut with no pause there stops before the quietest point and is not stretched',()=>{
+  // "is a test", run together with no pause: "a" is 20 ms, under a frame. clear: the word on that side plays again.
+  const env=drawn(3000,[[0,3000,-20]]);
+  const words=[word('x','is',650,1000),word('y','a',1000,1020),word('z','test',1020,2350)];
+  const loose=cleanCut(words,1,1,env,{fps:30,durationMs:3000});
+  assert.ok(loose.endMs-loose.startMs>=33,'a Delete of the short word alone still gets its one frame');
+  const tight=cleanCut(words,1,1,env,{fps:30,durationMs:3000,clear:[true,true]});
+  assert.ok(tight.startMs>=1000&&tight.endMs<=1020,`nothing of "is" or "test" is cut: ${tight.startMs}–${tight.endMs}`);
+  assert.ok(tight.endMs-tight.startMs<33,'so no whole frame is left for "a", and the caller refuses');
+});
+
+test('a short word at the edge of a cut, run into its neighbour, is cut too: the pause on its inner side is not its edge',()=>{
+  // "well ... a test": "a" (70 ms) runs straight into "test", and the only pause near it is the one before it.
+  const last=drawn(4000,[[500,1000,-20],[1500,1570,-20],[1570,1580,-50],[1580,2300,-20],[2800,3400,-20]]);
+  const words=[word('w','well',500,1000),word('a','a',1500,1570),word('t','test',1580,2300),word('n','next',2800,3400)];
+  const cut=cleanCut(words,0,1,last,{fps:30,durationMs:4000});
+  assert.ok(cut.endMs>=1560&&cut.endMs<=1600,`"well a" ends where "a" ends, not in the pause before it: ${cut.endMs}`);
+  // The other way round: "is a ... test", "a" (70 ms) runs straight on from "is", the only pause is after it.
+  const first=drawn(4000,[[500,1000,-20],[1000,1010,-50],[1010,1080,-20],[1500,2300,-20],[2800,3400,-20]]);
+  const others=[word('i','is',500,1000),word('a','a',1010,1080),word('t','test',1500,2300),word('n','next',2800,3400)];
+  const second=cleanCut(others,1,2,first,{fps:30,durationMs:4000});
+  assert.ok(second.startMs>=980&&second.startMs<=1020,`"a test" starts where "a" starts, not in the pause after it: ${second.startMs}`);
+});
