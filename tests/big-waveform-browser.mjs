@@ -1,9 +1,12 @@
 // Browser check of Build waveform on a review copy of 3 GB (TOOLS-479), made up on the spot: a 70 s MP4 whose index is
-// moved behind 3 GB of padding (a sparse file, so it takes no disk space). It never opens a real review.
-// It checks that the waveform builds with no "use a smaller file" message, fills in from left to right, reads only
-// small parts of the file, that a Delete on the part already in uses the sound while one past it follows the word
-// times, and that the sound read in stretches lines up with the whole file's decode. Opened as a chosen file, as online,
-// a build stopped part way leaves nothing behind, and a 3 GB fragmented MP4 says what to do instead.
+// moved behind 3 GB of padding (a sparse file, so the padding takes no disk space). It never opens a real review.
+// The video in it weighs what a recording does (8 Mbit/s of noise, 70 MB), so real video lies between the sound's
+// frames and the limits on what is read mean something (TOOLS-481).
+// It checks that the waveform builds with no "use a smaller file" message, fills in from left to right, reads each
+// stretch in reads of 4 MB at most and nothing of the file twice, that a Delete on the part already in uses the sound
+// while one past it follows the word times, and that the sound read in stretches lines up with the whole file's
+// decode. Opened as a chosen file, as online, a build stopped part way leaves nothing behind, and a 3 GB fragmented
+// MP4 says what to do instead.
 // Run: node tests/big-waveform-browser.mjs (needs Playwright and ffmpeg).
 import {chromium} from 'playwright';
 import {spawn,spawnSync} from 'node:child_process';
@@ -13,17 +16,52 @@ import {join,resolve} from 'node:path';
 import assert from 'node:assert/strict';
 import {removalBounds} from '../web/cut-core.js';
 import {wordSelection} from '../web/transcript-core.js';
+import {readIndex,soundTrack,stretches,LEAD_FRAMES,LONGEST_READ} from '../web/mp4-audio.js';
 
 const root=resolve('.'),temp=await mkdtemp(join(tmpdir(),'video-big-waveform-')),port=Number(process.env.BIG_WAVEFORM_PORT||8898),base=`http://127.0.0.1:${port}`;
 const python=process.env.VIDEO_REVIEW_PYTHON||(process.platform==='win32'?'python':'python3');
 const small=join(temp,'small.mp4'),big=join(temp,'big.mp4'),fps=30,durationMs=70000,PAD=3*1024**3;
 // Noise, loud for 0.95 s of every 1.5 s: noise has no repeating shape, so a stretch placed a little off would show.
-const encoded=spawnSync('ffmpeg',['-v','error','-y','-f','lavfi','-i',`color=c=0x1b1f3b:s=320x180:r=${fps}:d=70`,'-f','lavfi','-i','anoisesrc=color=pink:sample_rate=48000:duration=70:amplitude=0.4','-af',"volume='if(lt(mod(t,1.5),0.95),1,0)':eval=frame",'-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p','-c:a','aac','-b:a','96k','-shortest',small],{windowsHide:true,encoding:'utf8'});
+// The picture is noise too, held at 8 Mbit/s: it does not compress, so the file weighs what a recording of that rate does.
+const encoded=spawnSync('ffmpeg',['-v','error','-y','-f','lavfi','-i',`testsrc2=s=640x360:r=${fps}:d=70`,'-f','lavfi','-i','anoisesrc=color=pink:sample_rate=48000:duration=70:amplitude=0.4','-vf','noise=alls=80:allf=t+u','-af',"volume='if(lt(mod(t,1.5),0.95),1,0)':eval=frame",'-c:v','libx264','-preset','ultrafast','-b:v','8M','-minrate','8M','-maxrate','8M','-bufsize','4M','-pix_fmt','yuv420p','-c:a','aac','-b:a','96k','-shortest',small],{windowsHide:true,encoding:'utf8'});
 assert.equal(encoded.status,0,encoded.stderr);
 // The big copy: the same file with a 3 GB free box before its index (moov), which ffmpeg writes at the end.
 const bytes=await readFile(small);let moovAt=0;
 for(let at=0;at+8<=bytes.length;){const size=bytes.readUInt32BE(at);if(bytes.toString('latin1',at+4,at+8)==='moov'){moovAt=at;break;}at+=size===1?Number(bytes.readBigUInt64BE(at+8)):size;}
 assert.ok(moovAt>0,'the made-up MP4 has its index at the end');
+// Where each stretch's sound lies in the file (the same in the big copy, whose padding comes after the media): from its
+// first lead frame to the end of its last frame, and how much of that is sound.
+const track=soundTrack(await readIndex(async(start,end)=>bytes.subarray(start,end),bytes.length));
+const layout=stretches(track).map(([first,last])=>{
+  const lead=Math.max(0,first-LEAD_FRAMES);let sound=0;for(let i=lead;i<last;i++)sound+=track.sizes[i];
+  return {start:track.offsets[lead],end:track.offsets[last-1]+track.sizes[last-1],sound};
+});
+const MB=1024*1024,mb=n=>(n/MB).toFixed(1);
+assert.ok(layout.length===4&&layout.every(part=>part.end-part.start>LONGEST_READ&&part.sound<MB/2),
+  `the made-up video weighs something real: each stretch's sound (${layout.map(part=>mb(part.sound))} MB) lies across more than 4 MB of the file (${layout.map(part=>mb(part.end-part.start))} MB)`);
+/**
+ * The sound reads of one build ([{start, end}] in the order read), a stretch at a time, checked: no read longer than
+ * 4 MB, each stretch reading only its own part of the file, forward, nothing twice. A stretch starts two frames back
+ * (its lead frames), so its first read starts before the last stretch's last read ended. Returns the bytes read for
+ * each stretch.
+ */
+function stretchReads(list,what){
+  const groups=[];
+  for(const read of list){
+    if(read.start<track.offsets[0]||read.end>moovAt)continue; // box headers and the index
+    if(!groups.length||read.start<groups.at(-1).at(-1).end)groups.push([]);
+    groups.at(-1).push(read);
+  }
+  assert.equal(groups.length,layout.length,`${what}: the sound is read in ${layout.length} stretches`);
+  return groups.map((group,k)=>{
+    const {start,end,sound}=layout[k],sizes=group.map(read=>read.end-read.start),read=sizes.reduce((n,size)=>n+size,0);
+    assert.ok(sizes.every(size=>size<=LONGEST_READ),`${what}, stretch ${k+1}: no read is longer than 4 MB: ${sizes.map(mb)} MB`);
+    assert.ok(group.every((part,i)=>part.start>=start&&part.end<=end&&(!i||part.start>=group[i-1].end)),`${what}, stretch ${k+1}: it reads only its own part of the file, forward, nothing twice`);
+    assert.ok(read>=sound&&read<=end-start,`${what}, stretch ${k+1}: ${read} bytes read, at least its sound (${sound}) and at most its part of the file (${end-start})`);
+    return read;
+  });
+}
+const span=range=>{const [,start,last]=/^bytes=(\d+)-(\d+)$/.exec(range);return {start:Number(start),end:Number(last)+1};};
 const free=Buffer.alloc(16);free.writeUInt32BE(1,0);free.write('free',4,'latin1');free.writeBigUInt64BE(BigInt(PAD),8);
 const file=await open(big,'w');
 // Windows keeps a file sparse only when told to; without it the padding would be 3 GB of real zeros on the disk.
@@ -67,6 +105,11 @@ try{
     const request=response.request();if(request.resourceType()!=='fetch'||!request.url().includes('/media/big'))return;
     reads.push({range:request.headers().range||null,status:response.status(),bytes:Number(response.headers()['content-length']||0)});
   });
+  // The local app asks the server every 4 s whether the open video's file changed, and plays the server's copy again
+  // when the page plays anything else. Further down this check plays a chosen file in the local app (as online, where
+  // there is no such refresh), which that refresh would undo part way through a build. So it is kept off: to the app,
+  // the page is in a background tab.
+  await page.addInitScript(()=>Object.defineProperty(document,'hidden',{get:()=>true}));
   await page.addInitScript(()=>{const Native=window.OfflineAudioContext;window.decodeRates=[];window.OfflineAudioContext=class extends Native{constructor(...args){super(...args);window.decodeRates.push(this.sampleRate);}};});
   // While heldPauses is a list, the pauses between stretches (a message, nextTask in cut-boundary.js) wait in it.
   await page.addInitScript(()=>{
@@ -154,10 +197,13 @@ try{
   const rates=await page.evaluate(()=>window.decodeRates);
   assert.ok(rates.length===4&&rates.every(rate=>rate===16000),`four stretches, each decoded at the loudness rate: ${rates}`);
 
-  // The page read the index and the sound's frames only, each in a small range, never the 3 GB.
+  // The page read the index and, a stretch at a time, the part of the file its sound lies in: each read a range of
+  // 4 MB at most, the media read through once at most, never the 3 GB.
   assert.ok(reads.length>3&&reads.every(read=>read.range&&read.status===206),`every read is a range: ${JSON.stringify(reads.slice(0,3))}`);
   const total=reads.reduce((n,read)=>n+read.bytes,0);
-  assert.ok(reads.every(read=>read.bytes<=4*1024*1024)&&total<20*1024*1024,`small reads, ${(total/1024/1024).toFixed(1)} MB in all`);
+  assert.ok(reads.every(read=>read.bytes<=LONGEST_READ&&read.bytes===span(read.range).end-span(read.range).start),`no read is longer than 4 MB: ${reads.map(read=>mb(read.bytes))} MB`);
+  const perStretch=stretchReads(reads.map(read=>span(read.range)),'from the server');
+  assert.ok(total<=bytes.length+MB,`the media is read through once at most: ${mb(total)} MB of a file of 3 GB`);
   const heap=(await (await page.context().newCDPSession(page)).send('Performance.getMetrics').catch(()=>null))?.metrics?.find(m=>m.name==='JSHeapUsedSize')?.value;
   if(heap!=null)assert.ok(heap<150*1024*1024,`the page holds little: ${(heap/1024/1024).toFixed(0)} MB`);
 
@@ -237,9 +283,9 @@ try{
   await page.locator('#buildWaveform').click();
   await page.waitForFunction(()=>document.querySelector('#buildWaveform').hidden,null,{timeout:120000});
   assert.equal(await barAt(45400),true,'the chosen file\'s bars, all the way in');
-  const blobReads=await page.evaluate(()=>window.blobReads),blobTotal=blobReads.reduce((n,read)=>n+read.bytes,0);
-  assert.ok(blobReads.length>3&&blobReads.every(read=>read.range&&read.status===206&&read.bytes<=4*1024*1024),`the chosen file is read in small ranges: ${JSON.stringify(blobReads.slice(0,3))}`);
-  assert.ok(blobTotal<20*1024*1024,`${(blobTotal/1024/1024).toFixed(1)} MB of the chosen file read in all`);
+  const blobReads=await page.evaluate(()=>window.blobReads);
+  assert.ok(blobReads.length>3&&blobReads.every(read=>read.range&&read.status===206),`the chosen file is read in ranges: ${JSON.stringify(blobReads.slice(0,3))}`);
+  const blobTotal=stretchReads(blobReads.map(read=>span(read.range)),'from the chosen file').reduce((n,read)=>n+read,0);
   const allStatuses=await page.evaluate(()=>window.statuses);
   // A 3 GB file whose sound cannot be read in stretches (here a fragmented MP4) says why and what to do instead.
   await picker.setInputFiles(fragmented);
@@ -257,7 +303,7 @@ try{
   assert.equal(await page.locator('#waveformStatus').innerText(),'This video has no sound track.','a video with no sound says so, and nothing more');
   assert.ok(!allStatuses.some(text=>/smaller|large/i.test(text)),`no "file too large" message: ${JSON.stringify([...new Set(allStatuses)])}`);
   assert.deepEqual(errors,[],'no page errors');
-  console.log(`PASS: a 3 GB review copy builds its waveform in ${seen.length} stretches (${seen.join(', ')}%), reads ${(total/1024/1024).toFixed(1)} MB of it, cuts on the part that is in, and lines up with the whole decode (${lineUp.differ} of ${lineUp.steps} loudness steps differ); chosen as a file, it stops cleanly part way and reads ${(blobTotal/1024/1024).toFixed(1)} MB in ranges.`);
+  console.log(`PASS: a 3 GB review copy with video of real weight builds its waveform in ${seen.length} stretches (${seen.join(', ')}%), reads ${mb(total)} MB of it in ${reads.length} reads of ${mb(Math.max(...reads.map(read=>read.bytes)))} MB at most (${perStretch.map(mb).join(', ')} MB a stretch, for ${layout.map(part=>mb(part.sound)).join(', ')} MB of sound), cuts on the part that is in, and lines up with the whole decode (${lineUp.differ} of ${lineUp.steps} loudness steps differ); chosen as a file, it stops cleanly part way and reads ${mb(blobTotal)} MB in ranges.`);
 }finally{
   await browser?.close();server.kill();
   await rm(temp,{recursive:true,force:true});

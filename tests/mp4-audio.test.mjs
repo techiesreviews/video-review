@@ -2,7 +2,7 @@
 // says exactly what the file's index holds: where every frame of the sound lies, and how the track sits on the clock.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readIndex,soundTrack,audioConfig,adtsHeader,stretches,byteRanges,adtsFile,placement,NotReadable,LEAD_FRAMES} from '../web/mp4-audio.js';
+import {readIndex,soundTrack,audioConfig,adtsHeader,stretches,byteRanges,adtsFile,placement,NotReadable,LEAD_FRAMES,LONGEST_READ} from '../web/mp4-audio.js';
 
 const bytes=(...parts)=>{const out=new Uint8Array(parts.reduce((n,p)=>n+p.length,0));let at=0;for(const p of parts){out.set(p,at);at+=p.length;}return out;};
 const u8=(...values)=>Uint8Array.from(values);
@@ -207,6 +207,26 @@ test('a stretch is read in few ranges: frames close together in one read, frames
     assert.deepEqual([...adts.subarray(k*107,k*107+7)],[...adtsHeader(track.config,100)]);
     assert.ok(adts.subarray(k*107+7,(k+1)*107).every(v=>v===k+2),`frame ${k+1} follows its header`);
   }
+});
+
+test('a joined read stops at 4 MB (TOOLS-481): on a real recording a video frame lies between each two sound frames, and a stretch joined into one read would hold all of that video',async()=>{
+  // 20 s of sound, each frame 100 KB after the last, as beside video of about 37 Mbit/s: every gap is small enough to join.
+  const frames=new Array(938).fill(200),chunks=frames.map((_,i)=>[1000+i*100_000,1]);
+  const track=soundTrack(movie({frames,chunks}));
+  const [first,last]=stretches(track)[0];
+  assert.ok(last-first>900,`one stretch of about 20 s: ${last-first} frames`);
+  const ranges=byteRanges(track,first,last),longest=Math.max(...ranges.map(([start,end])=>end-start));
+  assert.ok(longest<=LONGEST_READ&&LONGEST_READ===4*1024*1024,`no read is longer than 4 MB: the longest is ${longest} bytes`);
+  // Still joined as far as the limit lets it: about 4 MB a read, not a read for every frame.
+  assert.ok(ranges.length<=Math.ceil((track.offsets[last-1]+200-track.offsets[first])/LONGEST_READ)+1,`${ranges.length} reads for ${last-first} frames`);
+  for(let i=1;i<ranges.length;i++)assert.ok(ranges[i][0]>=ranges[i-1][1],'the reads go forward through the file, none twice');
+  const disk=file(1000+frames.length*100_000,frames.map((size,i)=>[track.offsets[i],frame(i,size)]));
+  const adts=await adtsFile(track,first,last,disk.read);
+  assert.deepEqual(disk.reads,ranges);
+  assert.equal(adts.length,(last-first)*207);
+  for(let k=0;k<last-first;k++)assert.ok(adts.subarray(k*207+7,(k+1)*207).every(v=>v===(first+k)%251+1),`frame ${first+k} is in its place`);
+  // A limit smaller than one frame still reads that frame, on its own.
+  assert.deepEqual(byteRanges(track,0,3,256*1024,100),[[1000,1200],[101_000,101_200],[201_000,201_200]]);
 });
 
 test('stretches lie end to end on the video\'s clock: the start-up frame and each stretch\'s lead frames are dropped',()=>{
