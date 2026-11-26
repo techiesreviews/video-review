@@ -12,7 +12,7 @@ export const LOUDNESS_RATE=16000;
 // Enough for the waveform's bars alone.
 const BARS_RATE=8000;
 // The decode keeps every channel at its rate. Before TOOLS-473 it was always at 8 kHz, so an hour of stereo held
-// 57.6 million samples (about 230 MB); a decode at the loudness rate may not hold more than that.
+// 57.6 million samples (about 230 MB); a mono or stereo decode at the loudness rate may not hold more than that.
 const MOST_SAMPLES=3600*BARS_RATE*2;
 /** The rate Build waveform decodes at: the loudness rate when the decode supplies the loudness (needsLoudness) and the
  *  recording is short enough, else 8 kHz for the bars only. Channels are not known before the decode, so two are
@@ -21,7 +21,12 @@ export function decodeRate(durationMs,needsLoudness){
   return needsLoudness&&durationMs/1000*LOUDNESS_RATE*2<=MOST_SAMPLES?LOUDNESS_RATE:BARS_RATE;
 }
 // Measuring a long decode takes a while; it runs in slices with a pause after each, so the page keeps answering clicks.
-export const nextTask=()=>new Promise(resolve=>setTimeout(resolve,0));
+// The pause is a message, not a timer: a browser slows timers to one a second in a hidden tab.
+export const nextTask=()=>new Promise(resolve=>{
+  const {port1,port2}=new MessageChannel();
+  port1.onmessage=()=>{port1.close();resolve();};
+  port2.postMessage(null);
+});
 const SLICE_STEPS=4000;           // 20 s of audio per slice
 // Further out, the short silence inside a word ("sam-p-le") starts to pass for the pause between words.
 const SEARCH_BEFORE_MS=100;       // look this far outside the words for their silence
