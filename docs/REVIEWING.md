@@ -150,7 +150,8 @@ waveform is still filling in, a cut whose pause lies in the part already shown (
 sound, and one further on follows the word times. What counts as a pause there is judged on the part already shown,
 which settles within the first seconds of speech. A build that stops before its end (the file can no longer be read,
 or another video is opened) takes its bars and its loudness with it: cuts follow the word times again until **Build
-waveform** has run. A file decoded whole decodes at 16 kHz up to 30 minutes and at 8 kHz
+waveform** has run. The cut shown for a selection keeps up as the loudness comes in or goes, so **Delete** saves the
+cut that is shown; times you set yourself stay as they are. A file decoded whole decodes at 16 kHz up to 30 minutes and at 8 kHz
 beyond, as before, so the tab holds no more audio than it did for an hour: online, its cut edges can clip a word's last
 soft sound. With the server's loudness in, the waveform decodes at 8 kHz for the bars only. Each join fades over 15 ms on the kept side in the
 exported cut list (`audioFadeMs`). The preview's fade ends 20 ms before each cut, because the

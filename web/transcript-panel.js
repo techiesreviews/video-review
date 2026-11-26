@@ -18,8 +18,12 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   // A note typed on a selection a reload could not bring back: the next selection on the same video gets it. A later
   // refusal with no note typed keeps it.
   let carriedNote='';
+  // The loudness under chosen words or a chosen join came in or went (a build's next stretch, a build that stopped, the
+  // server's measurement): the cut shown on the waveform is worked out again, so Delete saves the cut that is shown and
+  // Hear cut plays it. Times set with the handles stay as they are (bounds keeps them).
+  const showCutAgain=()=>{const chosen=editing.selection;if(chosen&&chosen.kind!=='source')waveform.setRange(editing.bounds());};
   // What is selected and what an edit does live in transcript-editing.js; this file draws it and passes clicks in.
-  const editing=createTranscriptEditing({saveTranscript:(v,data,options)=>backendRef.saveTranscript(v,data,options),request,updateRequest,cancelRequest,onError:error=>showError(error.message)});
+  const editing=createTranscriptEditing({saveTranscript:(v,data,options)=>backendRef.saveTranscript(v,data,options),request,updateRequest,cancelRequest,onError:error=>showError(error.message),onLoudnessChange:showCutAgain});
   // The local app measures each video's loudness on the server (backend.loudness); online, or when the server has no
   // ffmpeg, the waveform's own decode gives it once Build waveform has read the audio. A decode that is in while the
   // server still measures stands in until the server's result arrives (setLoudness). Without either, cuts fall back to
