@@ -260,10 +260,12 @@ try{
   await picker.setInputFiles(big);
   await page.evaluate(()=>{
     const file=document.querySelector('input[type=file][hidden]').files[0];window.blobs=[URL.createObjectURL(file),URL.createObjectURL(file)];
-    window.blobReads=[];const native=window.fetch;
+    window.blobReads=[];window.failReads=null;const native=window.fetch;
     window.fetch=async(url,init)=>{
-      const response=await native(url,init);
-      if(String(url).startsWith('blob:'))window.blobReads.push({range:init?.headers?.Range||null,status:response.status,bytes:Number(response.headers.get('Content-Length')||0)});
+      const chosen=String(url).startsWith('blob:'),start=Number(/^bytes=(\d+)-/.exec(init?.headers?.Range||'')?.[1]);
+      // failReads: [from, to), the part of the chosen file that cannot be read for now, as a disk that lets go would.
+      const response=chosen&&window.failReads&&start>=window.failReads[0]&&start<window.failReads[1]?new Response('',{status:500}):await native(url,init);
+      if(chosen)window.blobReads.push({range:init?.headers?.Range||null,status:response.status,bytes:Number(response.headers.get('Content-Length')||0)});
       return response;
     };
   });
@@ -291,7 +293,22 @@ try{
   await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===4);
   const stopped=(await onDisk()).find(c=>c.wordIds[0]==='W20');
   assert.deepEqual([stopped.startMs,stopped.endMs],[fromWords(20).startMs,fromWords(20).endMs],'a Delete after a stopped build is not held up, and goes by the word times');
-  await page.evaluate(()=>{window.blobReads=[];});
+  // A build that fails part way (TOOLS-481): the first stretch is read, then the file cannot be read (from the second
+  // stretch's second read on). It says so, offers Build waveform again and shows no bars. A Delete then follows the
+  // word times, also in the first stretch: no cut is placed by sound the waveform does not show.
+  const saidBefore=await page.evaluate(part=>{window.failReads=part;return window.statuses.length;},[layout[0].end,moovAt]);
+  await page.locator('#buildWaveform').click();
+  await page.waitForFunction(()=>!document.querySelector('#buildWaveform').disabled&&document.querySelector('#waveformStatus').textContent);
+  assert.equal(await page.locator('#waveformStatus').innerText(),'Could not read part of the local video.','a build that cannot read on says so');
+  const said=(await page.evaluate(()=>window.statuses)).slice(saidBefore).map(text=>/^Building waveform… (\d+)%$/.exec(text)?.[1]).filter(Boolean);
+  assert.deepEqual(said,[String(percent)],`its first stretch had come in, and no more: ${said}%`);
+  assert.equal(await page.locator('#buildWaveform').isVisible(),true,'Build waveform is offered again');
+  assert.equal(await barAt(9400),false,'and the bars of its first stretch are gone');
+  await word(5).click();await page.locator('.bar-delete').click();
+  await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===5);
+  const failed=(await onDisk()).find(c=>c.wordIds[0]==='W5');
+  assert.deepEqual([failed.startMs,failed.endMs],[fromWords(5).startMs,fromWords(5).endMs],'a Delete after a failed build goes by the word times, as the waveform shows no sound');
+  await page.evaluate(()=>{window.failReads=null;window.blobReads=[];});
   await page.locator('#buildWaveform').click();
   await page.waitForFunction(()=>document.querySelector('#buildWaveform').hidden,null,{timeout:120000});
   assert.equal(await barAt(45400),true,'the chosen file\'s bars, all the way in');
@@ -318,7 +335,7 @@ try{
   assert.equal(await page.locator('#buildWaveform').isHidden(),true,'and Build waveform is done');
   assert.equal(await barAt(45400),true,'its bars, all the way in');
   await word(10).click();await page.locator('.bar-delete').click();
-  await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===5);
+  await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===6);
   bySound((await onDisk()).find(c=>c.wordIds[0]==='W10'),10,'word 10\'s cut, on the whole file\'s decode,');
   // A 3 GB file whose sound cannot be read in stretches (here a fragmented MP4) says why and what to do instead.
   await choose(fragmented);

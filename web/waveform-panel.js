@@ -8,12 +8,18 @@ const stamp=ms=>clock(ms,{places:3,hours:false});
 // The largest file decoded whole: one the browser cannot read in stretches has to fit in memory at once.
 const WHOLE_LIMIT=512*1024*1024;
 /** needsLoudness: true when the decode would supply the cut edges' loudness, handed to onLoudness (an envelope, or a
- *  promise of one). Read in stretches, it comes in as it is measured: each envelope says how far it reaches (readyMs). */
-export function createWaveform({media,seek,pause,onRange,onAudition,onLoudness=()=>{},needsLoudness=()=>false}){
+ *  promise of one). Read in stretches, it comes in as it is measured: each envelope says how far it reaches (readyMs).
+ *  A read in stretches that stops before its end says so with onLoudnessLost(the media's address): the bars it drew
+ *  are gone, so the loudness handed over so far must not place a cut either. */
+export function createWaveform({media,seek,pause,onRange,onAudition,onLoudness=()=>{},onLoudnessLost=()=>{},needsLoudness=()=>false}){
   const panel=$('#waveformPanel'),canvas=$('#waveformCanvas'),wrap=$('#waveformWrap'),ctx=canvas.getContext('2d'),overview=$('#waveformOverview'),overviewWrap=$('#waveformOverviewWrap'),overviewCtx=overview.getContext('2d');
   let duration=0,fps=30,range=null,removed=[],peaks=null,peakMax=1,bucketMs=8,readyMs=Infinity,at=0,generation=0,loading=false,source=null,request=null,drag=null,view={startMs:0,endMs:1},spanMs=4000;
   let visible=true;try{visible=localStorage.getItem('techies-review-waveform')!=='false';}catch{}
   let zoomView=null;
+  // The media a read in stretches is handing its loudness over for, until it has handed over all of it.
+  let handing=null;
+  /** The bars of a read in stretches are dropped before its end: its loudness so far goes with them (TOOLS-481). */
+  function dropHanded(){if(!handing)return;const url=handing;handing=null;onLoudnessLost(url);}
   const zoomed=()=>view.endMs-view.startMs<duration-1;
   function positionPins(){const pins=$('#pins'),parent=visible?(range||zoomed()?overviewWrap:wrap):$('.track');if(pins&&pins.parentElement!==parent)parent.append(pins);}
   function visibility(){panel.hidden=!visible;document.body.classList.toggle('waveform-enabled',visible);$('#waveformToggle').setAttribute('aria-pressed',String(visible));positionPins();if(visible)draw();}
@@ -89,7 +95,7 @@ export function createWaveform({media,seek,pause,onRange,onAudition,onLoudness=(
     const bars=peakMeter(rate,total),meter=loudness?loudnessMeter(rate,total):null;
     peaks=bars.peaks;peakMax=.00001;bucketMs=bars.bucketMs;readyMs=0;source=url;
     // A Delete just after Build waits a moment for the first stretch's loudness, as it does for the server's.
-    let handOver=null;if(meter)onLoudness(new Promise(done=>{handOver=done;}));
+    let handOver=null;if(meter){handing=url;onLoudness(new Promise(done=>{handOver=done;}));}
     // The loudness so far is handed over after every stretch, so a cut is placed by the sound wherever the bars show it.
     // Part way in, that costs only the new steps (the meter keeps a running count of levels, not a sort of every step).
     const hand=done=>{
@@ -112,7 +118,8 @@ export function createWaveform({media,seek,pause,onRange,onAudition,onLoudness=(
         if(meter)hand(false);
         await nextTask();if(token!==generation)return;
       }
-      if(meter)hand(true);readyMs=Infinity;
+      if(meter){hand(true);handing=null;}
+      readyMs=Infinity;
     }finally{handOver?.(null);}
   }
   /** Decodes the whole file at once: for a file the browser cannot read in stretches (not an MP4 with AAC sound). */
@@ -151,7 +158,7 @@ export function createWaveform({media,seek,pause,onRange,onAudition,onLoudness=(
           // A file small enough to decode whole is decoded that way when reading it in stretches fails (the browser
           // refuses a stretch, or the sound has more than one piece): its bars so far go, and the whole file is read.
           if(token!==generation||error.name==='AbortError'||file.size>WHOLE_LIMIT)throw error;
-          track=null;peaks=null;source=null;readyMs=Infinity;draw();status('Reading audio on this computer…');
+          track=null;peaks=null;source=null;readyMs=Infinity;dropHanded();draw();status('Reading audio on this computer…');
         }
       }
       if(token!==generation)return;
@@ -160,8 +167,9 @@ export function createWaveform({media,seek,pause,onRange,onAudition,onLoudness=(
       status('');$('#buildWaveform').hidden=true;draw();
     }catch(error){
       if(token!==generation||error.name==='AbortError')return;
-      // A stretched read that stops part way drops the bars it drew, and Build waveform reads it again from the start.
-      peaks=null;source=null;readyMs=Infinity;draw();
+      // A stretched read that stops part way drops the bars it drew and the loudness it handed over, and Build waveform
+      // reads it again from the start.
+      peaks=null;source=null;readyMs=Infinity;dropHanded();draw();
       status(error.name==='EncodingError'?'This browser could not read the audio. Try an MP4 review copy.':error.message);
     }
     finally{if(token===generation){loading=false;$('#buildWaveform').disabled=false;}}
@@ -189,9 +197,9 @@ export function createWaveform({media,seek,pause,onRange,onAudition,onLoudness=(
   overview.onpointerdown=e=>{if(e.button!==0||e.target.closest('.pin'))return;pause();const rect=overview.getBoundingClientRect();range=null;zoomView=null;onRange(null);seek(Math.max(0,Math.min(duration,(e.clientX-rect.left)/rect.width*duration)));draw();};
   for(const node of [canvas,overview])node.onkeydown=e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();seek(e.key==='Home'?0:e.key==='End'?duration:Math.max(0,Math.min(duration,at+(e.key==='ArrowRight'?1:-1)*(e.shiftKey?5:1)*1000/fps)));}};
   new ResizeObserver(draw).observe(wrap);
-  media.addEventListener('emptied',()=>{generation++;request?.abort();loading=false;peaks=null;source=null;readyMs=Infinity;$('#buildWaveform').hidden=false;$('#buildWaveform').disabled=false;status('');draw();});
+  media.addEventListener('emptied',()=>{generation++;request?.abort();loading=false;peaks=null;source=null;readyMs=Infinity;dropHanded();$('#buildWaveform').hidden=false;$('#buildWaveform').disabled=false;status('');draw();});
   return {
-    load(video){generation++;request?.abort();duration=video?.durationMs||0;fps=video?.fps||30;at=0;range=null;zoomView=null;removed=[];peaks=null;source=null;readyMs=Infinity;loading=false;$('#buildWaveform').hidden=false;$('#buildWaveform').disabled=!video;status('');this.setRange(null);draw();},
+    load(video){generation++;request?.abort();duration=video?.durationMs||0;fps=video?.fps||30;at=0;range=null;zoomView=null;removed=[];peaks=null;source=null;readyMs=Infinity;dropHanded();loading=false;$('#buildWaveform').hidden=false;$('#buildWaveform').disabled=!video;status('');this.setRange(null);draw();},
     setRange(next){if(next&&!drag&&zoomView&&zoomView.endMs-zoomView.startMs>=duration-1)zoomView=null;range=next;if(range&&zoomView&&!drag&&(range.startMs<view.startMs||range.endMs>view.endMs))zoomView=waveformWindow(duration,(range.startMs+range.endMs)/2,range,view.endMs-view.startMs);$('#waveformRange').hidden=!range;if(range){$('#waveformIn').value=(range.startMs/1000).toFixed(3);$('#waveformOut').value=(range.endMs/1000).toFixed(3);$('#waveformCutLength').textContent=((range.endMs-range.startMs)/1000).toFixed(3)+' s to remove';}$('#auditionWaveformCut').disabled=!range;draw();},
     setCuts(edits){removed=removedRanges(edits);draw();},
     tick(ms){const next=Math.floor(ms/40);if(next===Math.floor(at/40))return;at=ms;if(zoomView&&!drag&&(at<view.startMs||at>view.endMs))zoomView=waveformWindow(duration,at,null,view.endMs-view.startMs);draw();},
