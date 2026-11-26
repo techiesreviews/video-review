@@ -178,6 +178,9 @@ video{display:block;width:100%;height:100%;object-fit:contain;background:#000;cu
 .transcript-word.removed-word{text-decoration:line-through 2px #c4705f;color:var(--faint);background:#fff0f0;border-radius:0}
 .transcript-space.removed{background:#fff0f0}
 .transcript-word.removed-word.selected,.transcript-space.removed.selected{background:#5a55d6;color:#fff;box-shadow:none}
+/* The playing word never looks like a selection, in either view (TOOLS-473): on its own it has a soft ground and an
+   accent underline (.transcript-word.spoken); inside a selection it keeps the band and gets a white underline. */
+.transcript-word.spoken.selected{box-shadow:inset 0 -3px 0 #fff}
 .transcript-pause.removed-pause{border-style:dashed}
 .transcript-notice{margin:0;padding:10px 20px;border-top:1px solid var(--line);font-size:12px;font-weight:500;color:var(--text);flex-shrink:0}.transcript-notice:empty{padding:0;border-top:0}
 .cut-preview-bar{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:10px 20px;border-top:1px solid var(--line);font-size:12px;flex-shrink:0}
@@ -198,7 +201,6 @@ video{display:block;width:100%;height:100%;object-fit:contain;background:#000;cu
 .transcript-only .transcript-text{font-size:28px;line-height:1.85;padding-left:28px;padding-right:28px;flex:1 1 0;max-height:none;min-height:0}
 .transcript-only .transcript-selection{max-height:240px;overflow:auto;min-height:0}
 .transcript-only .transcript-word{border-radius:5px;padding:2px 3px}.transcript-only .transcript-word.selected,.transcript-only .transcript-word.removed-word{border-radius:0}
-.transcript-only .transcript-word.spoken{color:#fff;background:var(--accent);box-shadow:none}
 .transcript-only .transcript-paragraph{margin-bottom:28px;padding-left:75px}
 .transcript-only .paragraph-time{font-size:10px;top:14px}
 .transcript-only .transcript-join{font-size:12px;padding:5px 7px}

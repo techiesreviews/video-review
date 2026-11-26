@@ -817,6 +817,27 @@ test('loudness from a waveform decode goes when a new render replaces the file; 
   assert.ok(!editing.decodedLoudness('v'));
 });
 
+test('a decode that comes in while the server still measures stands in for it; the server\'s measurement wins when it arrives (TOOLS-473)',async()=>{
+  // The decoded loudness here has no pauses at all, so a Delete cut on it lands somewhere else than on the server's.
+  const flat=()=>envelope(new Float32Array(VIDEO.durationMs/HOP_MS).fill(-20));
+  const cutWith=async(...steps)=>{const {editing}=setup();for(const step of steps)await step(editing);editing.selectWords(1);await editing.remove();return editing.edits().map(e=>[e.startMs,e.endMs]);};
+  const onServer=await cutWith(e=>e.setLoudness('v',loudness()));
+  assert.notDeepEqual(await cutWith(e=>e.setLoudness('v',flat(),{from:'blob:a'})),onServer,'the two loudnesses cut differently');
+  const server=held();
+  const raced=await cutWith(
+    e=>e.setLoudness('v',server.promise),
+    // As the panel does when Build waveform finishes first: the server has no loudness yet, so the decode is taken.
+    e=>{assert.ok(!e.hasLoudness('v'));e.setLoudness('v',flat(),{from:'blob:a'});assert.ok(e.hasLoudness('v'));},
+    async e=>{server.resolve(loudness());await server.promise;assert.ok(!e.decodedLoudness('v'),'the server measurement replaces the decode');},
+  );
+  assert.deepEqual(raced,onServer,'the Delete after it cuts on the server\'s measurement');
+  // A server with nothing to give (no ffmpeg) leaves the decode in place.
+  const none=held(),{editing}=setup();
+  editing.setLoudness('v',none.promise);editing.setLoudness('v',flat(),{from:'blob:a'});
+  none.resolve(null);await none.promise;
+  assert.ok(editing.hasLoudness('v')&&editing.decodedLoudness('v'),'the decode stays');
+});
+
 // Saved history after a click-back (TOOLS-463): a cut holds, of the cuts it took in, only what is still cut under it.
 
 test('a pause cut joined into a word Delete stays in its history when one of the words comes back, so Undo puts it back',async()=>{
