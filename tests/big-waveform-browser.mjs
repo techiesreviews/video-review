@@ -96,24 +96,39 @@ try{
   // A Delete now: in the part that is in, the cut goes by the sound; past it, by the word times, as with no loudness.
   const transcript={words};
   const fromWords=i=>removalBounds(transcript,wordSelection(words,i,i),durationMs,fps,null);
+  // Word i sounds from i*1500 to i*1500+950 ms. A cut placed by the sound takes all of that and lands its edges in the
+  // pauses, so it is not the cut the word times alone give (those cover the sound here too, with a fixed margin).
+  const bySound=(cut,i,what)=>{
+    const words=fromWords(i);
+    assert.ok(cut&&cut.startMs<=i*1500&&cut.endMs>=i*1500+950,`${what} takes its whole sound: ${cut?.startMs}-${cut?.endMs}`);
+    assert.notDeepEqual([cut.startMs,cut.endMs],[words.startMs,words.endMs],`${what} is placed by the sound, not by the word times`);
+  };
   await word(3).click();await page.locator('.bar-delete').click();
   await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===1);
   await word(40).click();await page.locator('.bar-delete').click();
   await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===2);
   let cuts=await onDisk();
   const near=cuts.find(c=>c.wordIds[0]==='W3'),far=cuts.find(c=>c.wordIds[0]==='W40');
-  assert.ok(near.startMs<=4500&&near.endMs>=4950,`word 3's cut takes its whole sound, from the pause before to the pause after: ${near.startMs}-${near.endMs}`);
+  bySound(near,3,'word 3\'s cut');
   assert.deepEqual([far.startMs,far.endMs],[fromWords(40).startMs,fromWords(40).endMs],'word 40\'s cut follows the word times while its sound is not in');
 
-  // The rest comes in a stretch at a time, each further right.
-  const seen=[percent];
+  // The rest comes in a stretch at a time, each further right. Late in it, a Delete on a word the bars already show goes
+  // by the sound too: the loudness keeps up with the bars.
+  const seen=[percent];let midway=null;
   for(;;){
     const done=await page.evaluate(()=>{window.releasePauses();window.heldPauses=[];return document.querySelector('#buildWaveform').hidden;});
     if(done)break;
     await page.waitForFunction(()=>window.heldPauses?.length>0||document.querySelector('#buildWaveform').hidden);
     const text=await page.locator('#waveformStatus').innerText(),match=/^Building waveform… (\d+)%$/.exec(text);
-    if(match)seen.push(Number(match[1]));
+    if(!match)continue;
+    seen.push(Number(match[1]));
+    if(Number(match[1])>=80&&!midway){
+      await word(33).click();await page.locator('.bar-delete').click();
+      await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===3);
+      midway=(await onDisk()).find(c=>c.wordIds[0]==='W33');
+    }
   }
+  bySound(midway,33,'word 33\'s cut, at 50 s with 60 s in,');
   await page.evaluate(()=>window.releasePauses());
   assert.ok(seen.length>=3&&seen.every((n,i)=>!i||n>seen[i-1]),`it fills in from left to right: ${seen.join(', ')}%`);
   assert.equal(await page.locator('#waveformStatus').innerText(),'','the waveform is built');
@@ -132,11 +147,11 @@ try{
 
   // With all of the sound in: click word 40 back, and its new Delete goes by the sound too.
   await word(40).click();
-  await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===1);
-  await word(40).click();await page.locator('.bar-delete').click();
   await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===2);
+  await word(40).click();await page.locator('.bar-delete').click();
+  await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===3);
   cuts=await onDisk();const later=cuts.find(c=>c.wordIds[0]==='W40');
-  assert.ok(later.startMs<=60000&&later.endMs>=60950,`word 40's cut takes its whole sound now: ${later.startMs}-${later.endMs}`);
+  bySound(later,40,'word 40\'s cut, once its sound is in,');
   // Its grey cut mark is on the waveform: the darker band above the bars.
   assert.deepEqual(await pixels((later.startMs+later.endMs)/2,18,1),[0x12,0x11,0x18,255],'the cut shows as a grey band');
   assert.deepEqual(await pixels(52400,18,1),[0,0,0,0],'and none where nothing is cut');
@@ -163,8 +178,52 @@ try{
   assert.ok(lineUp.size>PAD,'read from the big copy');
   assert.ok(lineUp.shifts.every(ratio=>ratio>1.5),`no shift lines them up better: ${lineUp.shifts.map(r=>r.toFixed(2))}`);
   assert.ok(lineUp.differ<lineUp.steps/1000,`quiet and loud agree on all but ${lineUp.differ} of ${lineUp.steps} steps`);
+
+  // Online, the video is a file chosen on this computer, played from a blob: URL. The same 3 GB file, chosen that way:
+  // a build stopped part way by the video changing leaves no bars and no stuck Delete, and a build to the end reads the
+  // chosen file in small ranges too.
+  const picker=await page.evaluateHandle(()=>{const input=Object.assign(document.createElement('input'),{type:'file',hidden:true});document.body.append(input);return input;});
+  await picker.setInputFiles(big);
+  await page.evaluate(()=>{
+    const file=document.querySelector('input[type=file][hidden]').files[0];window.blobs=[URL.createObjectURL(file),URL.createObjectURL(file)];
+    window.blobReads=[];const native=window.fetch;
+    window.fetch=async(url,init)=>{
+      const response=await native(url,init);
+      if(String(url).startsWith('blob:'))window.blobReads.push({range:init?.headers?.Range||null,status:response.status,bytes:Number(response.headers.get('Content-Length')||0)});
+      return response;
+    };
+  });
+  const play=async i=>{
+    await page.evaluate(i=>{document.querySelector('video').src=window.blobs[i];},i);
+    await page.waitForFunction(i=>{const video=document.querySelector('video');return video.currentSrc===window.blobs[i]&&video.readyState>=1;},i);
+  };
+  await play(0);
+  assert.equal(await page.locator('#buildWaveform').isVisible(),true,'a new video asks for its waveform again');
+  await page.evaluate(()=>{window.heldPauses=[];});
+  await page.locator('#buildWaveform').click();
+  await page.waitForFunction(()=>window.heldPauses?.length>0);
+  assert.match(await page.locator('#waveformStatus').innerText(),/^Building waveform… \d+%$/,'the chosen file builds a stretch at a time');
+  await play(1);
+  await page.evaluate(()=>window.releasePauses());
+  await page.waitForFunction(()=>!window.heldPauses?.length);
+  assert.equal(await page.locator('#waveformStatus').innerText(),'','a stopped build says nothing');
+  assert.equal(await page.locator('#buildWaveform').isEnabled(),true,'and Build waveform can start again');
+  assert.equal(await barAt(9400),false,'its bars are gone with the video they came from');
+  await word(20).click();await page.locator('.bar-delete').click();
+  await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===4);
+  const stopped=(await onDisk()).find(c=>c.wordIds[0]==='W20');
+  assert.deepEqual([stopped.startMs,stopped.endMs],[fromWords(20).startMs,fromWords(20).endMs],'a Delete after a stopped build is not held up, and goes by the word times');
+  await page.evaluate(()=>{window.blobReads=[];});
+  await page.locator('#buildWaveform').click();
+  await page.waitForFunction(()=>document.querySelector('#buildWaveform').hidden,null,{timeout:120000});
+  assert.equal(await barAt(45400),true,'the chosen file\'s bars, all the way in');
+  const blobReads=await page.evaluate(()=>window.blobReads),blobTotal=blobReads.reduce((n,read)=>n+read.bytes,0);
+  assert.ok(blobReads.length>3&&blobReads.every(read=>read.range&&read.status===206&&read.bytes<=4*1024*1024),`the chosen file is read in small ranges: ${JSON.stringify(blobReads.slice(0,3))}`);
+  assert.ok(blobTotal<20*1024*1024,`${(blobTotal/1024/1024).toFixed(1)} MB of the chosen file read in all`);
+  const allStatuses=await page.evaluate(()=>window.statuses);
+  assert.ok(!allStatuses.some(text=>/smaller|large/i.test(text)),`no "file too large" message: ${JSON.stringify([...new Set(allStatuses)])}`);
   assert.deepEqual(errors,[],'no page errors');
-  console.log(`PASS: a 3 GB review copy builds its waveform in ${seen.length} stretches (${seen.join(', ')}%), reads ${(total/1024/1024).toFixed(1)} MB of it, cuts on the part that is in, and lines up with the whole decode (${lineUp.differ} of ${lineUp.steps} loudness steps differ).`);
+  console.log(`PASS: a 3 GB review copy builds its waveform in ${seen.length} stretches (${seen.join(', ')}%), reads ${(total/1024/1024).toFixed(1)} MB of it, cuts on the part that is in, and lines up with the whole decode (${lineUp.differ} of ${lineUp.steps} loudness steps differ); chosen as a file, it stops cleanly part way and reads ${(blobTotal/1024/1024).toFixed(1)} MB in ranges.`);
 }finally{
   await browser?.close();server.kill();
   await rm(temp,{recursive:true,force:true});

@@ -89,12 +89,12 @@ export function createWaveform({media,seek,pause,onRange,onAudition,onLoudness=(
     const bars=peakMeter(rate,total),meter=loudness?loudnessMeter(rate,total):null;
     peaks=bars.peaks;peakMax=.00001;bucketMs=bars.bucketMs;readyMs=0;source=url;
     // A Delete just after Build waits a moment for the first stretch's loudness, as it does for the server's.
-    let handOver=null,nextHand=0;if(meter)onLoudness(new Promise(done=>{handOver=done;}));
-    // Measuring the loudness so far sorts every step that is in, so on a long recording it is handed over less often.
+    let handOver=null;if(meter)onLoudness(new Promise(done=>{handOver=done;}));
+    // The loudness so far is handed over after every stretch, so a cut is placed by the sound wherever the bars show it.
+    // Part way in, that costs only the new steps (the meter keeps a running count of levels, not a sort of every step).
     const hand=done=>{
-      const begin=performance.now(),env=meter.envelope(done?total:Math.round(readyMs/1000*rate),done);
+      const env=meter.envelope(done?total:Math.round(readyMs/1000*rate),done);
       if(handOver){handOver(env);handOver=null;}else onLoudness(env);
-      const now=performance.now();nextHand=now+Math.max(2000,20*(now-begin));
     };
     try{
       for(const [first,last] of stretches(track)){
@@ -109,7 +109,7 @@ export function createWaveform({media,seek,pause,onRange,onAudition,onLoudness=(
         bars.add(channels,from);meter?.add(channels,from);readyMs=Math.min(duration,to/rate*1000);
         for(let i=Math.floor(from/rate*1000/bucketMs);i<peaks.length&&i*bucketMs<readyMs;i++)peakMax=Math.max(peakMax,peaks[i]);
         status(`Building waveform… ${Math.floor(readyMs/duration*100)}%`);draw();
-        if(meter&&(handOver||performance.now()>=nextHand))hand(false);
+        if(meter)hand(false);
         await nextTask();if(token!==generation)return;
       }
       if(meter)hand(true);readyMs=Infinity;

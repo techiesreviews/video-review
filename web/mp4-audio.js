@@ -104,19 +104,25 @@ function sampleEntryConfig(bytes,entry){
  * starts `delayMs` after the video does. durationMs is how long it plays.
  */
 export function soundTrack(moov){
-  const root=boxes(moov)[0];if(root?.type!=='moov')throw new NotReadable('The video file\'s index is damaged.');
+  const damaged=()=>new NotReadable('The video file\'s index is damaged.');
+  const root=boxes(moov)[0];if(root?.type!=='moov')throw damaged();
+  // A fragmented MP4 (OBS, a browser's recorder) has an index of empty tables; its frames are listed in each fragment.
+  if(child(moov,root,'mvex'))throw new NotReadable('The video file is a fragmented MP4.');
   const mvhd=child(moov,root,'mvhd');
   const movieScale=mvhd?u32(moov,mvhd.body+(moov[mvhd.body]===1?20:12)):1000;
+  // The first sound track is the one read, as the video player plays the first one too.
   for(const trak of boxes(moov,root.body,root.end).filter(b=>b.type==='trak')){
     const mdia=child(moov,trak,'mdia'),hdlr=mdia&&child(moov,mdia,'hdlr');
     if(!hdlr||type(moov,hdlr.body+8)!=='soun')continue;
-    const mdhd=child(moov,mdia,'mdhd'),stbl=child(moov,child(moov,mdia,'minf'),'stbl');
+    const mdhd=child(moov,mdia,'mdhd'),minf=child(moov,mdia,'minf'),stbl=minf&&child(moov,minf,'stbl');
+    const box=name=>{const found=stbl&&child(moov,stbl,name);if(!found)throw damaged();return found;};
+    if(!mdhd)throw damaged();
     const scale=u32(moov,mdhd.body+(moov[mdhd.body]===1?20:12));
-    const box=name=>child(moov,stbl,name);
-    const stsd=box('stsd'),entry=boxes(moov,stsd.body+8,stsd.end)[0];
+    const stsd=box('stsd'),entry=boxes(moov,stsd.body+8,stsd.end)[0];if(!entry)throw damaged();
     const config=audioConfig(sampleEntryConfig(moov,entry)??[]);
     // Frame sizes.
     const stsz=box('stsz'),fixed=u32(moov,stsz.body+4),count=u32(moov,stsz.body+8);
+    if(!count)throw new NotReadable('The video file\'s index lists no sound.');
     const sizes=new Uint32Array(count);for(let i=0;i<count;i++)sizes[i]=fixed||u32(moov,stsz.body+12+i*4);
     // Frame starts on the track's clock.
     const stts=box('stts'),starts=new Float64Array(count+1);
@@ -125,7 +131,7 @@ export function soundTrack(moov){
       for(let k=0;k<times&&i<count;k++,i++)starts[i+1]=starts[i]+delta;
     }
     // Frame offsets: chunk by chunk, each chunk's frames one after another.
-    const stco=box('stco'),co64=box('co64'),table=stco||co64;if(!table)throw new NotReadable('The video file\'s index is damaged.');
+    const stco=stbl&&child(moov,stbl,'stco'),co64=stbl&&child(moov,stbl,'co64'),table=stco||co64;if(!table)throw damaged();
     const chunks=u32(moov,table.body+4),chunkAt=c=>stco?u32(moov,stco.body+8+c*4):u64(moov,co64.body+8+c*8);
     const stsc=box('stsc'),runs=u32(moov,stsc.body+4),offsets=new Float64Array(count);
     for(let r=0,i=0;r<runs;r++){

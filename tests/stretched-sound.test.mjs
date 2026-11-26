@@ -49,7 +49,21 @@ test('loudness part way in reaches only as far as steps whose whole window is in
   assert.equal(part.readyMs,steps*HOP_MS);
   assert.ok(part.readyMs<=ready/rate*1000);
   for(let i=0;i<steps;i++)assert.ok(Math.abs(part.db[i]-whole.db[i])<1e-3,`step ${i} is final`);
-  assert.deepEqual(meter.envelope(0),{...envelope(new Float32Array(0)),readyMs:0},'nothing in yet');
+  assert.deepEqual(loudnessMeter(rate,channels[0].length).envelope(0),{...envelope(new Float32Array(0)),readyMs:0},'nothing in yet');
+});
+
+test('loudness part way in is cheap enough to hand over after every stretch: no copy of the steps, no sort, the same quiet line',async()=>{
+  const rate=LOUDNESS_RATE,channels=sound(rate*9),meter=loudnessMeter(rate,channels[0].length),parts=[];
+  for(const [part,at] of pieces(channels,[rate*2]))meter.add(part,at),parts.push(meter.envelope(at+part[0].length));
+  // Each envelope is a view of the meter's own steps, so handing one over does not grow with the recording.
+  assert.ok(parts.every(part=>part.db.buffer===parts[0].db.buffer),'the steps are not copied');
+  for(const part of parts){
+    const exact=envelope(Float32Array.from(part.db));
+    for(const name of ['floor','peak','threshold'])assert.ok(Math.abs(part[name]-exact[name])<0.02,`${name} at ${part.readyMs} ms: ${part[name]} vs ${exact[name]}`);
+  }
+  // A later stretch does not change what an earlier envelope says.
+  const first=Float32Array.from(parts[0].db);meter.add(channels.map(c=>c.subarray(0,rate)),0);
+  assert.deepEqual([...parts[0].db],[...first]);
 });
 
 test('a stretched read decodes at the loudness rate whenever it supplies the loudness, whatever the length',()=>{
