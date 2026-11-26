@@ -177,10 +177,10 @@ export function cleanCut(words,first,last,env,{fps=30,durationMs,clear=[false,fa
   const inside=Math.min(SEARCH_INSIDE_MS,length*0.3);
   const loStart=before?Math.max(before.startMs+(before.endMs-before.startMs)/2,s-SEARCH_BEFORE_MS):Math.max(0,s-SEARCH_BEFORE_MS);
   const hiEnd=after?Math.min(after.startMs+(after.endMs-after.startMs)/2,e+SEARCH_BEFORE_MS):Math.min(durationMs,e+SEARCH_BEFORE_MS);
-  // Nor past the middle of the first or last word itself: a short one would take the pause on its far side for its edge.
   // Loudness still coming in (readyMs, see loudnessMeter) cannot place a cut whose search reaches past what is in: such
   // a cut follows the word times (null), as with no loudness at all.
   if(env.readyMs!=null&&hiEnd+LONGEST_PAUSE_MS+step>env.readyMs)return null;
+  // Nor past the middle of the first or last word itself: a short one would take the pause on its far side for its edge.
   const insideFirst=Math.min(inside,(words[first].endMs-s)/2),insideLast=Math.min(inside,(e-words[last].startMs)/2);
   const g1=findGap(env,s,loStart,s+insideFirst),g2=findGap(env,e,e-insideLast,hiEnd);
   // Both edges in one pause: the words make no sound the loudness can see, so it cannot place the cut (null).
