@@ -135,13 +135,13 @@ deleted); other cuts remain. Playback and the exported cut list still skip the d
 
 Drag across words, or click one and Shift+click another, to select whole words; the selection shows as one band in the
 transcript and one on the waveform. The playing word has a soft ground with an underline instead, so it never looks
-selected; inside a selection it shows as a white underline. **Delete** makes one cut, and takes in any deleted words next to or inside it. The
-cut's edges come from the sound itself: the real pause around the words (or the quietest moment, when words run
-together), keeping the longer of the two pauses, on whole video frames. The local server measures each video's
-loudness once and keeps it; online, the decoded waveform supplies it, decoded at the same 16 kHz the server measures
-at, so a word's last soft sound ("s", "f", "th") is kept the same way. Each join fades over 15 ms on the kept side in
-the exported cut list (`audioFadeMs`). The preview's fade ends 20 ms before each cut, because the player's clock trails
-the sound it has already sent, so the preview never plays sound from inside a cut.
+selected; inside a selection it shows as a white underline. **Delete** makes one cut, and takes in any deleted words
+next to or inside it. The cut's edges come from the sound itself: the real pause around the words (or the quietest
+moment, when words run together), keeping the longer of the two pauses, on whole video frames. The local server
+measures each video's loudness once and keeps it; online, the decoded waveform supplies it, decoded at the same 16 kHz
+the server measures at, so a word's last soft sound ("s", "f", "th") is kept the same way. Each join fades over 15 ms
+on the kept side in the exported cut list (`audioFadeMs`). The preview's fade ends 20 ms before each cut, because the
+player's clock trails the sound it has already sent, so the preview never plays sound from inside a cut.
 
 The attached transcript may also contain an `original` section with the full source recording's word timings,
 duration and source identity. Its word IDs must match those in the derived review transcript. This section is
