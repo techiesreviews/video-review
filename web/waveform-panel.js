@@ -145,7 +145,17 @@ export function createWaveform({media,seek,pause,onRange,onAudition,onLoudness=(
         if(file?.size>WHOLE_LIMIT)throw error.noSound?error:new NotReadable(`${error.message} Make a review copy of this video to build its waveform.`);
       }
       if(token!==generation)return;
-      if(track)await stretched(url,file,track,token,Offline);else await whole(url,request.signal,token,Offline);
+      if(track){
+        try{await stretched(url,file,track,token,Offline);}
+        catch(error){
+          // A file small enough to decode whole is decoded that way when reading it in stretches fails (the browser
+          // refuses a stretch, or the sound has more than one piece): its bars so far go, and the whole file is read.
+          if(token!==generation||error.name==='AbortError'||file.size>WHOLE_LIMIT)throw error;
+          track=null;peaks=null;source=null;readyMs=Infinity;draw();status('Reading audio on this computer…');
+        }
+      }
+      if(token!==generation)return;
+      if(!track)await whole(url,request.signal,token,Offline);
       if(token!==generation)return;
       status('');$('#buildWaveform').hidden=true;draw();
     }catch(error){
