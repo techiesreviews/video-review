@@ -10,6 +10,8 @@ const CONTAINERS=new Set(['moov','trak','mdia','minf','stbl','edts']);
 const MOST_INDEX_BYTES=256*1024*1024;
 // About four days of AAC at 48 kHz (1024 samples a frame); a count past it is a damaged index, not a recording.
 const MOST_FRAMES=2**24;
+// The largest frame an ADTS header can carry: its 13-bit length counts the 7-byte header too.
+const LARGEST_FRAME=8191-7;
 // AAC sampling frequencies by index (ISO 14496-3), as an ADTS header names them.
 const RATES=[96000,88200,64000,48000,44100,32000,24000,22050,16000,12000,11025,8000,7350];
 // An AAC frame decodes with the help of the one before it, so each stretch starts this many frames early and the
@@ -140,8 +142,9 @@ export function soundTrack(moov){
     const runFirst=r=>r<runs?u32(moov,stsc.body+8+r*12)-1:chunks,perChunk=r=>u32(moov,stsc.body+12+r*12);
     let chunked=0;for(let r=0;r<runs;r++)chunked+=Math.max(0,Math.min(chunks,runFirst(r+1))-runFirst(r))*perChunk(r);
     if(timed<count||chunked<count)throw damaged();
-    // Frame sizes.
-    const sizes=new Uint32Array(count);for(let i=0;i<count;i++)sizes[i]=fixed||u32(moov,stsz.body+12+i*4);
+    // Frame sizes. A frame larger than its ADTS header can carry is no AAC frame: refused here, before it is read and copied.
+    const sizes=new Uint32Array(count);
+    for(let i=0;i<count;i++){sizes[i]=fixed||u32(moov,stsz.body+12+i*4);if(sizes[i]>LARGEST_FRAME)throw damaged();}
     // Frame starts on the track's clock.
     const starts=new Float64Array(count+1);
     for(let e=0,i=0;e<timeRuns;e++){
@@ -175,7 +178,7 @@ export function soundTrack(moov){
 /** A 7-byte ADTS header for one AAC frame of `size` bytes. */
 export function adtsHeader({profile,frequency,channels},size){
   const length=size+7;
-  if(length>8191)throw new NotReadable('This video\'s sound has a frame too large for this reader.');
+  if(size>LARGEST_FRAME)throw new NotReadable('This video\'s sound has a frame too large for this reader.');
   return Uint8Array.of(0xFF,0xF1,profile<<6|frequency<<2|channels>>2,(channels&3)<<6|length>>11,length>>3&255,(length&7)<<5|0x1F,0xFC);
 }
 
