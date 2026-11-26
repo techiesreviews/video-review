@@ -233,7 +233,9 @@ test('playback starts the fade once, ahead of the join, and jumps on time',t=>{
   t.mock.timers.enable({apis:['setTimeout']});
   const {video,calls,playback}=fakePlayer(1.95);
   playback.tick();
-  assert.deepEqual(calls,[['out',35]],'The fade is scheduled to finish on the join.');
+  // The player's clock can trail the sound it has already handed on, so the fade ends 20 ms before the join: no sound
+  // from inside the cut gets out (the browser check plays a marker tone inside each cut and listens for it).
+  assert.deepEqual(calls,[['out',15]],'The fade is scheduled to finish just before the join.');
   playback.tick();assert.equal(calls.length,1,'Another frame does not schedule it again.');
   video.time=2;t.mock.timers.tick(50);
   assert.deepEqual(video.seeks,[3]);assert.equal(calls.length,1);
@@ -243,7 +245,7 @@ test('a frame that lands on the join before the timer does not restart a fade in
   t.mock.timers.enable({apis:['setTimeout']});
   const {video,calls,playback}=fakePlayer(1.95);
   playback.tick();video.time=2;playback.tick();
-  assert.deepEqual(calls,[['out',35]],'Restarting here would bring the sound back to full volume and click.');
+  assert.deepEqual(calls,[['out',15]],'Restarting here would bring the sound back to full volume and click.');
   assert.deepEqual(video.seeks,[3]);
 });
 
@@ -309,4 +311,24 @@ test('with the cuts off, playing straight through a removal never jumps',t=>{
   const playback=createCutPlayback({video,removals:()=>playbackRemovals(false,edits),fps:()=>30,fade:{fadeOut:()=>calls.push('out'),fadeIn:()=>calls.push('in'),reset:()=>calls.push('reset')}});
   playback.tick();t.mock.timers.tick(50);
   assert.deepEqual(video.seeks,[]);assert.deepEqual(calls,[]);
+});
+
+test('the export keeps exactly the ranges the preview plays, with a fade on the kept side of each join',async()=>{
+  // Two word cuts found in the audio (TOOLS-463), at a whole and at a broken frame rate.
+  const {envelope,HOP_MS}=await import('../web/cut-boundary.js');
+  const {removalBounds,exportCut}=await import('../web/cut-core.js');
+  const {wordSelection}=await import('../web/transcript-core.js');
+  const words=Array.from({length:9},(_,i)=>({id:'W'+i,text:'w'+i,startMs:i*1000+100,endMs:i*1000+800}));
+  for(const fps of [30,29.97]){
+    // A real video is a whole number of frames long: 300 frames.
+    const durationMs=Math.round(300*1000/fps),db=new Float32Array(durationMs/HOP_MS).fill(-80);
+    for(const w of words)for(let i=(w.startMs+30)/HOP_MS;i<(w.endMs-20)/HOP_MS;i++)db[i]=-20;
+    const env=envelope(db);
+    const transcript={revision:'r',words},draftEdits=[[2,3],[6,6]].map(([a,b],n)=>({id:'e'+n,...removalBounds(transcript,wordSelection(words,a,b),durationMs,fps,env)}));
+    const cut=exportCut({...transcript,draftEdits},{id:'v',fps,durationMs});
+    const exported=cut.keepRanges.map(([a,b])=>[Math.round(a*1000/fps),Math.round(b*1000/fps)]);
+    assert.deepEqual(exported,keptRanges(durationMs,draftEdits),`${fps} fps: the export plays what the preview plays`);
+    assert.equal(cut.audioFadeMs,JOIN_FADE_MS,'the export carries the preview\'s fade');
+    assert.equal(cut.audioFadeSide,'kept','the fade sits on the kept side of each join, in the export as in the preview');
+  }
 });

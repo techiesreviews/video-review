@@ -6,7 +6,7 @@
   "scripts": {
     "studio:remotion": "remotion studio plates/remotion/src/index.ts",
     "studio:hyperframes": "hyperframes preview plates/hyperframes",
-    "check:browser": "node tests/transcript-panel-browser.mjs && node tests/listening-browser.mjs && node tests/cut-preview-browser.mjs && node tests/overview-browser.mjs",
+    "check:browser": "node tests/backend-browser.mjs && node tests/sync-browser.mjs && node tests/join-fade-browser.mjs && node tests/transcript-panel-browser.mjs && node tests/listening-browser.mjs && node tests/cut-preview-browser.mjs && node tests/overview-browser.mjs",
     "test:cut": "node --test tests/transcript.test.mjs tests/cut-preview.test.mjs && node tests/cut-preview-browser.mjs"
   },
   "overrides": {

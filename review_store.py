@@ -295,17 +295,32 @@ def _clean_transcript(video,data):
         result['original']={'durationMs':round(o['durationMs']),'label':str(o.get('label','Original recording'))[:120],'sourceId':str(o.get('sourceId',''))[:120],'words':raw}
     edits=data.get('draftEdits',[])
     if not isinstance(edits,list) or len(edits)>5000:raise ValueError('Invalid preview cuts')
-    result['draftEdits']=[];edit_ids=set()
-    for edit in edits:
-        if not isinstance(edit,dict):raise ValueError('Invalid preview cut')
-        eid=edit.get('id');start=edit.get('startMs');end=edit.get('endMs');word_ids=edit.get('wordIds')
-        if not isinstance(eid,str) or not eid or len(eid)>120 or eid in edit_ids:raise ValueError('Invalid preview cut id')
-        if any(isinstance(t,bool) or not isinstance(t,(int,float)) or not math.isfinite(t) for t in [start,end]) or not 0<=start<end<=video['durationMs'] or round(end)<=round(start):raise ValueError('Preview cut lies outside video')
-        if not isinstance(word_ids,list) or any(not isinstance(w,str) or len(w)>120 for w in word_ids):raise ValueError('Invalid removed word IDs')
-        edit_ids.add(eid)
-        result['draftEdits'].append({'id':eid,'startMs':round(start),'endMs':round(end),'wordIds':word_ids,
-            'quote':str(edit.get('quote',''))[:LIMITS['quoteLength']],'kind':'pause' if edit.get('kind')=='pause' else 'words',
-            'commentId':edit.get('commentId') if isinstance(edit.get('commentId'),str) else None})
+    held=[0]
+
+    # takenIn: the cuts one Delete joined into its own cut, kept only so its Undo puts them back; they cut nothing.
+    def edit_list(edits,depth):
+        clean=[];edit_ids=set()
+        for edit in edits:
+            if not isinstance(edit,dict):raise ValueError('Invalid preview cut')
+            eid=edit.get('id');start=edit.get('startMs');end=edit.get('endMs');word_ids=edit.get('wordIds')
+            if not isinstance(eid,str) or not eid or len(eid)>120 or eid in edit_ids:raise ValueError('Invalid preview cut id')
+            if any(isinstance(t,bool) or not isinstance(t,(int,float)) or not math.isfinite(t) for t in [start,end]) or not 0<=start<end<=video['durationMs'] or round(end)<=round(start):raise ValueError('Preview cut lies outside video')
+            if not isinstance(word_ids,list) or any(not isinstance(w,str) or len(w)>120 for w in word_ids):raise ValueError('Invalid removed word IDs')
+            edit_ids.add(eid)
+            item={'id':eid,'startMs':round(start),'endMs':round(end),'wordIds':word_ids,
+                  'quote':str(edit.get('quote',''))[:LIMITS['quoteLength']],'kind':'pause' if edit.get('kind')=='pause' else 'words',
+                  'commentId':edit.get('commentId') if isinstance(edit.get('commentId'),str) else None}
+            at=edit.get('at')
+            if isinstance(at,int) and not isinstance(at,bool) and 0<=at<=5000:item['at']=at
+            taken=edit.get('takenIn')
+            if taken is not None:
+                if not isinstance(taken,list) or depth>=50:raise ValueError('Invalid preview cuts')
+                held[0]+=len(taken)
+                if held[0]>5000:raise ValueError('Invalid preview cuts')
+                if taken:item['takenIn']=edit_list(taken,depth+1)
+            clean.append(item)
+        return clean
+    result['draftEdits']=edit_list(edits,0)
     if data.get('keepRanges') is not None:
         ranges=data['keepRanges'];fps=data.get('fps')
         if isinstance(fps,bool) or not isinstance(fps,(int,float)) or not math.isfinite(fps) or fps<=0 or abs(fps-video['fps'])>.001:raise ValueError('The transcript frame rate does not match this video')

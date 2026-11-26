@@ -1,8 +1,9 @@
 import {normalizeTranscript,activeWordIndex,originalOmissions} from './transcript-core.js';
 import {skipRemoved,previewDuration,exportCut,removedRanges,playbackRemovals} from './cut-core.js';
 import {createWaveform} from './waveform-panel.js';
-import {barKey,suggestion,recentNotes,afterDelete,broughtBackLine,sentLine,barSpotOffWords,deletedIds,cutMarks} from './edit-bar-core.js';
+import {barKey,suggestion,recentNotes,afterDelete,broughtBackLine,sentLine,barSpotOffWords,deletedIds,pauseOfCut} from './edit-bar-core.js';
 import {createTranscriptEditing,REFUSED_TEXT,REMOVED_TEXT} from './transcript-editing.js';
+import {envelopeFromSamples} from './cut-boundary.js';
 import {clock} from './time-format.js';
 
 const $=s=>document.querySelector(s);
@@ -10,8 +11,8 @@ const stamp=ms=>clock(ms,{places:3,hours:false});
 function element(tag,cls,text){const node=document.createElement(tag);if(cls)node.className=cls;if(text!=null)node.textContent=text;return node;}
 
 export function createTranscriptPanel({media,seek,playContext,request,updateRequest,cancelRequest=async()=>{},showError,pause=()=>{},cutsOn=()=>true,notify=()=>{},togglePlay=()=>{},agentConnected=async()=>false}){
-  // drawnJoins: the joins the marks on screen were drawn from (drawJoins).
-  let drawnJoins=null,wordNodes=[],highlighted=-1,videoId=null,loadToken=0,dragAnchor=null,dragEnd=null,dragMoved=false,suppressClick=false,pendingFocus=null;
+  // drawnJoins: the joins the marks on screen were drawn from (drawJoins); drawnCutPauses likewise (drawCutPauses).
+  let drawnJoins=null,drawnCutPauses=null,wordNodes=[],spaceNodes=[],highlighted=-1,videoId=null,loadToken=0,dragAnchor=null,dragEnd=null,dragMoved=false,dragShift=false,suppressClick=false,pendingFocus=null;
   const body=$('#transcriptText');
   let backendRef=null,videoRef=null,barTarget=null,dragPoint=null,scrollFrame=null;
   let pauseNodes=[],currentNode=null,auditionRange=null,pauseThreshold=450;
@@ -20,7 +21,12 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   let carriedNote='';
   // What is selected and what an edit does live in transcript-editing.js; this file draws it and passes clicks in.
   const editing=createTranscriptEditing({saveTranscript:(v,data,options)=>backendRef.saveTranscript(v,data,options),request,updateRequest,cancelRequest,onError:error=>showError(error.message)});
-  const waveform=createWaveform({media,seek,pause,onRange:adjustSelection,onAudition:range=>{playContext(Math.max(0,range.startMs-750),Math.min(videoRef.durationMs,range.endMs+750));auditionRange=range;}});
+  // The local app measures each video's loudness on the server (backend.loudness); online, or when the server has no
+  // ffmpeg, the waveform's own decode gives it once Build waveform has read the audio. A decode that is in while the
+  // server still measures stands in until the server's result arrives (setLoudness). Without either, cuts fall back to
+  // the transcript's word times. A decode's loudness goes when a new render replaces the file (the next decode measures it).
+  media.addEventListener('loadstart',()=>{if(videoRef)editing.mediaChanged(videoRef.id,media.currentSrc);});
+  const waveform=createWaveform({media,seek,pause,onRange:adjustSelection,onSamples:(channels,rate)=>{if(videoRef&&(!editing.hasLoudness(videoRef.id)||editing.decodedLoudness(videoRef.id)))editing.setLoudness(videoRef.id,envelopeFromSamples(channels,rate),{from:media.currentSrc});},onAudition:range=>{playContext(Math.max(0,range.startMs-750),Math.min(videoRef.durationMs,range.endMs+750));auditionRange=range;}});
   try{pauseThreshold=Number(localStorage.getItem('techies-review-pause-threshold'))||450;}catch{}
   if(![250,450,650,1000].includes(pauseThreshold))pauseThreshold=450;
   $('#pauseThreshold').value=String(pauseThreshold);
@@ -85,6 +91,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     $('#transcriptPanel').classList.remove('source-selection');$('#restoreOriginalSelection').hidden=true;for(const n of body.querySelectorAll('.source-word.selected'))n.classList.remove('selected');
     const selected=editing.selectWords(a,b);showNote();
     for(let i=0;i<wordNodes.length;i++)wordNodes[i].classList.toggle('selected',i>=selected.a&&i<=selected.b);
+    markSpaces();
     $('#selectionTime').textContent=`${stamp(selected.startMs)} – ${stamp(selected.endMs)}`;
     $('#selectionQuote').textContent=selected.quote;showBar();selectionState();if(focus)focusBar();
   }
@@ -97,13 +104,13 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   }
   function choosePause(previous,next,node,{play=true,focus=true}={}){
     clearView();const selected=editing.selectPause(previous,next);$('#selectionTime').textContent=`${stamp(selected.startMs)} – ${stamp(selected.endMs)}`;$('#selectionQuote').textContent=selected.quote;showBar(node);selectionState();
-    if(play)seek(previous.endMs);if(focus)focusBar();
+    if(play)seek(selected.startMs);if(focus)focusBar();
   }
   function render(){
-    clear();body.replaceChildren();wordNodes=[];pauseNodes=[];currentNode=null;highlighted=-1;
+    clear();body.replaceChildren();wordNodes=[];spaceNodes=[];pauseNodes=[];currentNode=null;highlighted=-1;
     const transcript=editing.transcript;
     if(!transcript){body.append(element('p','transcript-empty','No transcript attached to this version yet. Import its word-timed JSON, or ask your connected agent to attach the HappyScribe words.'));return;}
-    let count=0,paragraph=null;drawnJoins=null;
+    let count=0,paragraph=null;drawnJoins=null;drawnCutPauses=null;
     for(let i=0;i<transcript.words.length;i++){
       const word=transcript.words[i],previous=transcript.words[i-1];
       if(!paragraph||count>=38||(previous&&word.startMs-previous.endMs>650)){
@@ -118,24 +125,30 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
         paragraph.append(pause,document.createTextNode(' '));
       }
       const node=element('span','transcript-word',word.text);node.dataset.index=i;node.tabIndex=i===0?0:-1;node.setAttribute('role','button');node.setAttribute('aria-label',`${word.text}, ${stamp(word.startMs)}`);node.title=stamp(word.startMs);
-      node.onclick=e=>{if(suppressClick)return;if(e.shiftKey&&editing.anchor!=null){window.getSelection()?.removeAllRanges();choose(editing.anchor,i);return;}if(window.getSelection()?.toString()&&body.contains(window.getSelection().anchorNode))return;editing.anchor=i;choose(i);seek(word.startMs);};
-      node.onkeydown=e=>{if(e.key==='Enter'||(e.key===' '&&e.shiftKey)){e.preventDefault();if(e.shiftKey&&editing.anchor!=null)choose(editing.anchor,i);else{editing.anchor=i;choose(i);seek(word.startMs);}}else if(['ArrowLeft','ArrowRight'].includes(e.key)){e.preventDefault();const next=Math.max(0,Math.min(wordNodes.length-1,i+(e.key==='ArrowLeft'?-1:1)));node.tabIndex=-1;wordNodes[next].tabIndex=0;wordNodes[next].focus();if(e.shiftKey){editing.anchor??=i;choose(editing.anchor,next,{focus:false});}}};
-      paragraph.append(node,document.createTextNode(' '));wordNodes.push(node);count++;
+      node.onclick=e=>{if(suppressClick)return;if(e.shiftKey&&editing.anchor!=null){choose(editing.anchor,i);return;}if(node.classList.contains('removed-word')){restoreWord(i);return;}editing.anchor=i;choose(i);seek(word.startMs);};
+      node.onkeydown=e=>{if(e.key==='Enter'||(e.key===' '&&e.shiftKey)){e.preventDefault();if(e.shiftKey&&editing.anchor!=null)choose(editing.anchor,i);else if(e.key==='Enter'&&node.classList.contains('removed-word'))restoreWord(i);else{editing.anchor=i;choose(i);seek(word.startMs);}}else if(['ArrowLeft','ArrowRight'].includes(e.key)){e.preventDefault();const next=Math.max(0,Math.min(wordNodes.length-1,i+(e.key==='ArrowLeft'?-1:1)));node.tabIndex=-1;wordNodes[next].tabIndex=0;wordNodes[next].focus();if(e.shiftKey){editing.anchor??=i;choose(editing.anchor,next,{focus:false});}}};
+      // The space after a word is its own element, so a selection or a cut reads as one band, not separate boxes.
+      const space=element('span','transcript-space',' ');space.dataset.after=i;
+      paragraph.append(node,space);wordNodes.push(node);spaceNodes.push(space);count++;
     }
     refreshCuts();search();reflow();
   }
   function dragTo(x,y){
-    const direct=document.elementFromPoint(x,y)?.closest('.transcript-word');let index=direct&&!direct.hidden?Number(direct.dataset.index):null;
+    const direct=document.elementFromPoint(x,y)?.closest('.transcript-word,.transcript-space');let index=direct&&!direct.hidden?Number(direct.dataset.index??direct.dataset.after):null;
     if(index==null){let best=Infinity;for(let i=0;i<wordNodes.length;i++){const node=wordNodes[i];if(node.hidden)continue;for(const r of node.getClientRects()){const dy=Math.max(r.top-y,0,y-r.bottom),dx=Math.max(r.left-x,0,x-r.right),distance=dy*dy*9+dx*dx;if(distance<best){best=distance;index=i;}}}}
     if(index==null)return;dragEnd=index;dragMoved||=dragEnd!==dragAnchor;
-    if(dragMoved)for(let i=0;i<wordNodes.length;i++)wordNodes[i].classList.toggle('selected',!wordNodes[i].hidden&&i>=Math.min(dragAnchor,dragEnd)&&i<=Math.max(dragAnchor,dragEnd));
+    if(dragMoved){for(let i=0;i<wordNodes.length;i++)wordNodes[i].classList.toggle('selected',!wordNodes[i].hidden&&i>=Math.min(dragAnchor,dragEnd)&&i<=Math.max(dragAnchor,dragEnd));markSpaces();}
   }
   function autoScroll(){if(dragAnchor==null)return;const r=body.getBoundingClientRect(),y=dragPoint.y;const delta=y<r.top+30?-Math.min(16,(r.top+30-y)/2):y>r.bottom-30?Math.min(16,(y-r.bottom+30)/2):0;if(delta){body.scrollTop+=delta;dragTo(dragPoint.x,Math.max(r.top+2,Math.min(r.bottom-2,y)));}scrollFrame=requestAnimationFrame(autoScroll);}
   body.addEventListener('pointerdown',event=>{const word=event.target.closest('.transcript-word');if(!word||event.button!==0||event.pointerType==='touch')return;
-    pause();event.preventDefault();window.getSelection()?.removeAllRanges();dragAnchor=event.shiftKey&&editing.anchor!=null?editing.anchor:Number(word.dataset.index);dragEnd=Number(word.dataset.index);dragMoved=event.shiftKey&&dragEnd!==dragAnchor;dragPoint={x:event.clientX,y:event.clientY};body.setPointerCapture(event.pointerId);scrollFrame=requestAnimationFrame(autoScroll);});
+    pause();event.preventDefault();dragShift=event.shiftKey&&editing.anchor!=null;dragAnchor=dragShift?editing.anchor:Number(word.dataset.index);dragEnd=Number(word.dataset.index);dragMoved=dragShift&&dragEnd!==dragAnchor;dragPoint={x:event.clientX,y:event.clientY};body.setPointerCapture(event.pointerId);scrollFrame=requestAnimationFrame(autoScroll);});
   body.addEventListener('pointermove',event=>{if(dragAnchor==null)return;dragPoint={x:event.clientX,y:event.clientY};dragTo(event.clientX,event.clientY);});
-  body.addEventListener('pointerup',event=>{if(dragAnchor==null)return;cancelAnimationFrame(scrollFrame);const first=dragAnchor,last=dragEnd,moved=dragMoved;dragAnchor=dragEnd=null;if(body.hasPointerCapture(event.pointerId))body.releasePointerCapture(event.pointerId);editing.anchor=first;choose(first,last);if(!moved)seek(editing.transcript.words[last].startMs);suppressClick=true;setTimeout(()=>{suppressClick=false;},0);});
-  body.addEventListener('pointercancel',()=>{dragAnchor=dragEnd=null;cancelAnimationFrame(scrollFrame);});
+  // A quick drag can skip the last move, so the word under the pointer on release ends the selection. A plain click on a
+  // crossed-out word (no drag, no Shift) brings back just that word.
+  body.addEventListener('pointerup',event=>{if(dragAnchor==null)return;cancelAnimationFrame(scrollFrame);dragTo(event.clientX,event.clientY);const first=dragAnchor,last=dragEnd,moved=dragMoved,shift=dragShift;dragAnchor=dragEnd=null;dragShift=false;if(body.hasPointerCapture(event.pointerId))body.releasePointerCapture(event.pointerId);suppressClick=true;setTimeout(()=>{suppressClick=false;},0);
+    if(!moved&&!shift&&wordNodes[first]?.classList.contains('removed-word')){restoreWord(first);return;}
+    editing.anchor=first;choose(first,last);if(!moved)seek(editing.transcript.words[last].startMs);});
+  body.addEventListener('pointercancel',()=>{dragAnchor=dragEnd=null;dragShift=false;cancelAnimationFrame(scrollFrame);});
   function search(){
     const nodes=[...body.querySelectorAll('.transcript-word,.source-word')],query=$('#transcriptSearch').value.trim().toLowerCase(),text=nodes.map(n=>n.textContent.toLowerCase()).join(' '),matches=[];
     if(query){let at=text.indexOf(query);while(at>=0){matches.push([at,at+query.length]);at=text.indexOf(query,at+Math.max(1,query.length));}}
@@ -145,7 +158,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   $('#transcriptSearch').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();const match=body.querySelector('.found');if(match){if(match.classList.contains('source-word')){match.click();centre(match);}else{centre(match);const index=Number(match.dataset.index);editing.anchor=index;choose(index,index,{focus:false});seek(editing.transcript.words[index].startMs);}}}});
   $('#clearTranscriptSelection').onclick=()=>{window.getSelection()?.removeAllRanges();clear();};
   // The transcript always shows every original word (Lex, 2026-11-08). Deleted words stay where they were, struck through
-  // and dimmed, with a Restore mark before each cut; playback and the exported cut list still skip them.
+  // and dimmed; clicking one brings back just that word (TOOLS-463). Playback and the exported cut list skip them.
   // The join marks, each before the first word at or after it. A save can bring back joins another editor changed on
   // the same words, so they are drawn again whenever the transcript's joins differ from the ones on screen.
   function drawJoins(){
@@ -168,19 +181,40 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
       else{const draft=editing.noteId?'':noteBox.value;clear();carriedNote=draft||carriedNote;notice('That join changed elsewhere, so it is no longer selected.');}
     }
   }
+  /** A gap shorter than the pause setting still gets its pause mark while a cut with no words belongs to it (see
+   *  pauseOfCut), so that cut can be selected and brought back like any pause. */
+  function drawCutPauses(){
+    const wordless=editing.edits().filter(e=>!e.wordIds?.length),key=JSON.stringify(wordless.map(e=>[e.startMs,e.endMs]));
+    if(key===drawnCutPauses)return;drawnCutPauses=key;
+    for(const node of body.querySelectorAll('.transcript-pause.cut-only')){node.nextSibling?.remove();node.remove();}
+    pauseNodes=pauseNodes.filter(n=>!n.classList.contains('cut-only'));
+    const words=editing.transcript?.words||[];
+    for(const cut of wordless){
+      // Also before the first word or after the last one.
+      const i=pauseOfCut(words,cut),previous=words[i-1]||null,word=words[i]||null,startMs=previous?previous.endMs:0;
+      if(!words.length||pauseNodes.some(n=>Number(n.dataset.startMs)===startMs))continue;
+      const pause=element('button','transcript-join transcript-pause cut-only','');
+      pause.type='button';pause.title='A cut pause; select it to bring it back';
+      pause.dataset.startMs=startMs;pause.dataset.endMs=word?word.startMs:videoRef.durationMs;
+      pause.onclick=()=>choosePause(previous,word,pause);
+      pauseNodes.push(pause);
+      if(word)wordNodes[i].before(pause,document.createTextNode(' '));else spaceNodes.at(-1).after(pause);
+    }
+  }
+  /** A space is selected or cut when the words on both sides of it are, so a run reads as one band. */
+  function markSpaces(){
+    for(let i=0;i<spaceNodes.length;i++){const a=wordNodes[i],b=wordNodes[i+1],both=name=>!!b&&a.classList.contains(name)&&b.classList.contains(name);spaceNodes[i].classList.toggle('selected',both('selected'));spaceNodes[i].classList.toggle('removed',both('removed-word'));}
+  }
   function refreshCuts(){
     const transcript=editing.transcript,edits=editing.edits(),gone=deletedIds(edits),busy=editing.busy;
-    for(const button of body.querySelectorAll('.restore-cut'))button.remove();
     for(const block of body.querySelectorAll('.source-removal'))block.remove();
-    drawJoins();
-    for(let i=0;i<wordNodes.length;i++){const word=transcript.words[i],removed=gone.has(word.id);wordNodes[i].classList.toggle('removed-word',removed);wordNodes[i].setAttribute('aria-label',`${removed?'Deleted: ':''}${word.text}, ${stamp(word.startMs)}`);}
+    drawJoins();drawCutPauses();
+    for(let i=0;i<wordNodes.length;i++){const word=transcript.words[i],removed=gone.has(word.id);wordNodes[i].classList.toggle('removed-word',removed);wordNodes[i].setAttribute('aria-label',removed?`Deleted: ${word.text}, ${stamp(word.startMs)}, press Enter to bring it back`:`${word.text}, ${stamp(word.startMs)}`);wordNodes[i].title=removed?`${stamp(word.startMs)} · click to bring this word back`:stamp(word.startMs);}
+    markSpaces();
     const ranges=removedRanges(edits);
-    for(const gap of pauseNodes){const a=Number(gap.dataset.startMs),b=Number(gap.dataset.endMs),cut=ranges.reduce((n,[x,y])=>n+Math.max(0,Math.min(b,y)-Math.max(a,x)),0),seconds=ms=>(ms/1000).toFixed(1);gap.classList.toggle('removed-pause',cut>0);gap.textContent=cut>0?`${seconds(b-a)} → ${seconds(b-a-cut)} s pause`:`${seconds(b-a)} s pause`;}
-    const marks=cutMarks(transcript?.words||[],edits);
-    edits.forEach((edit,n)=>{
-      const target=(edit.kind==='pause'?pauseNodes.find(node=>Number(node.dataset.startMs)<=edit.startMs&&Number(node.dataset.endMs)>=edit.endMs):null)??wordNodes[marks[n].index];
-      if(target){const button=element('button','restore-cut',edit.kind==='pause'?'Restore pause':'Restore');button.type='button';button.dataset.editId=edit.id;button.disabled=busy;button.title=`Restore ${stamp(edit.startMs)} – ${stamp(edit.endMs)}: ${edit.quote}`;button.setAttribute('aria-label',button.title);button.onclick=()=>restoreCut([edit.id]);target.before(button);}
-    });
+    // A cut with no words inside a word marks the pause it belongs to as cut, though none of that pause's time is.
+    const held=new Set(edits.filter(e=>!e.wordIds?.length).map(e=>{const i=pauseOfCut(transcript.words,e);return i?transcript.words[i-1].endMs:0;}));
+    for(const gap of pauseNodes){const a=Number(gap.dataset.startMs),b=Number(gap.dataset.endMs),cut=ranges.reduce((n,[x,y])=>n+Math.max(0,Math.min(b,y)-Math.max(a,x)),0),seconds=ms=>(ms/1000).toFixed(1);gap.classList.toggle('removed-pause',cut>0||held.has(a));gap.textContent=cut>0?`${seconds(b-a)} → ${seconds(b-a-cut)} s pause`:`${seconds(b-a)} s pause`;}
     if(transcript)renderOriginalOmissions();
     waveform.setCuts(edits);
     $('#cutPreviewBar').hidden=!edits.length;$('#undoTranscriptCut').disabled=busy;
@@ -299,6 +333,25 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
       else{clearView();refreshCuts();seek(done.back[0].startMs);}
     }catch(error){failed(error);}finally{refreshCuts();}
   }
+  /** Brings back one crossed-out word; the rest of its cut stays cut, as one cut or two around it. */
+  async function restoreWord(i){
+    const word=editing.transcript?.words[i];if(!word||editing.busy)return;notice();pause();
+    const stay=hasDraft();
+    try{
+      const done=await editing.restoreWords([word.id],{keep:stay});if(!done)return;
+      if(stay)barStatus(broughtBackLine({noteResolved:done.noteResolved}));
+      // The word that came back is selected, so a mistaken click is one Backspace from being redone.
+      else{clearView();refreshCuts();seek(Math.max(0,word.startMs-500));focusWords(i);editing.anchor=i;choose(i,i,{focus:false});barStatus(broughtBackLine({noteResolved:done.noteResolved,selectedAgain:true}));}
+    }catch(error){failed(error);}finally{refreshCuts();}
+  }
+  /** The bar's Restore on a selection that is all cut: those words come back (only those), or the selected pause's cut. */
+  async function restoreSelection(){
+    const selected=editing.selection;if(!selected||editing.busy)return;
+    if(selected.kind==='pause'){await restoreCut(editing.toRestore().map(e=>e.id),{fromBar:true});return;}
+    notice();pause();
+    try{const done=await editing.restoreWords(editing.selectedIds(),{keep:true});if(done)barStatus(broughtBackLine({noteResolved:done.noteResolved,selectedAgain:!noteBox.value}));}
+    catch(error){failed(error);}finally{refreshCuts();}
+  }
   $('#undoTranscriptCut').onclick=undoCut;
   $('#exportTranscriptCut').onclick=()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(exportCut(editing.transcript,videoRef),null,2)],{type:'application/json'})),link=document.createElement('a');link.href=url;link.download=videoId+'-cut.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
   document.addEventListener('keydown',event=>{const typing=event.target.closest('input,textarea,[contenteditable="true"]');if(typing||event.altKey)return;
@@ -307,7 +360,7 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
     else if(event.key==='Escape'&&editing.selection){event.preventDefault();leaveBar();}});
   $('.bar-delete').onclick=async()=>{
     if(!editing.selection)return;const back=editing.toRestore();
-    if(back.length)await restoreCut(back.map(e=>e.id),{fromBar:true});else await removeSelection();
+    if(back.length)await restoreSelection();else await removeSelection();
     focusBar();
   };
   // One text box: Enter sends it as a request to the agent (kept as a note in the comment list either way).
@@ -361,9 +414,16 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   // render() leaves the cut controls alone when there is no transcript, so they are hidden first; drawing words shows them again.
   function show(transcript,v){$('#cutPreviewBar').hidden=true;waveform.setCuts([]);editing.load(transcript,v);$('#transcriptSummary').textContent=transcript?`${transcript.words.length} words · ${transcript.label} · timings approximate`:'Use your existing HappyScribe word timings';render();}
   const panel={
+    async refreshAgentStatus(){
+      const message=$('#barStatus').textContent;
+      if(![sentLine(null),sentLine(false),sentLine(true)].includes(message))return;
+      const status=await agentConnected();
+      if($('#barStatus').textContent===message&&sentLine(status)!==message)barStatus(sentLine(status));
+    },
     async load(v,backend){
       const token=++loadToken;if(v?.id!==videoId)carriedNote='';backendRef=backend;videoRef=v;videoId=v?.id;notice();editing.load(null,v);pendingFocus=null;waveform.load(v);$('#cutPreviewBar').hidden=true;$('#transcriptSummary').textContent=v?'Loading transcript…':'Open a video to read its transcript.';render();
       if(!v)return;
+      if(backend.loudness)editing.setLoudness(v.id,backend.loudness(v));
       try{const data=await backend.transcript(v);if(token!==loadToken)return;show(data?normalizeTranscript(data,v.durationMs):null,v);if(pendingFocus){const focus=pendingFocus;pendingFocus=null;focusAt(focus.ms,focus.editRequest,focus.comment);}}
       catch(error){if(token===loadToken){$('#transcriptSummary').textContent='Could not load transcript';showError(error.message);}}
     },

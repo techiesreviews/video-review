@@ -13,6 +13,8 @@ from urllib.error import HTTPError
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'/'video'))
 import server
+import loudness
+import media_tools
 import overview_page
 import rough_cut
 import scene_store
@@ -203,6 +205,27 @@ class ReviewServerTests:
         try:self.request('/media/missing')
         except HTTPError as error:assert error.code==404
         else:raise AssertionError('Unconfigured media was served')
+
+    def test_loudness_is_measured_once_per_file_version_and_sent_as_bytes(self):
+        import shutil;shutil.rmtree(self.data/'loudness',ignore_errors=True)
+        with mock.patch.object(loudness,'measure',return_value=bytes([200,40,38])) as measure:
+            for _ in range(2):
+                with self.request('/api/loudness/example-v1') as r:
+                    assert r.headers['Content-Type']=='application/octet-stream'
+                    assert r.read()==bytes([200,40,38])
+        assert measure.call_count==1,'the second request reads the kept result'
+        try:self.request('/api/loudness/nope')
+        except HTTPError as error:assert error.code==404
+        else:raise AssertionError('Measured an unknown video')
+
+    def test_loudness_without_ffmpeg_or_sound_says_so(self):
+        import shutil;shutil.rmtree(self.data/'loudness',ignore_errors=True)
+        for problem,code in ((media_tools.ToolMissing('ffmpeg',windows=False),503),(loudness.NoSound('no audio stream'),422)):
+            with mock.patch.object(loudness,'measure',side_effect=problem):
+                try:self.request('/api/loudness/example-v1')
+                except HTTPError as error:assert error.code==code,(problem,error.code);assert 'error' in json.loads(error.read())
+                else:raise AssertionError('Answered without loudness')
+        assert not list((self.data/'loudness').glob('*.bin')),'nothing is kept from a failed measurement'
 
     def test_every_file_the_page_imports_is_served_with_its_type(self):
         # A module the server refuses stops the whole page, so each local import of a page module must be served:

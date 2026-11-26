@@ -10,8 +10,9 @@ the removals from the transcript first if it has none.
    press Space again: it should play from that word.
 2. **Read the clock.** While it plays, the clock counts the review file's own time, so it jumps forward at each
    removal.
-3. **Listen to the joins.** Find a join where the sound runs straight across the cut. The fade is always on and has
-   no control. There should be no click, and the words on each side should sound complete. Then turn **Cuts** off to
+3. **Listen to the joins.** Find a join where the sound runs straight across the cut. The fade is automatic when
+   available and has no control. **Cuts on · Fades unavailable** means preview fades cannot currently be used.
+   With fades available, there should be no click, and the words on each side should sound complete. Turn **Cuts** off to
    hear the original straight through, and tell us if a word sounds clipped at a join with the cuts on but not in
    the original.
 4. **Notice any silence at a join.** A short silence may be there because the browser is finding its place in the

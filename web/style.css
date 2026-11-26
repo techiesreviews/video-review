@@ -58,7 +58,7 @@ video{display:block;width:100%;height:100%;object-fit:contain;background:#000;cu
 .below-player{width:100%;max-width:1280px;margin-top:20px;background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden;flex-shrink:0}
 .transcript-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 20px 10px}.transcript-heading h2{font-size:17px;margin:0;letter-spacing:-.2px}.transcript-heading p{font-size:12px;color:var(--muted);margin:3px 0 0}.transcript-heading .ghost{height:32px;font-size:12px;padding:0 12px}
 .transcript-tools{display:flex;align-items:center;gap:14px;padding:12px 20px;flex-wrap:wrap}.transcript-search{display:flex;align-items:center;flex:1;min-width:160px;font-size:12px;color:var(--muted)}.transcript-search input{width:100%;min-width:80px;border:1px solid var(--line);border-radius:7px;padding:6px 9px;background:var(--canvas);font-size:13px}.follow-words{display:flex;align-items:center;gap:5px;font-size:12px;white-space:nowrap;color:var(--muted)}.follow-words input{accent-color:var(--accent)}.transcript-tools>.ghost{height:32px;font-size:12px;padding:0 12px}
-.transcript-help{font-size:12px;color:var(--muted);margin:0;padding:0 20px 12px;line-height:1.5}.transcript-text{border-top:1px solid var(--line);padding:18px 20px;max-height:360px;min-height:135px;overflow:auto;line-height:2;font-size:16px;scroll-padding:20px}.transcript-empty{font-size:14px;color:var(--muted);max-width:560px;margin:8px 0;line-height:1.65}.transcript-paragraph{margin:0 0 18px;padding-left:72px;position:relative}.paragraph-time{position:absolute;left:0;top:4px;font:10px var(--mono);line-height:24px;color:var(--faint)}.paragraph-time:hover{color:var(--accent)}.transcript-word{border-radius:3px;padding:2px 1px;cursor:pointer;user-select:text}.transcript-word:hover{background:var(--canvas)}.transcript-word.spoken{background:#ddd9ff;box-shadow:0 2px 0 var(--accent)}.transcript-word.selected{background:var(--accent-soft);color:var(--accent);box-shadow:0 1px 0 #c7c3fd}.transcript-word.found{background:#fff0b3}.transcript-word::selection{background:#d2ceff}
+.transcript-help{font-size:12px;color:var(--muted);margin:0;padding:0 20px 12px;line-height:1.5}.transcript-text{border-top:1px solid var(--line);padding:18px 20px;max-height:360px;min-height:135px;overflow:auto;line-height:2;font-size:16px;scroll-padding:20px}.transcript-empty{font-size:14px;color:var(--muted);max-width:560px;margin:8px 0;line-height:1.65}.transcript-paragraph{margin:0 0 18px;padding-left:72px;position:relative}.paragraph-time{position:absolute;left:0;top:4px;font:10px var(--mono);line-height:24px;color:var(--faint)}.paragraph-time:hover{color:var(--accent)}.transcript-word{border-radius:3px;padding:2px 1px;cursor:pointer}.transcript-word:hover{background:var(--canvas)}.transcript-word.spoken{background:#ddd9ff;box-shadow:0 2px 0 var(--accent)}.transcript-word.selected{background:var(--accent-soft);color:var(--accent);box-shadow:0 1px 0 #c7c3fd}.transcript-word.found{background:#fff0b3}
 .transcript-join{font:500 10px var(--mono);border:1px solid #dfdce9;background:var(--canvas);color:var(--muted);border-radius:5px;padding:3px 5px;vertical-align:middle;white-space:nowrap}.transcript-join.risky{background:#fff4df;border-color:#f1d296;color:#835414}.transcript-join:hover{border-color:var(--accent);color:var(--accent)}
 @media(min-width:821px){.stage{overflow:hidden}.stage>.player{width:min(100%,calc(36vh * 16 / 9))}.below-player{flex:1;min-height:250px;display:flex;flex-direction:column}.transcript-text{flex:1;min-height:90px;max-height:none}.transcript-heading,.transcript-tools,.transcript-help,.transcript-selection{flex-shrink:0}}
 @media(max-width:650px){.transcript-heading,.transcript-tools{padding-left:12px;padding-right:12px}.transcript-text{padding:14px 12px;font-size:15px}.transcript-paragraph{padding-left:0;padding-top:20px}.paragraph-time{top:-5px}.transcript-help{padding-left:12px;padding-right:12px}.transcript-selection{padding:12px}}
@@ -168,11 +168,19 @@ video{display:block;width:100%;height:100%;object-fit:contain;background:#000;cu
 .drop-hint[hidden]{display:none}
 #videoSelect[hidden]{display:none}
 #videoSelect[hidden]+#saveState::before{content:none}
-/* The app owns mouse range selection, including whitespace and wrapped lines. */
-.transcript-word{user-select:none;-webkit-user-select:none;touch-action:pan-y}
-/* A deleted word stays in place (TOOLS-129): struck through in a soft red, dimmed, on a faint red ground. */
-.transcript-word.removed-word{text-decoration:line-through 1.5px #c4705f;color:var(--faint);background:#fff0f0}
-.transcript-word.removed-word.selected{background:#f6e3e0;color:#8a5a52;box-shadow:0 1px 0 #e3b9b1}
+/* The app owns mouse range selection, including whitespace and wrapped lines; the browser's own text highlight is off. */
+.transcript-text{user-select:none;-webkit-user-select:none}
+.transcript-word,.transcript-space{user-select:none;-webkit-user-select:none;touch-action:pan-y}
+/* A selection reads as one band: the words and the spaces between them share one square-cornered ground (TOOLS-463). */
+.transcript-word.selected,.transcript-space.selected{background:var(--accent);color:#fff;box-shadow:none;border-radius:0}
+/* A deleted word stays in place (TOOLS-129): struck through in a soft red, dimmed, on a faint red ground. Clicking it
+   brings just that word back. */
+.transcript-word.removed-word{text-decoration:line-through 2px #c4705f;color:var(--faint);background:#fff0f0;border-radius:0}
+.transcript-space.removed{background:#fff0f0}
+.transcript-word.removed-word.selected,.transcript-space.removed.selected{background:#5a55d6;color:#fff;box-shadow:none}
+/* The playing word never looks like a selection, in either view (TOOLS-473): on its own it has a soft ground and an
+   accent underline (.transcript-word.spoken); inside a selection it keeps the band and gets a white underline. */
+.transcript-word.spoken.selected{box-shadow:inset 0 -3px 0 #fff}
 .transcript-pause.removed-pause{border-style:dashed}
 .transcript-notice{margin:0;padding:10px 20px;border-top:1px solid var(--line);font-size:12px;font-weight:500;color:var(--text);flex-shrink:0}.transcript-notice:empty{padding:0;border-top:0}
 .cut-preview-bar{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:10px 20px;border-top:1px solid var(--line);font-size:12px;flex-shrink:0}
@@ -192,8 +200,7 @@ video{display:block;width:100%;height:100%;object-fit:contain;background:#000;cu
 .transcript-only .below-player{margin-top:0;min-height:0;flex:1;width:100%;max-width:1280px;display:flex;flex-direction:column}
 .transcript-only .transcript-text{font-size:28px;line-height:1.85;padding-left:28px;padding-right:28px;flex:1 1 0;max-height:none;min-height:0}
 .transcript-only .transcript-selection{max-height:240px;overflow:auto;min-height:0}
-.transcript-only .transcript-word{border-radius:5px;padding:2px 3px}
-.transcript-only .transcript-word.spoken{color:#fff;background:var(--accent);box-shadow:none}
+.transcript-only .transcript-word{border-radius:5px;padding:2px 3px}.transcript-only .transcript-word.selected,.transcript-only .transcript-word.removed-word{border-radius:0}
 .transcript-only .transcript-paragraph{margin-bottom:28px;padding-left:75px}
 .transcript-only .paragraph-time{font-size:10px;top:14px}
 .transcript-only .transcript-join{font-size:12px;padding:5px 7px}
@@ -230,7 +237,7 @@ video{display:block;width:100%;height:100%;object-fit:contain;background:#000;cu
 .waveform-overview[hidden]{display:none}.waveform-overview canvas{display:block;width:100%;height:24px;cursor:crosshair;touch-action:none}
 .restore-cut{display:inline-flex;align-items:center;gap:4px;border:1px solid #ecd3ce;border-radius:5px;padding:3px 6px;margin:0 5px;background:#fff7f5;color:#9a5a4d;font:600 11px/1.4 'DM Sans',sans-serif;vertical-align:middle;white-space:nowrap}
 .restore-cut:hover{background:#fdeae6;border-color:#c4705f;color:#7a3f33}.restore-cut:disabled{color:var(--faint)}
-.transcript-word.removed-word.spoken,.transcript-only .transcript-word.removed-word.spoken{background:#a34535;color:#fff}
+.transcript-word.removed-word.spoken{background:#a34535;color:#fff}
 .source-removal{display:block;margin:18px 0;padding:12px 14px;background:#fff6f0;border-left:3px solid #c68365;border-radius:0 8px 8px 0;font-size:16px;line-height:1.9}
 .source-removal-head{display:block;font:10px/1.6 var(--mono);color:#8b5840;margin-bottom:6px}
 .source-removal-words{display:block;color:#8a6459}.source-word{border-radius:3px;padding:1px;cursor:pointer;text-decoration:line-through;user-select:none}

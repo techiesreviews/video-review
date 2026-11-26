@@ -88,6 +88,7 @@ export function broughtBackLine({noteResolved=false,selectedAgain=false}={}){
 
 /** The one plain line shown after a request is saved. */
 export function sentLine(agentConnected){
+  if(agentConnected==null)return 'Agent status unavailable: your note is saved.';
   return agentConnected?'Sent to your agent. It shows in the comment list.':'No agent connected: your note is saved and waits for it.';
 }
 
@@ -128,21 +129,15 @@ export function cutsToRestore(edits=[],wordIds=[]){
   const gone=deletedIds(edits);if(!wordIds.every(id=>gone.has(id)))return [];
   const ids=new Set(wordIds);return edits.filter(e=>(e.wordIds||[]).some(id=>ids.has(id)));
 }
-/** Where each cut's Restore mark goes: before the first of its words in the transcript, else before the first word at or
- *  after its start (a pause), else on the last word. */
-export function cutMarks(words,edits=[]){
-  return edits.map(edit=>{
-    const ids=new Set(edit.wordIds||[]);let index=words.findIndex(w=>ids.has(w.id));
-    if(index<0)index=words.findIndex(w=>w.startMs>=edit.startMs);
-    if(index<0)index=words.length-1;
-    return {id:edit.id,index};
-  });
-}
-/** The runs of words a..b still in the cut, as [first, last] index pairs: what a Delete over kept and deleted words cuts. */
-export function keptRuns(words,a,b,gone){
-  const runs=[];
-  for(let i=a;i<=b;i++){if(gone.has(words[i].id))continue;const last=runs.at(-1);if(last&&last[1]===i-1)last[1]=i;else runs.push([i,i]);}
-  return runs;
+/** The pause a cut with no words belongs to, as the index of the word after it (words.length: the pause to the end).
+ *  Its mark is drawn there and selecting it brings the cut back: the pause its middle lies in, or, for a cut inside a
+ *  word (the handles moved there), the pause on the nearer side of that word. */
+export function pauseOfCut(words=[],cut){
+  const middle=(cut.startMs+cut.endMs)/2;
+  let i=words.findIndex(w=>w.startMs>=middle);if(i<0)i=words.length;
+  const inside=words[i-1];
+  if(inside&&middle<inside.endMs&&middle-inside.startMs<inside.endMs-middle)i--;
+  return i;
 }
 /** How many cuts at the end came from one Delete: they share its note (commentId). Cuts without one stand alone. */
 export function lastCutGroup(edits=[]){

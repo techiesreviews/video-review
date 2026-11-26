@@ -12,7 +12,10 @@ The optional production workflow and per-video assets on the creator's workstati
 Build a local audio waveform, adjust cut handles by dragging or one frame at a time, and audition the join before
 saving a reversible removal. Use **Show video** to switch back. [How it works](docs/REVIEWING.md#listen-and-edit-through-the-words).
 The waveform replaces the seek bar while enabled. The transcript always shows the original words: preview deletions
-stay in place, struck through, with individual Restore buttons; attached source words also reveal earlier Resolve
+stay in place, struck through and greyed on the waveform; click a struck word to bring just that word back. Drag, or
+click then Shift+click, to select whole words for one cut. Cuts land on the real pauses in the sound and fade over
+15 ms on the kept side in the export; the preview's fade ends 20 ms before each cut, so the player's clock lag
+lets no cut sound through. Attached source words also reveal earlier Resolve
 removals and support precise restoration requests without mixing the source and review clocks.
 
 Leave precise, timestamped comments on a video edit, like Loom, and let an AI agent work through them with you. Pause anywhere, type, press Enter; the comment is pinned to that exact frame. The agent reads your comments with frame numbers and original-source mapping, replies in the thread, asks when something is unclear, resolves what it fixed and announces new cuts.

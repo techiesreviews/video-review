@@ -1,5 +1,5 @@
 // Browser check of the transcript panel's editing on a tiny made-up video, at desktop and phone width: Delete, a Delete
-// over words already deleted (two pieces), Undo, Restore, a note to the agent, a save the server refuses, and an edit refused because the words changed elsewhere.
+// over words already deleted (joined into one cut), Undo, a click on a deleted word to restore it, a note to the agent, a save the server refuses, and an edit refused because the words changed elsewhere.
 // It never opens a real review. Run: node tests/transcript-panel-browser.mjs (needs Playwright and ffmpeg).
 // TRANSCRIPT_PANEL_SHOTS=<folder> also saves a screenshot of each width there.
 import {chromium} from 'playwright';
@@ -34,7 +34,29 @@ try{
     const comments=async()=>JSON.parse(await readFile(join(temp,'comments.json'),'utf8')).comments;
     const word=i=>page.locator('.transcript-word').nth(i);
     const deleted=()=>page.locator('.transcript-word.removed-word').evaluateAll(nodes=>nodes.map(n=>n.textContent));
+    // Notes the sample rate of each audio decode, to see what Build waveform measures the loudness at.
+    await page.addInitScript(()=>{const Native=window.OfflineAudioContext;window.decodeRates=[];window.OfflineAudioContext=class extends Native{constructor(...args){super(...args);window.decodeRates.push(this.sampleRate);}};});
     await page.goto(base);await page.waitForSelector('.transcript-word');
+
+    // A selected word never looks like the playing word, in the reading view (the default) or with the video shown, and
+    // the playing word inside a selection looks different from both (TOOLS-473).
+    const looks=await page.evaluate(()=>{
+      const reading=document.body.classList.contains('transcript-only'),out={};
+      const [playing,selected,both]=[...document.querySelectorAll('.transcript-word')].slice(12,15);
+      const look=node=>{const s=getComputedStyle(node);return `${s.backgroundColor} / ${s.color} / ${s.boxShadow}`;};
+      playing.classList.add('spoken');selected.classList.add('selected');both.classList.add('spoken','selected');
+      for(const view of [true,false]){document.body.classList.toggle('transcript-only',view);out[view?'reading':'video']=[playing,selected,both].map(look);}
+      playing.classList.remove('spoken');selected.classList.remove('selected');both.classList.remove('spoken','selected');
+      document.body.classList.toggle('transcript-only',reading);out.default=reading;return out;
+    });
+    assert.equal(looks.default,true,`${name}: the reading view is the default.`);
+    for(const view of ['reading','video'])assert.equal(new Set(looks[view]).size,3,`${name}: in the ${view} view the playing, selected, and playing-and-selected words each look different: ${JSON.stringify(looks[view])}`);
+
+    // Build waveform decodes the audio at the rate the server measures loudness at, so cut edges online match it.
+    await page.locator('#buildWaveform').click();
+    await page.waitForFunction(()=>document.querySelector('#buildWaveform').hidden||!document.querySelector('#buildWaveform').disabled);
+    assert.equal(await page.locator('#waveformStatus').innerText(),'',`${name}: the waveform builds.`);
+    assert.deepEqual(await page.evaluate(()=>window.decodeRates),[16000],`${name}: one decode, at 16 kHz.`);
 
     // Delete one word with the bar's button: it is struck through, saved, and the next word is selected.
     await word(2).click();
@@ -45,25 +67,26 @@ try{
     assert.match(await page.locator('#barStatus').innerText(),/^Deleted\. Ctrl\+Z brings it back\.$/);
     assert.deepEqual(await page.locator('.transcript-word.selected').allInnerTexts(),['word3'],`${name}: the next word is selected.`);
 
-    // A Delete over words 1–4 keeps word2 in its own cut and cuts the rest as two pieces with one note.
+    // A Delete over words 1–4 takes word2's cut into it: one cut, one note (TOOLS-463).
     await word(1).click();await word(4).click({modifiers:['Shift']});
     await page.locator('#transcriptNote').fill('too slow');
     await page.locator('.bar-delete').click();
     await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===4);
-    const pieces=(await onDisk()).slice(1);
-    assert.deepEqual(pieces.map(e=>e.wordIds),[['W1'],['W3','W4']],`${name}: one piece for each run still in the cut.`);
-    assert.equal(pieces[0].commentId,pieces[1].commentId);
-    assert.equal((await comments()).find(c=>c.id===pieces[0].commentId).text,'Remove from cut: “word1 … word3 word4” — too slow');
+    const pieces=await onDisk();
+    assert.deepEqual(pieces.map(e=>e.wordIds),[['W1','W2','W3','W4']],`${name}: the words already cut join the new cut.`);
+    assert.equal(await page.locator('.transcript-space.removed').count(),3,`${name}: the cut reads as one band, spaces included.`);
+    assert.equal((await comments()).find(c=>c.id===pieces[0].commentId).text,'Remove from cut: “word1 word2 word3 word4” — too slow');
 
-    // Undo brings both pieces back together, and the typed note returns to the box.
+    // Undo puts word2's own cut back as it was, and the typed note returns to the box.
     await page.locator('#undoTranscriptCut').click();
     await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===1);
     assert.deepEqual((await onDisk()).map(e=>e.wordIds),[['W2']],`${name}: Undo brings back the last Delete only.`);
     assert.equal(await page.locator('#transcriptNote').inputValue(),'too slow',`${name}: the note typed with the Delete is back in the box.`);
     assert.equal((await comments()).find(c=>c.id===pieces[0].commentId).status,'done','its note is resolved');
 
-    // Restore on the deleted word brings it back.
-    await page.locator('.restore-cut').first().click();
+    // There are no Restore buttons; a click on the deleted word brings it back.
+    assert.equal(await page.locator('.restore-cut').count(),0,`${name}: no Restore buttons in the text.`);
+    await word(2).click();
     await page.waitForFunction(()=>!document.querySelector('.transcript-word.removed-word'));
     assert.deepEqual(await onDisk(),[],`${name}: Restore empties the cut list.`);
 
@@ -114,7 +137,7 @@ try{
     await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===2);
     assert.deepEqual(await page.locator('.transcript-join[data-cut-id]').allInnerTexts(),['↔ J9'],`${name}: the join marks follow the saved transcript.`);
     const before6=await word(6).evaluate(n=>{const out=[];for(let x=n,k=0;x&&k<3;x=x.previousElementSibling,k++)out.unshift(x.classList[0]);return out;});
-    assert.deepEqual(before6,['transcript-join','restore-cut','transcript-word'],`${name}: the redrawn join sits before the deleted word's Restore mark.`);
+    assert.deepEqual(before6,['transcript-space','transcript-join','transcript-word'],`${name}: the redrawn join sits right before the deleted word.`);
     await page.locator('.transcript-join[data-cut-id]').click();
     assert.match(await page.locator('#selectionQuote').innerText(),/^Join J9/,`${name}: the mark opens the new join.`);
 
@@ -124,7 +147,7 @@ try{
     await page.locator('#transcriptNote').fill('join note');
     const again=JSON.parse(await readFile(join(temp,'transcripts/words.json'),'utf8'));
     await writeFile(join(temp,'transcripts/words.json'),JSON.stringify({...again,cuts:[{id:'J5',atMs:3000}]}));
-    await word(9).evaluate(n=>n.previousElementSibling.click());
+    await word(9).click();
     await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===1);
     assert.deepEqual(await page.locator('.transcript-join[data-cut-id]').allInnerTexts(),['↔ J5'],`${name}: the join marks follow the saved transcript.`);
     assert.equal(await page.locator('#transcriptSelection').isHidden(),true,`${name}: the bar closes on a join that is gone.`);
@@ -135,7 +158,7 @@ try{
 
     // J5 stays selected with a note while another editor adds J6 and leaves J5 where it was: the marks are drawn again,
     // and the bar stays open on J5 with its note, next to J5's new mark rather than at the bottom of the text.
-    const restoreBefore=i=>word(i).evaluate(n=>n.previousElementSibling.click());
+    const restoreBefore=i=>word(i).click();
     const noteOnJoinWhileSwapped=async (cuts,note)=>{
       await page.locator('.transcript-join[data-cut-id]').first().click();await page.locator('#transcriptNote').fill(note);
       const now=JSON.parse(await readFile(join(temp,'transcripts/words.json'),'utf8'));
@@ -238,9 +261,9 @@ try{
     assert.ok(stored.draftEdits[0].startMs<=3000&&stored.draftEdits[0].endMs>=3000);
     assert.equal(stored.words[14].text,'fourteen-new');
 
-    // A cut with its own note, for the Undo below.
-    await word(7).click();await page.locator('#transcriptNote').fill('cut note');await page.locator('.bar-delete').click();
-    await page.waitForFunction(()=>document.querySelectorAll('.transcript-word')[7].classList.contains('removed-word'));
+    // A cut with its own note, for the Undo below; not next to the join's cut, which it would join.
+    await word(9).click();await page.locator('#transcriptNote').fill('cut note');await page.locator('.bar-delete').click();
+    await page.waitForFunction(()=>document.querySelectorAll('.transcript-word')[9].classList.contains('removed-word'));
     stored=JSON.parse(await readFile(join(temp,'transcripts/words.json'),'utf8'));
     assert.equal(stored.draftEdits.length,2,JSON.stringify(stored.draftEdits));
 
@@ -269,8 +292,8 @@ try{
     assert.equal(await page.locator('#transcriptNotice').innerText(),'',`${name}: the line goes once something is selected.`);
     // An Undo that works brings back the cut with its own note: the words come back selected with both notes in the box.
     await page.locator('#undoTranscriptCut').click();
-    await page.waitForFunction(()=>!document.querySelectorAll('.transcript-word')[7].classList.contains('removed-word'));
-    assert.deepEqual(await page.locator('.transcript-word.selected').allInnerTexts(),['word7']);
+    await page.waitForFunction(()=>!document.querySelectorAll('.transcript-word')[9].classList.contains('removed-word'));
+    assert.deepEqual(await page.locator('.transcript-word.selected').allInnerTexts(),['word9']);
     assert.equal(await page.locator('#transcriptNote').inputValue(),'cut note rough join',`${name}: the typed note is kept for the next selection.`);
 
     // A refused Delete whose transcript was removed elsewhere meanwhile says so on the panel, not "try again".
@@ -302,6 +325,26 @@ try{
     const onJoin=(await comments()).find(c=>c.text==='Check this join');
     assert.equal(onJoin.editRequest.type,'change');assert.equal(onJoin.editRequest.cutId,'J1');
 
+    // A cut with no words in a gap shorter than the pause setting (handles moved into it) gets a pause mark, and that
+    // mark brings back just this cut; the other Delete stays.
+    const inGap={id:'gap',startMs:2967,endMs:3033,wordIds:[],quote:'Join J1',kind:'words',commentId:null};
+    const other={id:'w11',startMs:5533,endMs:5967,wordIds:['W11'],quote:'word11',kind:'words',commentId:null};
+    // So do cuts before the first word and after the last one.
+    const opening={...inGap,id:'opening',startMs:0,endMs:33},trailing={...inGap,id:'trailing',startMs:7967,endMs:8000};
+    // And a pause cut whose handles moved inside word8, early in it: its mark is the pause before word8.
+    const inWord={...inGap,id:'inWord',startMs:4100,endMs:4167,kind:'pause'};
+    await writeFile(join(temp,'transcripts/words.json'),JSON.stringify({words,cuts:[{id:'J1',atMs:3000}],draftEdits:[opening,inGap,inWord,other,trailing],revision:'gap-cut'}));
+    await page.reload();await page.waitForSelector('.transcript-pause.cut-only');
+    assert.equal(await page.locator('.transcript-pause.cut-only').count(),4,`${name}: a mark for each cut with no words.`);
+    assert.ok(await page.locator('.transcript-pause.cut-only').nth(2).evaluate(n=>n.classList.contains('removed-pause')&&n.nextElementSibling?.textContent==='word8'),`${name}: the cut inside word8 marks the pause before it as cut.`);
+    for(const [n,left] of [[1,['opening','inWord','w11','trailing']],[0,['inWord','w11','trailing']],[0,['w11','trailing']],[0,['w11']]]){
+      await page.keyboard.press('Escape');await page.locator('.transcript-pause.cut-only').nth(n).click();
+      assert.equal(await page.locator('.bar-delete').innerText(),'Restore',`${name}: the cut pause offers Restore.`);
+      await page.locator('.bar-delete').click();
+      await page.waitForFunction(count=>document.querySelectorAll('.transcript-pause.cut-only').length===count,left.length-1);
+      assert.deepEqual((await onDisk()).map(e=>e.id),left,`${name}: only that pause's cut is brought back.`);
+    }
+
     // The bar and the words stay on screen.
     await word(9).click();
     const bar=await page.locator('#transcriptSelection').boundingBox();
@@ -310,7 +353,7 @@ try{
     assert.deepEqual(errors,[],`${name}: no page errors.`);
     await page.close();
   }
-  console.log('PASS: transcript panel editing at desktop and phone width: Delete, a split Delete, Undo, Restore, a refused save, words changed elsewhere, a note on a join.');
+  console.log('PASS: transcript panel editing at desktop and phone width: Delete, a joined Delete, Undo, click to restore a word, a refused save, words changed elsewhere, a note on a join.');
 }finally{
   await browser?.close();server.kill();
   await rm(temp,{recursive:true,force:true});

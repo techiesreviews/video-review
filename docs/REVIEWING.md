@@ -42,7 +42,9 @@ revokes the session's tokens. Never commit connection tokens, footage, transcrip
 The app starts with the picture hidden, larger transcript text, and playback controls pinned below the words.
 Use **Show video** to bring the picture back. The view is remembered after refresh. **Follow playback** keeps
 the current word or long-pause marker vertically centred; switch it off to browse freely. Selecting words
-pauses playback. The **Pauses ≥** setting chooses which approximate word-timing gaps to show.
+pauses playback. The **Pauses ≥** setting chooses which approximate word-timing gaps to show; a shorter gap, or the stretch before the first word or after the last, still shows while it holds a cut with no words, so that cut can be selected and restored. A cut with no words
+inside a word (the waveform handles moved there) marks the pause on the nearer side of that word as cut, and
+selecting that pause restores it.
 
 When **Waveform** is enabled, it replaces the ordinary seek bar in the bottom playback controls. With no
 selection it spans the whole video; selecting a passage opens a close-up and a small full-video overview.
@@ -82,9 +84,13 @@ not touched. These controls let you hear and feel the result first.
   either way.
 - The timecodes, seek bar, comment times and pins all use the review file's own clock, which is not the
   original recording's. Comments are always saved in that time.
-- Every join is faded for 15 ms out and back in, like the native audio fades in the Resolve cut. It applies to
+- With Web Audio available, every join is faded for 15 ms out and back in, like the native audio fades in the
+  Resolve cut. It applies to
   every jump, including Hear cut. The fade starts early, so it does not hold back the jump, and it only hides
-  clicks. It cannot repair a clipped word. It is fixed and has no control.
+  clicks. It cannot repair a clipped word. It is fixed and has no control. If the browser cannot prepare the fade,
+  the Cuts control reads **Cuts on · Fades unavailable**. Missing Web Audio or failed fade setup leaves ordinary
+  playback running without preview fades. An interruption after audio has been routed can also interrupt sound;
+  pause and play again once the browser allows audio to resume.
 
 A short silence at a join is the browser finding its place in the file, and it is not in the final cut. The picture can
 also show a removed frame or two just before the jump. Review copies with frequent keyframes cut that silence
@@ -116,14 +122,26 @@ IDs and frames from when it was asked. Other request types are unchanged and hav
 
 `get_transcript` returns the reviewer's current preview removals as `draftEdits`:
 `{id, startMs, endMs, wordIds, quote, kind, commentId}`, in review-file milliseconds, with `kind` either `words` or
-`pause`. They are not in the rendered file until an agent applies them. The hosted app reads them from the open tab.
+`pause`. A cut's optional `takenIn` lists earlier cuts it replaced, kept only for Undo; they remove nothing. Each keeps its old place in the list as `at`, so Undo puts it back there. The removals
+are not in the rendered file until an agent applies them. The hosted app reads them from the open tab.
 
 ## See the original words and restore a passage
 
 The transcript always shows every original word. Words deleted in this review stay in place, struck through and dimmed,
-and pauses keep their original length (a shortened pause shows both lengths). Click **Restore** beside any removal, or
-select deleted words and press **Restore** in the edit bar (the first button reads Restore on words that are all deleted);
-other cuts remain. Playback and the exported cut list still skip the deleted words.
+and pauses keep their original length (a shortened pause shows both lengths); the waveform is greyed where a cut is.
+Click a deleted word to bring back just that word: a cut with words left on both sides becomes two cuts. To bring back
+several, drag over them and press **Restore** in the edit bar (the first button reads Restore on words that are all
+deleted); other cuts remain. Playback and the exported cut list still skip the deleted words.
+
+Drag across words, or click one and Shift+click another, to select whole words; the selection shows as one band in the
+transcript and one on the waveform. The playing word has a soft ground with an underline instead, so it never looks
+selected; inside a selection it shows as a white underline. **Delete** makes one cut, and takes in any deleted words
+next to or inside it. The cut's edges come from the sound itself: the real pause around the words (or the quietest
+moment, when words run together), keeping the longer of the two pauses, on whole video frames. The local server
+measures each video's loudness once and keeps it; online, the decoded waveform supplies it, decoded at the same 16 kHz
+the server measures at, so a word's last soft sound ("s", "f", "th") is kept the same way. Each join fades over 15 ms
+on the kept side in the exported cut list (`audioFadeMs`). The preview's fade ends 20 ms before each cut, because the
+player's clock trails the sound it has already sent, so the preview never plays sound from inside a cut.
 
 The attached transcript may also contain an `original` section with the full source recording's word timings,
 duration and source identity. Its word IDs must match those in the derived review transcript. This section is

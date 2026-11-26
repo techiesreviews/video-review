@@ -4,33 +4,66 @@
 //             While an agent is connected, one tab relays comments and the agent's changes through the Worker.
 import { applyChange, applyRender, checkVideo, describe, timecode, RULES } from './review-core.js';
 import { normalizeTranscript, searchLibrary, storeTranscript } from './transcript-core.js';
+import { envelopeFromBytes } from './cut-boundary.js';
 
-async function api(route,body){const r=await fetch(route,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{cache:'no-store'});const result=await r.json();if(!r.ok)throw Error(result.error||'Could not save.');return result;}
+async function api(route,body,signal){const r=await fetch(route,{...(body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{cache:'no-store'}),...(signal?{signal}:{})});const result=await r.json();if(!r.ok)throw Error(result.error||'Could not save.');return result;}
+// The agent-status and open-video polls give up after three seconds, so a stalled server cannot hold them open. Comment refresh has no such deadline.
+async function poll(route){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),3000);try{return await api(route,undefined,controller.signal);}finally{clearTimeout(timer);}}
+const sameView=(a,b)=>!!a&&!!b&&a.videoId===b.videoId&&a.playheadMs===b.playheadMs;
 
 export async function openBackend(events){
-  try{const r=await fetch('/api/local',{cache:'no-store'});if(r.ok&&(await r.json()).local)return localBackend();}catch{}
-  return browserBackend(events);
+  let probe;
+  try{
+    const r=await fetch('/api/local',{cache:'no-store'});
+    // Static hosts have no local endpoint; the hosted Worker explicitly returns local:false.
+    if(r.status===404)return browserBackend(events);
+    if(!r.ok)throw Error('Local probe failed');
+    probe=await r.json();
+    if(typeof probe?.local!=='boolean')throw Error('Invalid local probe');
+  }catch{
+    const error=Error('Could not check the review library.');error.code='LOCAL_UNAVAILABLE';throw error;
+  }
+  return probe.local?localBackend(events):browserBackend(events);
 }
 
-function localBackend(){
+function localBackend(events){
   let videos=[],comments=[],viewTimer=null;const urls=new Map();
+  let latestView,viewVersion=0,viewReady=false,viewSending=false;
+  async function sendView(){
+    if(viewSending||!viewReady)return;
+    viewSending=true;viewReady=false;const version=viewVersion,view=latestView;
+    try{await api('/api/view',view);if(version===viewVersion)events.onViewStatus?.(true);}
+    catch{if(version===viewVersion)events.onViewStatus?.(false);}
+    finally{viewSending=false;if(viewReady)await sendView();}
+  }
   return {
     mode:'local',
-    async agentConnected(){try{return !!(await api('/api/agent')).connected;}catch{return false;}},
+    async agentConnected(){try{const {connected}=await poll('/api/agent');return typeof connected==='boolean'?connected:null;}catch{return null;}},
     async load(){videos=await api('/api/videos');comments=(await api('/api/comments')).comments;},
     videos:()=>videos, comments:()=>comments,
     async apply(cmd){comments=(await api('/api/comments',cmd)).comments;return comments;},
     async refresh(){[videos,{comments}]=await Promise.all([api('/api/videos'),api('/api/comments')]);return comments;},
     // fileVersion changes when the file is replaced; while it is missing (mid-render) keep the last URL.
     async media(v){const current=videos.find(x=>x.id===v.id)||v;if(current.fileVersion||!urls.has(v.id))urls.set(v.id,`/media/${encodeURIComponent(v.id)}?v=${current.fileVersion||''}`);return {url:urls.get(v.id)};},
-    setView(view){clearTimeout(viewTimer);viewTimer=setTimeout(()=>api('/api/view',view).catch(()=>{}),400);},
-    async viewRequest(){return api('/api/view-request');},
+    setView(view){
+      // A retry of the view that is already waiting or on its way changes nothing, so its slow success still counts as current.
+      if((viewTimer||viewReady||viewSending)&&sameView(view,latestView))return;
+      latestView=view;viewVersion++;viewReady=false;clearTimeout(viewTimer);viewTimer=setTimeout(()=>{viewTimer=null;viewReady=true;return sendView();},400);
+    },
+    async viewRequest(){return poll('/api/view-request');},
     async searchVideos(query){return api('/api/library/search?q='+encodeURIComponent(query));},
     async removedVideos(){return api('/api/library/removed');},
     async removeVideo(id){return api('/api/library',{action:'remove',videoId:id});},
     async restoreVideo(id){return api('/api/library',{action:'restore',videoId:id});},
     async addPath(path,title){const video=await api('/api/library',{action:'add',path,title});videos=await api('/api/videos');return video;},
     async transcript(v){return api('/api/transcript/'+encodeURIComponent(v.id));},
+    // How loud the video is every 5 ms, measured once on this computer (loudness.py), for cutting words at real pauses.
+    // Null when it cannot be measured (no ffmpeg, no sound): cuts then use the waveform's decode or the word times.
+    async loudness(v){
+      const current=videos.find(x=>x.id===v.id)||v;
+      try{const r=await fetch(`/api/loudness/${encodeURIComponent(v.id)}?v=${encodeURIComponent(current.fileVersion||'')}`,{cache:'no-store'});return r.ok?envelopeFromBytes(new Uint8Array(await r.arrayBuffer())):null;}
+      catch{return null;}
+    },
     // editsOnly: only the preview cuts changed; the server refuses it when the saved words are no longer these.
     async saveTranscript(v,data,{editsOnly=false}={}){return api('/api/transcript/'+encodeURIComponent(v.id),{...normalizeTranscript(data,v.durationMs,v.fps),...(editsOnly?{editsOnly:true}:{})});},
   };
@@ -56,7 +89,7 @@ async function checkMediaDuration(video,file){
   if(!Number.isFinite(actual)||Math.abs(actual-video.durationMs)>Math.max(60,1000/video.fps))throw Error(`That file is a different cut (${timecode(actual)}). This review needs ${timecode(video.durationMs)}. Choose the updated render; your comments are kept.`);
 }
 
-export const canRememberFiles='showOpenFilePicker' in window;
+const canRememberFiles='showOpenFilePicker' in window;
 export async function pickVideoFile(){
   if(canRememberFiles){const [handle]=await window.showOpenFilePicker({id:'video-review',types:[{description:'Video',accept:{'video/*':['.mp4','.mov','.m4v','.webm','.mkv']}}]});return {file:await handle.getFile(),handle};}
   return new Promise((resolve,reject)=>{const input=Object.assign(document.createElement('input'),{type:'file',accept:'video/*'});input.onchange=()=>input.files[0]?resolve({file:input.files[0],handle:null}):reject(new DOMException('No file chosen','AbortError'));input.oncancel=()=>reject(new DOMException('No file chosen','AbortError'));input.click();});
