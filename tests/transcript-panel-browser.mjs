@@ -36,6 +36,11 @@ try{
     const deleted=()=>page.locator('.transcript-word.removed-word').evaluateAll(nodes=>nodes.map(n=>n.textContent));
     // Notes the sample rate of each audio decode, to see what Build waveform measures the loudness at.
     await page.addInitScript(()=>{const Native=window.OfflineAudioContext;window.decodeRates=[];window.OfflineAudioContext=class extends Native{constructor(...args){super(...args);window.decodeRates.push(this.sampleRate);}};});
+    // On the desktop width the server cannot measure the loudness (as without ffmpeg), so the decode supplies it, as
+    // online; on the phone width the server's loudness is in before Build waveform, so the decode only draws the bars.
+    const serverMeasures=name==='phone';
+    if(!serverMeasures)await page.route('**/api/loudness/**',route=>route.fulfill({status:503,body:''}));
+    const loudnessAnswered=page.waitForResponse(response=>response.url().includes('/api/loudness/'));
     await page.goto(base);await page.waitForSelector('.transcript-word');
 
     // A selected word never looks like the playing word, in the reading view (the default) or with the video shown, and
@@ -52,11 +57,14 @@ try{
     assert.equal(looks.default,true,`${name}: the reading view is the default.`);
     for(const view of ['reading','video'])assert.equal(new Set(looks[view]).size,3,`${name}: in the ${view} view the playing, selected, and playing-and-selected words each look different: ${JSON.stringify(looks[view])}`);
 
-    // Build waveform decodes the audio at the rate the server measures loudness at, so cut edges online match it.
+    // Build waveform decodes the audio at the rate the server measures loudness at when the decode supplies the
+    // loudness, so cut edges online match the server's; with the server's loudness in, at 8 kHz for the bars only,
+    // which holds half the samples (TOOLS-475).
+    await (await loudnessAnswered).body();await page.evaluate(()=>new Promise(done=>setTimeout(done,100)));
     await page.locator('#buildWaveform').click();
     await page.waitForFunction(()=>document.querySelector('#buildWaveform').hidden||!document.querySelector('#buildWaveform').disabled);
     assert.equal(await page.locator('#waveformStatus').innerText(),'',`${name}: the waveform builds.`);
-    assert.deepEqual(await page.evaluate(()=>window.decodeRates),[16000],`${name}: one decode, at 16 kHz.`);
+    assert.deepEqual(await page.evaluate(()=>window.decodeRates),[serverMeasures?8000:16000],`${name}: one decode, at ${serverMeasures?'8 kHz with the server\'s loudness in':'16 kHz for the loudness'}.`);
 
     // Delete one word with the bar's button: it is struck through, saved, and the next word is selected.
     await word(2).click();
