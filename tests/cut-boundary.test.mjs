@@ -83,6 +83,11 @@ test('the pause between slices is not a timer, which a browser slows to one a se
   globalThis.setTimeout=(...args)=>{timers++;return timer(...args);};
   try{await boundary.nextTask();}finally{globalThis.setTimeout=timer;}
   assert.equal(timers,0);
+  // It is a real pause: what is already waiting to run (a click) goes first, not after the whole measurement.
+  let done=false;const pause=boundary.nextTask().then(()=>{done=true;});
+  for(let i=0;i<10;i++)await null;
+  assert.equal(done,false,'not over within the same task');
+  await pause;assert.equal(done,true);
 });
 
 test('Build waveform, for mono or stereo, never holds more decoded audio than an hour of stereo at 8 kHz did, and uses 16 kHz only for the loudness (TOOLS-475)',()=>{

@@ -872,12 +872,14 @@ test('a decode whose loudness is still being measured stands in once it is in, a
   assert.ok(other.hasLoudness('v')&&!other.decodedLoudness('v'),'the server measurement stays');
   other.selectWords(1);await other.remove();
   assert.deepEqual(other.edits().map(e=>[e.startMs,e.endMs]),onServer,'and a Delete cuts on it');
-  // A Delete already waiting when the server's measurement comes in first cuts on it, not on the decode's later.
+  // A Delete already waiting when the server's measurement comes in first cuts on it at once, with the decode still
+  // being measured.
   const early=held(),late=held(),waiting=setup().editing;
   waiting.setLoudness('v',early.promise);waiting.setLoudness('v',late.promise,{from:'blob:a'});
   waiting.selectWords(1);const removal=waiting.remove();
-  early.resolve(loudness());await early.promise;await null;late.resolve(flat());await removal;
+  early.resolve(loudness());await new Promise(done=>setImmediate(done));
   assert.deepEqual(waiting.edits().map(e=>[e.startMs,e.endMs]),onServer,'the waiting Delete cuts on the server\'s measurement');
+  late.resolve(flat());await removal;
   // A server with nothing to give does not end the wait: the waiting Delete cuts on the decode when it is in.
   const empty=held(),decoding=held(),patient=setup().editing;
   patient.setLoudness('v',empty.promise);patient.setLoudness('v',decoding.promise,{from:'blob:a'});
