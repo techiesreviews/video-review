@@ -29,22 +29,22 @@ function mp4a(asc,{version=0,wave=false,objectType}={}){
  * A moov with a video track and a sound track. frames: the sound's frame sizes; chunks: [offset, frames in it] in
  * order; edits: [[segmentTicks, mediaTime]] on the movie's 1000 ticks a second (mediaTime -1 is an empty edit).
  */
-function movie({frames,chunks,edits=[[0,1024]],scale=48000,frameTicks=1024,asc=LC_48K_STEREO,entry=mp4a(asc),wide=false}){
+function movie({frames,chunks,edits=[[0,1024]],scale=48000,frameTicks=1024,asc=LC_48K_STEREO,entry=mp4a(asc),wide=false,without=null,more=[]}){
   const runs=[];chunks.forEach(([,n],c)=>{if(runs.at(-1)?.[1]!==n)runs.push([c+1,n]);});
   const offsets=wide?full('co64',0,u32(chunks.length),...chunks.map(([at])=>u64(at))):full('stco',0,u32(chunks.length),...chunks.map(([at])=>u32(at)));
-  const stbl=box('stbl',
-    full('stsd',0,u32(1),entry),
-    full('stts',0,u32(1),u32(frames.length),u32(frameTicks)),
-    full('stsc',0,u32(runs.length),...runs.map(([first,n])=>bytes(u32(first),u32(n),u32(1)))),
-    full('stsz',0,u32(0),u32(frames.length),...frames.map(u32)),
-    offsets);
+  const tables={stsd:full('stsd',0,u32(1),entry),
+    stts:full('stts',0,u32(1),u32(frames.length),u32(frameTicks)),
+    stsc:full('stsc',0,u32(runs.length),...runs.map(([first,n])=>bytes(u32(first),u32(n),u32(1)))),
+    stsz:full('stsz',0,u32(0),u32(frames.length),...frames.map(u32)),
+    offsets};
+  const stbl=box('stbl',...Object.entries(tables).filter(([name])=>name!==without).map(([,table])=>table));
   const sound=box('trak',full('tkhd',0,new Uint8Array(80)),
     box('edts',full('elst',0,u32(edits.length),...edits.map(([segment,media])=>bytes(u32(segment),u32(media>>>0),u32(1<<16))))),
     box('mdia',full('mdhd',0,u32(0),u32(0),u32(scale),u32(frames.length*frameTicks),u32(0)),
       full('hdlr',0,u32(0),text('soun'),new Uint8Array(13)),box('minf',stbl)));
   const video=box('trak',full('tkhd',0,new Uint8Array(80)),
     box('mdia',full('mdhd',0,u32(0),u32(0),u32(30000),u32(0),u32(0)),full('hdlr',0,u32(0),text('vide'),new Uint8Array(13)),box('minf',box('stbl'))));
-  return box('moov',full('mvhd',0,u32(0),u32(0),u32(1000),u32(0),new Uint8Array(80)),video,sound);
+  return box('moov',full('mvhd',0,u32(0),u32(0),u32(1000),u32(0),new Uint8Array(80)),video,sound,...more);
 }
 /** A file made of parts laid at offsets, the rest zero, read as read(start, end) would read the real one. */
 function file(size,parts){
@@ -80,6 +80,19 @@ test('a file that is not an MP4, one with no index (still recording, or fragment
   await assert.rejects(readIndex(fragmented.read,fragmented.size),e=>e instanceof NotReadable&&/fragmented/.test(e.message));
   const short=file(ftyp.length+16,[[0,ftyp],[ftyp.length,bytes(u32(1000),text('mdat'))]]);
   await assert.rejects(readIndex(short.read,short.size),e=>e instanceof NotReadable&&/not a complete MP4/.test(e.message));
+});
+
+test('a fragmented MP4 as recorders write it (an index of empty tables, the frames in fragments) and a damaged index are refused, so the whole file is decoded instead',async()=>{
+  // OBS, a browser's MediaRecorder and ffmpeg's frag_keyframe write a moov with mvex and no frames in its tables.
+  const ftyp=box('ftyp',text('isom'),u32(0)),moov=movie({frames:[],chunks:[],more:[box('mvex',full('trex',0,new Uint8Array(20)))]});
+  const moof=box('moof',new Uint8Array(8)),mdat=box('mdat',new Uint8Array(32));
+  const recorded=file(ftyp.length+moov.length+moof.length+mdat.length,[[0,ftyp],[ftyp.length,moov],[ftyp.length+moov.length,moof],[ftyp.length+moov.length+moof.length,mdat]]);
+  const index=await readIndex(recorded.read,recorded.size);
+  assert.throws(()=>soundTrack(index),e=>e instanceof NotReadable&&/fragmented/.test(e.message));
+  // Empty tables without mvex: nothing to read either.
+  assert.throws(()=>soundTrack(movie({frames:[],chunks:[]})),e=>e instanceof NotReadable);
+  for(const without of ['stsd','stts','stsc','stsz','offsets'])
+    assert.throws(()=>soundTrack(movie({frames:[100,100],chunks:[[1000,2]],without})),e=>e instanceof NotReadable&&/damaged/.test(e.message),`no ${without}`);
 });
 
 test('every frame of the sound is found where its chunk puts it, across runs of chunks of different sizes',()=>{

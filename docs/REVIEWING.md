@@ -146,7 +146,8 @@ run (until then, cuts follow the transcript's word times; a Delete just after th
 measurement). Read 20 seconds at a time, it decodes at the same 16 kHz the server measures at, whatever the length, so
 a word's last soft sound ("s", "f", "th") is kept the same way; the tab holds one stretch of sound at a time. While the
 waveform is still filling in, a cut whose pause lies in the part already shown (with about 2 seconds to spare) uses the
-sound, and one further on follows the word times. A file decoded whole decodes at 16 kHz up to 30 minutes and at 8 kHz
+sound, and one further on follows the word times. What counts as a pause there is judged on the part already shown,
+which settles within the first seconds of speech. A file decoded whole decodes at 16 kHz up to 30 minutes and at 8 kHz
 beyond, as before, so the tab holds no more audio than it did for an hour: online, its cut edges can clip a word's last
 soft sound. With the server's loudness in, the waveform decodes at 8 kHz for the bars only. Each join fades over 15 ms on the kept side in the
 exported cut list (`audioFadeMs`). The preview's fade ends 20 ms before each cut, because the
