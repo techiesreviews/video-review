@@ -788,6 +788,7 @@ for(const [into,range] of [['the next word',{startMs:5300,endMs:5500}],['the wor
   assert.ok(cut.startMs>=range.startMs-34&&cut.endMs<=range.endMs+34,'the cut lies inside the word, outside the pause');
   editing.selectPause(TRANSCRIPT.words[4],TRANSCRIPT.words[5]);
   assert.deepEqual(editing.toRestore().map(e=>e.id),[cut.id],'the pause offers Restore');
+  assert.equal(await editing.remove(),null,'and not a second Delete');
   await editing.restore(editing.toRestore().map(e=>e.id));
   assert.deepEqual(editing.edits(),[]);
   assert.deepEqual(calls.cancels,[cut.commentId]);
