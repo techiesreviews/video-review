@@ -25,8 +25,11 @@ export function createTranscriptPanel({media,seek,playContext,request,updateRequ
   // ffmpeg, the waveform's own decode gives it once Build waveform has read the audio. A decode that is in while the
   // server still measures stands in until the server's result arrives (setLoudness). Without either, cuts fall back to
   // the transcript's word times. A decode's loudness goes when a new render replaces the file (the next decode measures it).
+  // A decode that is not needed for the loudness only draws the bars, at a lower rate (decodeRate in cut-boundary.js).
+  // The decode's loudness is measured in slices; until it is in, a Delete waits for it as it waits for the server's.
   media.addEventListener('loadstart',()=>{if(videoRef)editing.mediaChanged(videoRef.id,media.currentSrc);});
-  const waveform=createWaveform({media,seek,pause,onRange:adjustSelection,onSamples:(channels,rate)=>{if(videoRef&&(!editing.hasLoudness(videoRef.id)||editing.decodedLoudness(videoRef.id)))editing.setLoudness(videoRef.id,envelopeFromSamples(channels,rate),{from:media.currentSrc});},onAudition:range=>{playContext(Math.max(0,range.startMs-750),Math.min(videoRef.durationMs,range.endMs+750));auditionRange=range;}});
+  const needsLoudness=()=>!!videoRef&&(!editing.hasLoudness(videoRef.id)||editing.decodedLoudness(videoRef.id));
+  const waveform=createWaveform({media,seek,pause,onRange:adjustSelection,needsLoudness,onSamples:(channels,rate)=>{if(needsLoudness())editing.setLoudness(videoRef.id,envelopeFromSamples(channels,rate),{from:media.currentSrc});},onAudition:range=>{playContext(Math.max(0,range.startMs-750),Math.min(videoRef.durationMs,range.endMs+750));auditionRange=range;}});
   try{pauseThreshold=Number(localStorage.getItem('techies-review-pause-threshold'))||450;}catch{}
   if(![250,450,650,1000].includes(pauseThreshold))pauseThreshold=450;
   $('#pauseThreshold').value=String(pauseThreshold);

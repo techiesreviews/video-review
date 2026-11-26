@@ -1,10 +1,11 @@
 import {audioPeaks,waveformWindow,zoomWaveformWindow,adjustBoundary} from './waveform-core.js';
 import {clock} from './time-format.js';
 import {removedRanges} from './cut-core.js';
-import {LOUDNESS_RATE} from './cut-boundary.js';
+import {decodeRate} from './cut-boundary.js';
 const $=s=>document.querySelector(s);
 const stamp=ms=>clock(ms,{places:3,hours:false});
-export function createWaveform({media,seek,pause,onRange,onAudition,onSamples=()=>{}}){
+/** needsLoudness: true when the decode would supply the cut edges' loudness (handed to onSamples). */
+export function createWaveform({media,seek,pause,onRange,onAudition,onSamples=()=>{},needsLoudness=()=>false}){
   const panel=$('#waveformPanel'),canvas=$('#waveformCanvas'),wrap=$('#waveformWrap'),ctx=canvas.getContext('2d'),overview=$('#waveformOverview'),overviewWrap=$('#waveformOverviewWrap'),overviewCtx=overview.getContext('2d');
   let duration=0,fps=30,range=null,removed=[],peaks=null,peakMax=1,bucketMs=8,at=0,generation=0,loading=false,source=null,request=null,drag=null,view={startMs:0,endMs:1},spanMs=4000;
   let visible=true;try{visible=localStorage.getItem('techies-review-waveform')!=='false';}catch{}
@@ -72,10 +73,11 @@ export function createWaveform({media,seek,pause,onRange,onAudition,onSamples=()
       if(data.byteLength>512*1024*1024)throw Error('Use a smaller review MP4 to build this waveform in the browser.');
       status('Building waveform locally…');
       const Offline=window.OfflineAudioContext||window.webkitOfflineAudioContext;if(!Offline)throw Error('This browser cannot decode a local waveform. Try Chrome or Edge.');
-      // One decode, at the rate the loudness is measured at, gives both the bars and the cut edges' loudness.
-      const audio=await new Offline(1,1,LOUDNESS_RATE).decodeAudioData(data);if(token!==generation)return;
+      // One decode gives the bars and, when the loudness is still needed, the cut edges' loudness (decodeRate).
+      const audio=await new Offline(1,1,decodeRate(duration,needsLoudness())).decodeAudioData(data);if(token!==generation)return;
       if(Math.abs(audio.duration*1000-duration)>Math.max(300,duration*.001))throw Error('Audio duration does not match this review copy.');
-      const channels=Array.from({length:audio.numberOfChannels},(_,i)=>audio.getChannelData(i)),result=audioPeaks(channels,audio.sampleRate);
+      const channels=Array.from({length:audio.numberOfChannels},(_,i)=>audio.getChannelData(i)),result=await audioPeaks(channels,audio.sampleRate);
+      if(token!==generation)return;
       onSamples(channels,audio.sampleRate);
       peaks=result.peaks;peakMax=.00001;for(const value of peaks)peakMax=Math.max(peakMax,value);bucketMs=result.bucketMs;source=url;
       status('');$('#buildWaveform').hidden=true;draw();

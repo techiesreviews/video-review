@@ -5,9 +5,24 @@
 
 export const HOP_MS=5;            // loudness measured every 5 ms, over a 10 ms window
 const WINDOW_MS=10;
-// The sample rate the loudness is measured at, the server's (loudness.py RATE). The waveform decodes at it too: at a
-// lower rate the soft high sounds that end words ("s", "f", "th", mostly above 4 kHz) are gone, and a cut clips them.
+// The sample rate the loudness is measured at, the server's (loudness.py RATE). The waveform decodes at it too when it
+// supplies the loudness: at a lower rate the soft high sounds that end words ("s", "f", "th", mostly above 4 kHz) are
+// gone, and a cut clips them.
 export const LOUDNESS_RATE=16000;
+// Enough for the waveform's bars alone.
+const BARS_RATE=8000;
+// The decode keeps every channel at its rate. Before TOOLS-473 it was always at 8 kHz, so an hour of stereo held
+// 57.6 million samples (about 230 MB); a decode at the loudness rate may not hold more than that.
+const MOST_SAMPLES=3600*BARS_RATE*2;
+/** The rate Build waveform decodes at: the loudness rate when the decode supplies the loudness (needsLoudness) and the
+ *  recording is short enough, else 8 kHz for the bars only. Channels are not known before the decode, so two are
+ *  assumed: the loudness rate covers up to half an hour, and longer recordings online cut at 8 kHz edges. */
+export function decodeRate(durationMs,needsLoudness){
+  return needsLoudness&&durationMs/1000*LOUDNESS_RATE*2<=MOST_SAMPLES?LOUDNESS_RATE:BARS_RATE;
+}
+// Measuring a long decode takes a while; it runs in slices with a pause after each, so the page keeps answering clicks.
+export const nextTask=()=>new Promise(resolve=>setTimeout(resolve,0));
+const SLICE_STEPS=4000;           // 20 s of audio per slice
 // Further out, the short silence inside a word ("sam-p-le") starts to pass for the pause between words.
 const SEARCH_BEFORE_MS=100;       // look this far outside the words for their silence
 const SEARCH_INSIDE_MS=80;        // and at most this far inside them (transcripts are often early or late)
@@ -34,14 +49,18 @@ export function envelopeFromBytes(bytes){
 
 /** Loudness from decoded samples (one array per channel), in the server's steps and window. Decoded at LOUDNESS_RATE
  *  it measures as the server does but for one thing: channels are averaged by energy, where the server first mixes them
- *  to one channel. With the same sound on every channel (one microphone) the two are the same. */
-export function envelopeFromSamples(channels,sampleRate){
+ *  to one channel. With the same sound on every channel (one microphone) the two are the same. Measured in slices,
+ *  awaiting pause after each. */
+export async function envelopeFromSamples(channels,sampleRate,{pause=nextTask}={}){
   const hop=Math.round(sampleRate*HOP_MS/1000),win=Math.round(sampleRate*WINDOW_MS/1000);
   const length=channels[0]?.length||0,db=new Float32Array(Math.ceil(length/hop));
-  for(let i=0;i<db.length;i++){
-    let sum=0,n=0;const from=i*hop,to=Math.min(length,from+win);
-    for(const channel of channels)for(let j=from;j<to;j++){sum+=channel[j]*channel[j];n++;}
-    db[i]=n?Math.max(-100,10*Math.log10(sum/n+1e-12)):-100;
+  for(let slice=0;slice<db.length;slice+=SLICE_STEPS){
+    for(let i=slice;i<Math.min(db.length,slice+SLICE_STEPS);i++){
+      let sum=0,n=0;const from=i*hop,to=Math.min(length,from+win);
+      for(const channel of channels)for(let j=from;j<to;j++){sum+=channel[j]*channel[j];n++;}
+      db[i]=n?Math.max(-100,10*Math.log10(sum/n+1e-12)):-100;
+    }
+    await pause();
   }
   return envelope(db);
 }

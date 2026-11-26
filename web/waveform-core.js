@@ -1,12 +1,18 @@
-// Peaks are measured from decoded audio. Transcript gaps do not stand in for a waveform.
-export function audioPeaks(channels,sampleRate,bucketMs=8){
+import {nextTask} from './cut-boundary.js';
+const SLICE_MS=20000;
+// Peaks are measured from decoded audio. Transcript gaps do not stand in for a waveform. A long recording takes a
+// while, so it is measured in slices of 20 s, awaiting pause after each, and the page keeps answering clicks.
+export async function audioPeaks(channels,sampleRate,bucketMs=8,{pause=nextTask}={}){
   if(!channels.length||!Number.isFinite(sampleRate)||sampleRate<=0)throw Error('No decoded audio.');
   const length=channels[0].length,step=Math.max(1,Math.round(sampleRate*bucketMs/1000));
-  const peaks=new Float32Array(Math.ceil(length/step));
-  for(let i=0;i<peaks.length;i++){
-    let peak=0;const end=Math.min(length,(i+1)*step);
-    for(const channel of channels)for(let j=i*step;j<end;j++)peak=Math.max(peak,Math.abs(channel[j]||0));
-    peaks[i]=peak;
+  const peaks=new Float32Array(Math.ceil(length/step)),slice=Math.max(1,Math.round(SLICE_MS/bucketMs));
+  for(let first=0;first<peaks.length;first+=slice){
+    for(let i=first;i<Math.min(peaks.length,first+slice);i++){
+      let peak=0;const end=Math.min(length,(i+1)*step);
+      for(const channel of channels)for(let j=i*step;j<end;j++)peak=Math.max(peak,Math.abs(channel[j]||0));
+      peaks[i]=peak;
+    }
+    await pause();
   }
   return {peaks,bucketMs:step/sampleRate*1000,durationMs:length/sampleRate*1000};
 }
