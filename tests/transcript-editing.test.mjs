@@ -19,7 +19,7 @@ function held(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;r
 
 /** A review state with one video, saved through the shared rules, and an editing module that writes to it.
  *  hold.save / hold.request: the next save or request waits for the test. fail.save: the next save is refused. */
-function setup({transcript=TRANSCRIPT}={}){
+function setup({transcript=TRANSCRIPT,onLoudnessChange}={}){
   const state={videos:[{...VIDEO}],comments:[],appliedOps:[]},calls={saves:[],requests:[],updates:[],cancels:[],reasons:[],errors:[]};
   const hold={},fail={},timers=[];
   let now=0;
@@ -41,7 +41,7 @@ function setup({transcript=TRANSCRIPT}={}){
       calls.cancels.push(id);if(reason)calls.reasons.push([id,reason]);
       if(hold.cancel){const wait=hold.cancel;delete hold.cancel;await wait.promise;}
       applyChange(state,{action:'reply',id,author:'you',text:'Undid this preview removal; keep the passage.',status:'done'});},
-    onError:error=>calls.errors.push(error.message),
+    onError:error=>calls.errors.push(error.message),onLoudnessChange,
     schedule(run,ms){const timer={run,ms,live:true};timers.push(timer);return ()=>{timer.live=false;};},
   });
   editing.load(storeTranscript(state,VIDEO.id,transcript),state.videos[0]);
@@ -919,6 +919,38 @@ test('a waveform build that stops part way takes its loudness with it, so a cut 
   const whole=setup().editing;
   whole.setLoudness('v',loudness(),{from:'blob:a'});whole.decodeStopped('blob:a');
   assert.ok(whole.hasLoudness('v')&&whole.decodedLoudness('v'),'a finished decode stays');
+});
+
+test('the panel is told when the open video\'s loudness changes under a selection, so the cut shown is the cut Delete saves (TOOLS-481)',async()=>{
+  let told=0;const {editing}=setup({onLoudnessChange:()=>{told++;}});
+  const partWay=env=>({...env,readyMs:VIDEO.durationMs});
+  const span=()=>{const cut=editing.bounds();return [cut.startMs,cut.endMs];};
+  editing.selectWords(1);const onWords=span();
+  // A build's loudness comes in: the cut to show is the sound's now.
+  editing.setLoudness('v',partWay(loudness()),{from:'blob:a'});
+  assert.equal(told,1,'told when a stretch\'s loudness is in');
+  const bySound=span();assert.notDeepEqual(bySound,onWords,'the cut to show goes by the sound');
+  // The build stops: the cut to show follows the word times again, as a Delete would.
+  editing.decodeStopped('blob:b');assert.equal(told,1,'another file\'s build stopping changes nothing');
+  editing.decodeStopped('blob:a');
+  assert.equal(told,2,'told when the loudness goes with a stopped build');
+  assert.deepEqual(span(),onWords,'the cut to show follows the word times again');
+  // A measurement still coming changes nothing yet; it does when it is in.
+  const coming=held();editing.setLoudness('v',coming.promise,{from:'blob:a'});
+  assert.equal(told,2,'nothing to show anew while the loudness is still measured');
+  coming.resolve(loudness());await coming.promise;await null;
+  assert.equal(told,3,'told when the measurement is in');
+  assert.deepEqual(span(),bySound,'the cut to show goes by the sound again');
+  editing.setLoudness('other',loudness());assert.equal(told,3,'another video\'s loudness is not the open one\'s');
+  // A new render plays: the old file's loudness goes.
+  editing.mediaChanged('v','blob:b');
+  assert.equal(told,4,'told when the loudness goes with the file it was read from');
+  assert.deepEqual(span(),onWords,'the cut to show follows the word times');
+  // Times set with the handles are kept, whatever the loudness does.
+  editing.adjust({startMs:1200,endMs:1700});
+  editing.setLoudness('v',loudness());
+  assert.equal(told,5,'told when the server\'s loudness is in');
+  assert.deepEqual(span(),[1200,1700],'times set by hand stay');
 });
 
 // Saved history after a click-back (TOOLS-463): a cut holds, of the cuts it took in, only what is still cut under it.
