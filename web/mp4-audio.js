@@ -8,6 +8,8 @@
 const CONTAINERS=new Set(['moov','trak','mdia','minf','stbl','edts']);
 // The index of a long recording is a few megabytes; anything far bigger is not an index this reader understands.
 const MOST_INDEX_BYTES=256*1024*1024;
+// About four days of AAC at 48 kHz (1024 samples a frame); a count past it is a damaged index, not a recording.
+const MOST_FRAMES=2**24;
 // AAC sampling frequencies by index (ISO 14496-3), as an ADTS header names them.
 const RATES=[96000,88200,64000,48000,44100,32000,24000,22050,16000,12000,11025,8000,7350];
 // An AAC frame decodes with the help of the one before it, so each stretch starts this many frames early and the
@@ -120,36 +122,48 @@ export function soundTrack(moov){
     const scale=u32(moov,mdhd.body+(moov[mdhd.body]===1?20:12));
     const stsd=box('stsd'),entry=boxes(moov,stsd.body+8,stsd.end)[0];if(!entry)throw damaged();
     const config=audioConfig(sampleEntryConfig(moov,entry)??[]);
-    // Frame sizes.
+    // Every table's count is checked against the table's own length, and the tables against each other, before any
+    // memory is set aside: a damaged count must not ask for gigabytes.
     const stsz=box('stsz'),fixed=u32(moov,stsz.body+4),count=u32(moov,stsz.body+8);
     if(!count)throw new NotReadable('The video file\'s index lists no sound.');
+    const fits=(table,head,entries,size)=>table.body+head+entries*size<=table.end;
+    if(count>MOST_FRAMES||!fixed&&!fits(stsz,12,count,4))throw damaged();
+    const stts=box('stts'),timeRuns=u32(moov,stts.body+4);if(!fits(stts,8,timeRuns,8))throw damaged();
+    let timed=0;for(let e=0;e<timeRuns;e++)timed+=u32(moov,stts.body+8+e*8);
+    const stco=stbl&&child(moov,stbl,'stco'),co64=stbl&&child(moov,stbl,'co64'),table=stco||co64;if(!table)throw damaged();
+    const chunks=u32(moov,table.body+4);if(!fits(table,8,chunks,stco?4:8))throw damaged();
+    const stsc=box('stsc'),runs=u32(moov,stsc.body+4);if(!fits(stsc,8,runs,12))throw damaged();
+    const runFirst=r=>r<runs?u32(moov,stsc.body+8+r*12)-1:chunks,perChunk=r=>u32(moov,stsc.body+12+r*12);
+    let chunked=0;for(let r=0;r<runs;r++)chunked+=Math.max(0,Math.min(chunks,runFirst(r+1))-runFirst(r))*perChunk(r);
+    if(timed<count||chunked<count)throw damaged();
+    // Frame sizes.
     const sizes=new Uint32Array(count);for(let i=0;i<count;i++)sizes[i]=fixed||u32(moov,stsz.body+12+i*4);
     // Frame starts on the track's clock.
-    const stts=box('stts'),starts=new Float64Array(count+1);
-    for(let e=0,i=0,n=u32(moov,stts.body+4);e<n;e++){
+    const starts=new Float64Array(count+1);
+    for(let e=0,i=0;e<timeRuns;e++){
       const times=u32(moov,stts.body+8+e*8),delta=u32(moov,stts.body+12+e*8);
       for(let k=0;k<times&&i<count;k++,i++)starts[i+1]=starts[i]+delta;
     }
     // Frame offsets: chunk by chunk, each chunk's frames one after another.
-    const stco=stbl&&child(moov,stbl,'stco'),co64=stbl&&child(moov,stbl,'co64'),table=stco||co64;if(!table)throw damaged();
-    const chunks=u32(moov,table.body+4),chunkAt=c=>stco?u32(moov,stco.body+8+c*4):u64(moov,co64.body+8+c*8);
-    const stsc=box('stsc'),runs=u32(moov,stsc.body+4),offsets=new Float64Array(count);
+    const chunkAt=c=>stco?u32(moov,stco.body+8+c*4):u64(moov,co64.body+8+c*8),offsets=new Float64Array(count);
     for(let r=0,i=0;r<runs;r++){
-      const first=u32(moov,stsc.body+8+r*12)-1,perChunk=u32(moov,stsc.body+12+r*12);
-      const last=r+1<runs?u32(moov,stsc.body+8+(r+1)*12)-1:chunks;
-      for(let c=first;c<last&&i<count;c++){let at=chunkAt(c);for(let k=0;k<perChunk&&i<count;k++,i++){offsets[i]=at;at+=sizes[i];}}
+      for(let c=runFirst(r),last=Math.min(chunks,runFirst(r+1));c<last&&i<count;c++){let at=chunkAt(c);for(let k=0;k<perChunk(r)&&i<count;k++,i++){offsets[i]=at;at+=sizes[i];}}
     }
-    // The edit list: an empty edit first delays the track; the first edit with media says where in the track play starts.
-    let skip=0,delayMs=0;const elst=child(moov,trak,'edts')&&child(moov,child(moov,trak,'edts'),'elst');
+    // The edit list: an empty edit first delays the track; the first edit with media says where in the track play starts
+    // and, unless its length is 0, how long it plays (a trimmed video stores more sound than it plays).
+    let skip=0,delayMs=0,end=starts[count];const elst=child(moov,trak,'edts')&&child(moov,child(moov,trak,'edts'),'elst');
     if(elst){
       const v1=moov[elst.body]===1,size=v1?20:12;
-      for(let e=0,n=u32(moov,elst.body+4);e<n;e++){
+      for(let e=0,n=u32(moov,elst.body+4);e<n&&elst.body+8+(e+1)*size<=elst.end;e++){
         const at=elst.body+8+e*size,segment=v1?u64(moov,at):u32(moov,at),media=v1?i64(moov,at+8):i32(moov,at+4);
         if(media===-1){delayMs+=segment/movieScale*1000;continue;}
-        skip=media;break;
+        skip=media;if(segment)end=Math.min(end,media+segment/movieScale*scale);break;
       }
     }
-    return {offsets,sizes,starts,scale,config,skip,delayMs,durationMs:delayMs+(starts[count]-skip)/scale*1000};
+    // Only the frames that start before the edit ends are read; the last of them is cut where the edit ends.
+    let kept=count;while(kept>1&&starts[kept-1]>=end)kept--;
+    return {offsets:offsets.subarray(0,kept),sizes:sizes.subarray(0,kept),starts:starts.subarray(0,kept+1),scale,config,skip,delayMs,end,
+      durationMs:delayMs+(Math.min(end,starts[kept])-skip)/scale*1000};
   }
   throw new NotReadable('This video has no sound track.');
 }
@@ -205,7 +219,7 @@ export async function adtsFile(track,first,last,read){
 export function placement(track,first,last,rate){
   const lead=Math.max(0,first-LEAD_FRAMES);
   const clock=tick=>Math.round(((tick-track.skip)/track.scale+track.delayMs/1000)*rate);
-  const from=Math.max(0,clock(Math.max(track.starts[first],track.skip))),to=Math.max(from,clock(track.starts[last]));
+  const from=Math.max(0,clock(Math.max(track.starts[first],track.skip))),to=Math.max(from,clock(Math.min(track.starts[last],track.end??Infinity)));
   const drop=Math.max(0,Math.round((Math.max(track.starts[first],track.skip)-track.starts[lead])/track.scale*rate));
   return {lead,drop,from,to};
 }
