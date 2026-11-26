@@ -129,6 +129,16 @@ export function cutsToRestore(edits=[],wordIds=[]){
   const gone=deletedIds(edits);if(!wordIds.every(id=>gone.has(id)))return [];
   const ids=new Set(wordIds);return edits.filter(e=>(e.wordIds||[]).some(id=>ids.has(id)));
 }
+/** The pause a cut with no words belongs to, as the index of the word after it (words.length: the pause to the end).
+ *  Its mark is drawn there and selecting it brings the cut back: the pause its middle lies in, or, for a cut inside a
+ *  word (the handles moved there), the pause on the nearer side of that word. */
+export function pauseOfCut(words=[],cut){
+  const middle=(cut.startMs+cut.endMs)/2;
+  let i=words.findIndex(w=>w.startMs>=middle);if(i<0)i=words.length;
+  const inside=words[i-1];
+  if(inside&&middle<inside.endMs&&middle-inside.startMs<inside.endMs-middle)i--;
+  return i;
+}
 /** How many cuts at the end came from one Delete: they share its note (commentId). Cuts without one stand alone. */
 export function lastCutGroup(edits=[]){
   const id=edits.at(-1)?.commentId;if(!edits.length)return 0;if(!id)return 1;

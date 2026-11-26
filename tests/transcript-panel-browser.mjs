@@ -309,10 +309,13 @@ try{
     const other={id:'w11',startMs:5533,endMs:5967,wordIds:['W11'],quote:'word11',kind:'words',commentId:null};
     // So do cuts before the first word and after the last one.
     const opening={...inGap,id:'opening',startMs:0,endMs:33},trailing={...inGap,id:'trailing',startMs:7967,endMs:8000};
-    await writeFile(join(temp,'transcripts/words.json'),JSON.stringify({words,cuts:[{id:'J1',atMs:3000}],draftEdits:[opening,inGap,other,trailing],revision:'gap-cut'}));
+    // And a pause cut whose handles moved inside word8, early in it: its mark is the pause before word8.
+    const inWord={...inGap,id:'inWord',startMs:4100,endMs:4167,kind:'pause'};
+    await writeFile(join(temp,'transcripts/words.json'),JSON.stringify({words,cuts:[{id:'J1',atMs:3000}],draftEdits:[opening,inGap,inWord,other,trailing],revision:'gap-cut'}));
     await page.reload();await page.waitForSelector('.transcript-pause.cut-only');
-    assert.equal(await page.locator('.transcript-pause.cut-only').count(),3,`${name}: a mark for each cut with no words.`);
-    for(const [n,left] of [[1,['opening','w11','trailing']],[0,['w11','trailing']],[0,['w11']]]){
+    assert.equal(await page.locator('.transcript-pause.cut-only').count(),4,`${name}: a mark for each cut with no words.`);
+    assert.ok(await page.locator('.transcript-pause.cut-only').nth(2).evaluate(n=>n.classList.contains('removed-pause')&&n.nextElementSibling?.textContent==='word8'),`${name}: the cut inside word8 marks the pause before it as cut.`);
+    for(const [n,left] of [[1,['opening','inWord','w11','trailing']],[0,['inWord','w11','trailing']],[0,['w11','trailing']],[0,['w11']]]){
       await page.keyboard.press('Escape');await page.locator('.transcript-pause.cut-only').nth(n).click();
       assert.equal(await page.locator('.bar-delete').innerText(),'Restore',`${name}: the cut pause offers Restore.`);
       await page.locator('.bar-delete').click();
