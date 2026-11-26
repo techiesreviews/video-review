@@ -18,6 +18,11 @@ const RATES=[96000,88200,64000,48000,44100,32000,24000,22050,16000,12000,11025,8
 // sound of those frames is dropped: the decoder starts from nothing at every stretch, and without them each stretch
 // would begin with a short false quiet.
 export const LEAD_FRAMES=2;
+// The longest read of sound frames joined into one (TOOLS-481). In a recording a video frame lies between each two sound
+// frames, so a stretch joined without limit is one read of all its video too: 20 s at 50 Mbit/s is 125 MB held at once.
+// Reading only the sound instead (a read for every frame, about 47 a second) was measured 6 to 15 times slower in
+// Chromium than reading through the video in joined reads, so the joining stays and this bounds what one read holds.
+export const LONGEST_READ=4*1024*1024;
 
 export class NotReadable extends Error{}
 // A video with no sound to read: another copy of it would have none either (noSound tells the waveform not to offer one).
@@ -192,12 +197,13 @@ export function stretches(track,stretchMs=20000){
   return out;
 }
 
-/** Byte ranges covering frames [first, last): neighbours closer than `gap` bytes are read as one range. */
-export function byteRanges(track,first,last,gap=256*1024){
+/** Byte ranges covering frames [first, last): neighbours closer than `gap` bytes are read as one range, which starts
+ *  and ends on a frame and is no longer than `most` bytes (a frame is far smaller, so each frame is in one range whole). */
+export function byteRanges(track,first,last,gap=256*1024,most=LONGEST_READ){
   const ranges=[];
   for(let i=first;i<last;i++){
     const start=track.offsets[i],end=start+track.sizes[i],range=ranges.at(-1);
-    if(range&&start>=range[0]&&start-range[1]<=gap)range[1]=Math.max(range[1],end);else ranges.push([start,end]);
+    if(range&&start>=range[0]&&start-range[1]<=gap&&end-range[0]<=most)range[1]=Math.max(range[1],end);else ranges.push([start,end]);
   }
   return ranges;
 }
