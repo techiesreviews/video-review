@@ -29,14 +29,14 @@ function mp4a(asc,{version=0,wave=false,objectType}={}){
  * A moov with a video track and a sound track. frames: the sound's frame sizes; chunks: [offset, frames in it] in
  * order; edits: [[segmentTicks, mediaTime]] on the movie's 1000 ticks a second (mediaTime -1 is an empty edit).
  */
-function movie({frames,chunks,edits=[[0,1024]],scale=48000,frameTicks=1024,asc=LC_48K_STEREO,entry=mp4a(asc),wide=false,without=null,more=[]}){
+function movie({frames,chunks,edits=[[0,1024]],scale=48000,frameTicks=1024,asc=LC_48K_STEREO,entry=mp4a(asc),wide=false,without=null,replace={},more=[]}){
   const runs=[];chunks.forEach(([,n],c)=>{if(runs.at(-1)?.[1]!==n)runs.push([c+1,n]);});
   const offsets=wide?full('co64',0,u32(chunks.length),...chunks.map(([at])=>u64(at))):full('stco',0,u32(chunks.length),...chunks.map(([at])=>u32(at)));
   const tables={stsd:full('stsd',0,u32(1),entry),
     stts:full('stts',0,u32(1),u32(frames.length),u32(frameTicks)),
     stsc:full('stsc',0,u32(runs.length),...runs.map(([first,n])=>bytes(u32(first),u32(n),u32(1)))),
     stsz:full('stsz',0,u32(0),u32(frames.length),...frames.map(u32)),
-    offsets};
+    offsets,...replace};
   const stbl=box('stbl',...Object.entries(tables).filter(([name])=>name!==without).map(([,table])=>table));
   const sound=box('trak',full('tkhd',0,new Uint8Array(80)),
     box('edts',full('elst',0,u32(edits.length),...edits.map(([segment,media])=>bytes(u32(segment),u32(media>>>0),u32(1<<16))))),
@@ -95,6 +95,37 @@ test('a fragmented MP4 as recorders write it (an index of empty tables, the fram
     assert.throws(()=>soundTrack(movie({frames:[100,100],chunks:[[1000,2]],without})),e=>e instanceof NotReadable&&/damaged/.test(e.message),`no ${without}`);
 });
 
+test('a damaged table is refused before any memory is set aside for it: counts past the table\'s end or that disagree',()=>{
+  const frames=[100,100,100],chunks=[[1000,3]],refused=(replace,why)=>{
+    // A count read as two billion frames would set aside gigabytes; the refusal must come first, as NotReadable.
+    assert.throws(()=>soundTrack(movie({frames,chunks,replace})),e=>e instanceof NotReadable&&/damaged/.test(e.message),why);
+  };
+  refused({stsz:full('stsz',0,u32(0),u32(2**31),...frames.map(u32))},'more frame sizes than the table holds');
+  refused({stsz:full('stsz',0,u32(100),u32(2**31)),stts:full('stts',0,u32(1),u32(2**31),u32(1024)),stsc:full('stsc',0,u32(1),u32(1),u32(2**31),u32(1))},
+    'one size for two billion frames, with times and chunks that agree');
+  refused({stts:full('stts',0,u32(2**30),u32(3),u32(1024))},'more time entries than the table holds');
+  refused({stts:full('stts',0,u32(1),u32(2),u32(1024))},'times for fewer frames than it has');
+  refused({stsc:full('stsc',0,u32(2**30),u32(1),u32(3),u32(1))},'more chunk runs than the table holds');
+  refused({stsc:full('stsc',0,u32(1),u32(1),u32(2),u32(1))},'chunks that hold fewer frames than it has');
+  refused({offsets:full('stco',0,u32(2**30),u32(1000))},'more chunk offsets than the table holds');
+});
+
+test('a trimmed video plays only its edit: the sound ends where the edit does, and frames past it are not read',()=>{
+  // 100 s of sound stored, an edit of 10 s from the start-up frame on, as an editor's trim leaves it.
+  const frames=new Array(4688).fill(10),chunks=[[100,4688]];
+  const trimmed=soundTrack(movie({frames,chunks,edits:[[10000,1024]]}));
+  assert.ok(Math.abs(trimmed.durationMs-10000)<1e-9,`10 s play: ${trimmed.durationMs}`);
+  const endTick=1024+10*48000,kept=Math.ceil(endTick/1024);
+  assert.equal(trimmed.sizes.length,kept,'only the frames that play are read');
+  const parts=stretches(trimmed),rate=16000;
+  assert.equal(parts.at(-1)[1],kept);
+  assert.equal(placement(trimmed,...parts.at(-1),rate).to,10*rate,'the last stretch ends at 10 s');
+  // An edit a little longer than the sound (a rounded length) plays the whole sound.
+  const rounded=soundTrack(movie({frames:new Array(48).fill(10),chunks:[[100,48]],edits:[[1003,1024]]}));
+  assert.ok(Math.abs(rounded.durationMs-47*1024/48)<1e-9,`all 47 frames play: ${rounded.durationMs}`);
+  assert.equal(rounded.sizes.length,48);
+});
+
 test('every frame of the sound is found where its chunk puts it, across runs of chunks of different sizes',()=>{
   const frames=[100,101,102,103,104,105,106,107];
   // Three frames in each of the first two chunks, then two; video lies between the chunks.
@@ -118,7 +149,7 @@ test('the edit list: the encoder\'s start-up frame is skipped, and a track that 
   const plain=soundTrack(movie({frames,chunks}));
   assert.equal(plain.skip,1024);assert.equal(plain.delayMs,0);
   assert.ok(Math.abs(plain.durationMs-47*1024/48)<1e-9,`47 frames play: ${plain.durationMs}`);
-  const late=soundTrack(movie({frames,chunks,edits:[[500,-1],[980,1024]]}));
+  const late=soundTrack(movie({frames,chunks,edits:[[500,-1],[1003,1024]]}));
   assert.equal(late.skip,1024);assert.equal(late.delayMs,500);
   assert.ok(Math.abs(late.durationMs-(500+47*1024/48))<1e-9);
   const none=soundTrack(movie({frames,chunks,edits:[[1000,0]]}));
