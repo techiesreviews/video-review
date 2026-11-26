@@ -856,6 +856,20 @@ test('with loudness and no pause around it, a word too short for a frame is not 
   assert.deepEqual(calls.cancels,[],'its note stays open');
 });
 
+test('with loudness and no pause around it, a Delete of a word too short for a frame is refused and saves nothing',async()=>{
+  // “is a test”, run together: “a” is 1020–1040, and the frame lines at 30 fps are 1000, 1033 and 1067. One frame cut
+  // there would leave part of “a” playing and take more of “test” than of “a”.
+  const run=[{id:'a',text:'is',startMs:650,endMs:1020},{id:'b',text:'a',startMs:1020,endMs:1040},{id:'c',text:'test',startMs:1040,endMs:2350}];
+  const {editing,calls}=setup({transcript:{revision:'r1',words:run,cuts:[]}});
+  editing.setLoudness('v',envelope(new Float32Array(VIDEO.durationMs/HOP_MS).fill(-20)));
+  editing.selectWords(1,1);
+  await assert.rejects(editing.remove(),/too short/);
+  assert.deepEqual(editing.edits(),[],'no cut is saved');
+  assert.deepEqual([calls.saves,calls.requests],[[],[]],'and no note is made');
+  editing.selectWords(1,2);await editing.remove();
+  assert.deepEqual(words(editing.edits()[0]),['b','c'],'with the word next to it there is room, and both are cut');
+});
+
 test('with loudness, a word clicked back beside a cut word it runs into plays from the quietest point between them',async()=>{
   // “one two”, run together at 1510 with only a dip between them, no pause.
   const times={W1:[1100,1510],W2:[1510,1900]};

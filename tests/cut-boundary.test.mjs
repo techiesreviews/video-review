@@ -84,6 +84,18 @@ test('beside a word that plays again, a cut with no pause there stops before the
   assert.ok(tight.endMs-tight.startMs<33,'so no whole frame is left for "a", and the caller refuses');
 });
 
+test('a word shorter than a frame, off the frame lines and with no pause around it, is refused rather than cut badly',()=>{
+  // "is a test", run together: "a" is 1020–1040, and the frame lines at 30 fps are 1000, 1033 and 1067. One frame from
+  // 1033 would leave 13 ms of "a" playing and cut 27 ms of "test".
+  const env=drawn(3000,[[0,3000,-20]]);
+  const transcript={words:[word('x','is',650,1020),word('y','a',1020,1040),word('z','test',1040,2350)]};
+  assert.throws(()=>removalBounds(transcript,wordSelection(transcript.words,1,1),3000,30,env),/too short/);
+  // On the frame lines there is room: the frame from 1000 holds all of "a" (1000–1020).
+  const fits={words:[word('x','is',650,1000),word('y','a',1000,1020),word('z','test',1020,2350)]};
+  const cut=removalBounds(fits,wordSelection(fits.words,1,1),3000,30,env);
+  assert.deepEqual([cut.startMs,cut.endMs],[1000,1033]);
+});
+
 test('a short word at the edge of a cut, run into its neighbour, is cut too: the pause on its inner side is not its edge',()=>{
   // "well ... a test": "a" (70 ms) runs straight into "test", and the only pause near it is the one before it.
   const last=drawn(4000,[[500,1000,-20],[1500,1570,-20],[1570,1580,-50],[1580,2300,-20],[2800,3400,-20]]);
