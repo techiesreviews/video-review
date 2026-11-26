@@ -214,11 +214,13 @@ export function createWaveform({media,seek,pause,onRange,onAudition,onLoudness=(
   return {
     load(video){generation++;request?.abort();duration=video?.durationMs||0;fps=video?.fps||30;at=0;range=null;zoomView=null;removed=[];peaks=null;source=null;readyMs=Infinity;dropHanded();loading=false;$('#buildWaveform').hidden=false;$('#buildWaveform').disabled=!video;status('');this.setRange(null);draw();},
     setRange(next){if(next&&!drag&&zoomView&&zoomView.endMs-zoomView.startMs>=duration-1)zoomView=null;range=next;if(range&&zoomView&&!drag&&(range.startMs<view.startMs||range.endMs>view.endMs))zoomView=waveformWindow(duration,(range.startMs+range.endMs)/2,range,view.endMs-view.startMs);showRange();},
-    /** The cut of what is still selected moved by itself (its loudness came in, or went). A cut that has not moved
-     *  changes nothing. One that has is shown where it is now: the view stays where it was, and a time being typed in
-     *  a box stays in it. */
+    /** The cut of what is still selected changed by itself (its loudness came in, or went). A cut that has not moved
+     *  changes nothing. One that has is shown where it is now: a view zoomed by hand stays where it was (the plain
+     *  close-up is always centred on the cut), and a time being typed in a box stays in it. A cut that appears (the
+     *  loudness makes one where the word times were too short for one) or goes is shown as any new selection's is. */
     moveRange(next){
-      if(!range||!next||next.startMs===range.startMs&&next.endMs===range.endMs)return;
+      if(!range||!next){if(range||next)this.setRange(next);return;}
+      if(next.startMs===range.startMs&&next.endMs===range.endMs)return;
       const typed=TIME_BOXES.filter(([id,edge])=>document.activeElement===$(id)&&$(id).value!==seconds(range[edge])).map(([id])=>id);
       range=next;showRange(typed);
     },

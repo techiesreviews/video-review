@@ -24,7 +24,7 @@ const python=process.env.VIDEO_REVIEW_PYTHON||(process.platform==='win32'?'pytho
 const small=join(temp,'small.mp4'),big=join(temp,'big.mp4'),fps=30,durationMs=70000,PAD=3*1024**3;
 // Noise, loud for 0.95 s of every 1.5 s: noise has no repeating shape, so a stretch placed a little off would show.
 // The picture is noise too, held at 8 Mbit/s: it does not compress, so the file weighs what a recording of that rate does.
-const encoded=spawnSync('ffmpeg',['-v','error','-y','-f','lavfi','-i',`testsrc2=s=640x360:r=${fps}:d=70`,'-f','lavfi','-i','anoisesrc=color=pink:sample_rate=48000:duration=70:amplitude=0.4','-vf','noise=alls=80:allf=t+u','-af',"volume='if(lt(mod(t,1.5),0.95),1,0)':eval=frame",'-c:v','libx264','-preset','ultrafast','-b:v','8M','-minrate','8M','-maxrate','8M','-bufsize','4M','-pix_fmt','yuv420p','-c:a','aac','-b:a','96k','-shortest',small],{windowsHide:true,encoding:'utf8'});
+const encoded=spawnSync('ffmpeg',['-v','error','-y','-f','lavfi','-i',`testsrc2=s=640x360:r=${fps}:d=70`,'-f','lavfi','-i','anoisesrc=color=pink:sample_rate=48000:duration=70:amplitude=0.4','-vf','noise=alls=80:allf=t+u','-af',"volume='if(lt(mod(t,1.5),0.95)+between(t,2.7,2.76),1,0)':eval=frame",'-c:v','libx264','-preset','ultrafast','-b:v','8M','-minrate','8M','-maxrate','8M','-bufsize','4M','-pix_fmt','yuv420p','-c:a','aac','-b:a','96k','-shortest',small],{windowsHide:true,encoding:'utf8'});
 assert.equal(encoded.status,0,encoded.stderr);
 // The big copy: the same file with a 3 GB free box before its index (moov), which ffmpeg writes at the end.
 const bytes=await readFile(small);let moovAt=0;
@@ -87,6 +87,10 @@ try{await silentTail.write(free,0,16,silentBytes);await silentTail.truncate(sile
 // A word over each loud stretch, a little inside its sound (0 to 950 ms of every 1.5 s), so the pauses either side are
 // within the cut's search and a cut from the sound differs from one from the word times.
 const words=[];for(let i=0;i<46;i++)words.push({id:'W'+i,text:'word'+i,startMs:i*1500+60,endMs:i*1500+890});
+// Word 1 is 20 ms long in the transcript, right against its neighbours: too short to cut by the word times alone (under
+// a frame). The sound has a short burst there with quiet either side (2.70 to 2.76 s, in the pause before word 2's
+// sound), so the loudness gives it a cut.
+words[0].endMs=words[1].startMs=2720;words[1].endMs=words[2].startMs=2740;
 await writeFile(join(temp,'manifest.json'),JSON.stringify([
   {id:'big',title:'Big waveform test',label:'Synthetic',path:big,fps,durationMs,keepRanges:[[0,durationMs*fps/1000]]},
   {id:'small',title:'Big waveform test, small copy',label:'Synthetic',path:small,fps,durationMs,keepRanges:[[0,durationMs*fps/1000]]}]));
@@ -325,11 +329,26 @@ try{
   assert.deepEqual([failed.startMs,failed.endMs].map(Math.round),atDelete,'and saves the cut that was shown');
   // (Looked at last: the look lets go of the selection.)
   assert.equal(await barAt(9400),false,'and the bars of its first stretch are gone');
+  // A word too short to cut by its word times (word 1) shows no cut and no Hear cut. Its cut appears when the first
+  // stretch's loudness makes one, and goes again when that build fails: what is shown is what a Delete would do.
+  const cutShown=async()=>[await page.locator('#waveformRange').isVisible(),await page.locator('#auditionWaveformCut').isEnabled()];
+  await word(1).click();
+  assert.deepEqual(await cutShown(),[false,false],'by the word times, word 1 is too short to cut: no cut is shown');
+  await page.evaluate(()=>{window.heldPauses=[];});
+  await page.locator('#buildWaveform').click();
+  await page.waitForFunction(()=>window.heldPauses?.length>0);
+  assert.deepEqual(await cutShown(),[true,true],'with its loudness in, word 1\'s cut is shown and can be heard');
+  const [shortStart,shortEnd]=await shown();
+  assert.ok(shortEnd-shortStart>=33&&shortStart<=2700&&shortEnd>=2760,`a cut of a frame or more, with word 1's whole sound: ${shortStart}-${shortEnd}`);
+  await page.evaluate(()=>window.releasePauses());
+  await page.waitForFunction(()=>!document.querySelector('#buildWaveform').disabled&&document.querySelector('#waveformStatus').textContent);
+  assert.equal(await page.locator('#waveformStatus').innerText(),'Could not read part of the local video.','this build fails as the last one did');
+  assert.deepEqual(await cutShown(),[false,false],'the build has failed: word 1 is too short to cut again, and no cut is shown');
   await page.evaluate(()=>{window.failReads=null;window.blobReads=[];});
   // A time being typed in a box below the waveform is not wiped by the stretches that come in while a word is chosen
   // (word 16, whose sound is in the second stretch): not by the stretch that moves its cut from the word times to the
-  // sound, which moves the other time only, and not by the next one, which leaves the cut where it is. The typed time
-  // is taken when it is entered.
+  // sound, and not by the next one, which leaves the cut where it is. The typed time is taken when it is entered.
+  // A view zoomed in beside the cut (Ctrl and scroll) is not pulled back to the cut when it moves.
   const nextStretch=async()=>{
     await page.evaluate(()=>{window.releasePauses();window.heldPauses=[];});
     await page.waitForFunction(()=>window.heldPauses?.length>0);
@@ -341,7 +360,15 @@ try{
   await page.waitForFunction(()=>window.heldPauses?.length>0);
   assert.deepEqual(await shown(),byWords,'with the first stretch in, word 16\'s cut still follows the word times: its sound is further on');
   await page.locator('#waveformIn').selectText();await page.keyboard.type('23.9');
+  const viewNow=()=>page.evaluate(()=>{const {startMs,endMs}=document.querySelector('#waveformCanvas').dataset;return [Number(startMs),Number(endMs)];});
+  await page.locator('#waveformCanvas').hover();await page.keyboard.down('Control');
+  for(let i=0;i<8;i++)await page.mouse.wheel(0,-600);
+  await page.keyboard.up('Control');
+  await page.waitForFunction(()=>{const {startMs,endMs}=document.querySelector('#waveformCanvas').dataset;return endMs-startMs<300;});
+  const zoomed=await viewNow();
   await nextStretch();
+  assert.ok((await shown())[1]>zoomed[1],`the cut's end, moved by this stretch, is outside the zoomed view (${zoomed})`);
+  assert.deepEqual(await viewNow(),zoomed,'a zoomed view stays where it is when a stretch moves the cut');
   assert.equal(await page.locator('#waveformIn').inputValue(),'23.9','a time being typed is still in its box after the stretch that moved the cut');
   const endBySound=(await shown())[1];
   assert.ok(endBySound>=16*1500+950&&endBySound!==byWords[1],`the cut's other time has moved to the sound: ${endBySound} (by the words ${byWords[1]})`);
@@ -353,8 +380,8 @@ try{
   await page.evaluate(()=>window.releasePauses());
   await page.waitForFunction(()=>document.querySelector('#buildWaveform').hidden,null,{timeout:120000});
   assert.deepEqual(await shown(),[23900,endBySound],'and stays to the end of the build');
-  // Out of the box, so Escape lets go of the selection for the look at the bars.
-  await page.locator('#waveformIn').blur();
+  // Out of the box, so Escape lets go of the selection for the look at the bars, on the whole video again.
+  await page.locator('#waveformIn').blur();await page.locator('#waveformZoom').selectOption('fit');
   assert.equal(await barAt(45400),true,'the chosen file\'s bars, all the way in');
   const blobReads=await page.evaluate(()=>window.blobReads);
   assert.ok(blobReads.length>3&&blobReads.every(read=>read.range&&read.status===206),`the chosen file is read in ranges: ${JSON.stringify(blobReads.slice(0,3))}`);
