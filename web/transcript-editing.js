@@ -283,7 +283,7 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
       try{noteOpen=await commit(at,[...kept,edit]);}
       catch(error){
         // No open note may claim a cut that was never saved.
-        if(saved?.id&&!error.saved)await cancelRequest(saved.id).catch(onError);
+        if(saved?.id&&!error.saved)await cancelRequest(saved.id).catch(error=>{if(video?.id===target.id)onError(error);});
         if(saved?.id&&error.saved&&said)cutNotes.set(saved.id,said);
         if(error.saved)await closeJoined(letGo,target);
         throw error;

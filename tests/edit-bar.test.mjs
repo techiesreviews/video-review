@@ -126,6 +126,7 @@ test('a cut with no words belongs to one pause: the one it lies in, or inside a 
   assert.equal(pauseOfCut(around,{startMs:1600,endMs:1700}),2,'late in the second word: the pause after it, to the end');
   assert.equal(pauseOfCut(around,{startMs:600,endMs:700}),1,'late in the first word: the pause after it');
   assert.equal(pauseOfCut(around,{startMs:150,endMs:250}),0,'early in the first word: the pause from the start');
+  assert.equal(pauseOfCut(around,{startMs:1400,endMs:1500}),2,'right in the middle of a word: the pause after it');
   assert.equal(pauseOfCut(around,{startMs:0,endMs:60}),0);
   assert.equal(pauseOfCut(around,{startMs:1900,endMs:2000}),2);
 });
