@@ -36,6 +36,13 @@ try{
     const deleted=()=>page.locator('.transcript-word.removed-word').evaluateAll(nodes=>nodes.map(n=>n.textContent));
     // Notes the sample rate of each audio decode, to see what Build waveform measures the loudness at.
     await page.addInitScript(()=>{const Native=window.OfflineAudioContext;window.decodeRates=[];window.OfflineAudioContext=class extends Native{constructor(...args){super(...args);window.decodeRates.push(this.sampleRate);}};});
+    // While heldPauses is a list, the pauses between measuring slices (a message, nextTask in cut-boundary.js) wait in
+    // it until releasePauses().
+    await page.addInitScript(()=>{
+      const Native=window.MessageChannel;window.heldPauses=null;
+      window.MessageChannel=class extends Native{constructor(){super();const port=this.port2,post=port.postMessage.bind(port);port.postMessage=message=>window.heldPauses?window.heldPauses.push(()=>post(message)):post(message);}};
+      window.releasePauses=()=>{const held=window.heldPauses||[];window.heldPauses=null;for(const post of held)post();};
+    });
     // On the desktop width the server cannot measure the loudness (as without ffmpeg), so the decode supplies it, as
     // online; on the phone width the server's loudness is in before Build waveform, so the decode only draws the bars.
     const serverMeasures=name==='phone';
@@ -61,10 +68,19 @@ try{
     // loudness, so cut edges online match the server's; with the server's loudness in, at 8 kHz for the bars only,
     // which holds half the samples (TOOLS-475).
     await (await loudnessAnswered).body();await page.evaluate(()=>new Promise(done=>setTimeout(done,100)));
+    // The bars are measured in slices; when the video goes away meanwhile, the measurement that finishes later is not
+    // used: no bars, and Build waveform stays offered.
+    await page.evaluate(()=>{window.heldPauses=[];});
+    await page.locator('#buildWaveform').click();
+    await page.waitForFunction(()=>window.heldPauses?.length>0);
+    await page.evaluate(()=>{document.querySelector('#video').dispatchEvent(new Event('emptied'));window.releasePauses();});
+    await page.evaluate(()=>new Promise(done=>setTimeout(done,200)));
+    assert.deepEqual(await page.evaluate(()=>{const button=document.querySelector('#buildWaveform');return [button.hidden,button.disabled];}),[false,false],`${name}: a measurement that finished after the video went away is not used.`);
     await page.locator('#buildWaveform').click();
     await page.waitForFunction(()=>document.querySelector('#buildWaveform').hidden||!document.querySelector('#buildWaveform').disabled);
     assert.equal(await page.locator('#waveformStatus').innerText(),'',`${name}: the waveform builds.`);
-    assert.deepEqual(await page.evaluate(()=>window.decodeRates),[serverMeasures?8000:16000],`${name}: one decode, at ${serverMeasures?'8 kHz with the server\'s loudness in':'16 kHz for the loudness'}.`);
+    const rate=serverMeasures?8000:16000;
+    assert.deepEqual(await page.evaluate(()=>window.decodeRates),[rate,rate],`${name}: each decode at ${serverMeasures?'8 kHz with the server\'s loudness in':'16 kHz for the loudness'}.`);
 
     // Delete one word with the bar's button: it is struck through, saved, and the next word is selected.
     await word(2).click();
