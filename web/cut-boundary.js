@@ -96,7 +96,9 @@ function quietestFrame(env,aimMs,lo,hi,step){
  * neighbouring word, and of the two pauses around the words the longer one stays, shared out between the two sides.
  * clear: [before, after], true where the word on that side plays again (it was clicked back). On such a side the cut
  * stops at the frame line before that word's sound (the pause's far edge, or with no pause the quietest point), so
- * none of it is cut, and the cut is not stretched to a whole frame: the caller refuses a cut left shorter than one.
+ * none of it is cut.
+ * A sound shorter than a frame with no pause around it can leave both edges on one frame line. The cut is never
+ * stretched to a whole frame, which would take more of a neighbour than of the word: the caller refuses it.
  */
 export function cleanCut(words,first,last,env,{fps=30,durationMs,clear=[false,false]}){
   const step=1000/fps,s=words[first].startMs,e=words[last].endMs,length=e-s;
@@ -124,7 +126,5 @@ export function cleanCut(words,first,last,env,{fps=30,durationMs,clear=[false,fa
   const soundEndsMs=g1.silent?g1.startMs:aimStartMs,soundStartsMs=g2.silent?g2.endMs:aimEndMs;
   if(clear[0]&&startMs<soundEndsMs-0.001)startMs=Math.ceil(soundEndsMs/step-0.001)*step;
   if(clear[1]&&endMs>soundStartsMs+0.001)endMs=Math.floor(soundStartsMs/step+0.001)*step;
-  // A Delete of a sound shorter than a frame still cuts one whole frame.
-  if(!clear[0]&&!clear[1])endMs=Math.max(endMs,startMs+step);
   return {startMs:Math.max(0,startMs),endMs:Math.min(durationMs,endMs),aimStartMs,aimEndMs,silent:[g1.silent,g2.silent]};
 }
