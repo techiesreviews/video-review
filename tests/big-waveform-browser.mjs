@@ -5,12 +5,13 @@
 // It checks that the waveform builds with no "use a smaller file" message, fills in from left to right, reads each
 // stretch in reads of 4 MB at most and nothing of the file twice, that a Delete on the part already in uses the sound
 // while one past it follows the word times, and that the sound read in stretches lines up with the whole file's
-// decode. Opened as a chosen file, as online, a build stopped part way leaves nothing behind, and a 3 GB fragmented
-// MP4 says what to do instead.
+// decode. Opened as a chosen file, as online, a build stopped part way or failed part way leaves nothing behind (no
+// bars, and no loudness that would place a cut), a small file that cannot be read in stretches is decoded whole, and
+// a 3 GB fragmented MP4 says what to do instead.
 // Run: node tests/big-waveform-browser.mjs (needs Playwright and ffmpeg).
 import {chromium} from 'playwright';
 import {spawn,spawnSync} from 'node:child_process';
-import {mkdtemp,writeFile,mkdir,readFile,rm,open} from 'node:fs/promises';
+import {mkdtemp,writeFile,mkdir,readFile,rm,open,copyFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import assert from 'node:assert/strict';
@@ -67,11 +68,12 @@ const file=await open(big,'w');
 // Windows keeps a file sparse only when told to; without it the padding would be 3 GB of real zeros on the disk.
 if(process.platform==='win32')assert.equal(spawnSync('fsutil',['sparse','setflag',big],{windowsHide:true}).status,0,'the big copy is marked sparse');
 try{await file.write(bytes,0,moovAt,0);await file.write(free,0,16,moovAt);await file.write(bytes,moovAt,bytes.length-moovAt,moovAt+PAD);}finally{await file.close();}
-// A fragmented copy as a recorder writes it (its frames listed in each fragment, not in the index), 3 GB as well: the
-// padding goes at its end, after the last fragment.
-const fragmented=join(temp,'fragmented.mp4');
-const remuxed=spawnSync('ffmpeg',['-v','error','-y','-i',small,'-c','copy','-movflags','frag_keyframe+empty_moov',fragmented],{windowsHide:true,encoding:'utf8'});
+// A fragmented copy as a recorder writes it (its frames listed in each fragment, not in the index), small as it comes
+// and as a 3 GB file: the padding goes at its end, after the last fragment.
+const fragmentedSmall=join(temp,'fragmented-small.mp4'),fragmented=join(temp,'fragmented.mp4');
+const remuxed=spawnSync('ffmpeg',['-v','error','-y','-i',small,'-c','copy','-movflags','frag_keyframe+empty_moov',fragmentedSmall],{windowsHide:true,encoding:'utf8'});
 assert.equal(remuxed.status,0,remuxed.stderr);
+await copyFile(fragmentedSmall,fragmented);
 const fragmentedBytes=(await readFile(fragmented)).length,tail=await open(fragmented,'r+');
 if(process.platform==='win32')assert.equal(spawnSync('fsutil',['sparse','setflag',fragmented],{windowsHide:true}).status,0,'the fragmented copy is marked sparse');
 try{await tail.write(free,0,16,fragmentedBytes);await tail.truncate(fragmentedBytes+PAD);}finally{await tail.close();}
@@ -337,6 +339,16 @@ try{
   await word(10).click();await page.locator('.bar-delete').click();
   await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===6);
   bySound((await onDisk()).find(c=>c.wordIds[0]==='W10'),10,'word 10\'s cut, on the whole file\'s decode,');
+  // So is a small file whose index the page cannot read in stretches at all (a fragmented MP4, 70 MB): no stretch is
+  // tried, the whole file is decoded, and its loudness places a Delete.
+  await choose(fragmentedSmall);
+  const decodes=await page.evaluate(()=>window.decodeRates.length);
+  assert.equal(await built(),'','a small fragmented MP4 builds its waveform from the whole file');
+  assert.equal(await page.evaluate(()=>window.decodeRates.length),decodes+1,'in one decode');
+  assert.equal(await barAt(45400),true,'its bars, all the way in');
+  await word(12).click();await page.locator('.bar-delete').click();
+  await page.waitForFunction(()=>document.querySelectorAll('.transcript-word.removed-word').length===7);
+  bySound((await onDisk()).find(c=>c.wordIds[0]==='W12'),12,'word 12\'s cut, on the fragmented file\'s decode,');
   // A 3 GB file whose sound cannot be read in stretches (here a fragmented MP4) says why and what to do instead.
   await choose(fragmented);
   assert.match(await built(),/fragmented.*Make a review copy of this video to build its waveform\./,'a file it cannot read says what to do');
@@ -345,7 +357,7 @@ try{
   assert.equal(await built(),'This video has no sound track.','a video with no sound says so, and nothing more');
   assert.ok(!allStatuses.some(text=>/smaller|large/i.test(text)),`no "file too large" message: ${JSON.stringify([...new Set(allStatuses)])}`);
   assert.deepEqual(errors,[],'no page errors');
-  console.log(`PASS: a 3 GB review copy with video of real weight builds its waveform in ${seen.length} stretches (${seen.join(', ')}%), reads ${mb(total)} MB of it in ${reads.length} reads of ${mb(Math.max(...reads.map(read=>read.bytes)))} MB at most (${perStretch.map(mb).join(', ')} MB a stretch, for ${layout.map(part=>mb(part.sound)).join(', ')} MB of sound), cuts on the part that is in, and lines up with the whole decode (${lineUp.differ} of ${lineUp.steps} loudness steps differ); chosen as a file, it stops cleanly part way and reads ${mb(blobTotal)} MB in ranges.`);
+  console.log(`PASS: a 3 GB review copy with video of real weight builds its waveform in ${seen.length} stretches (${seen.join(', ')}%), reads ${mb(total)} MB of it in ${reads.length} reads of ${mb(Math.max(...reads.map(read=>read.bytes)))} MB at most (${perStretch.map(mb).join(', ')} MB a stretch, for ${layout.map(part=>mb(part.sound)).join(', ')} MB of sound), cuts on the part that is in, and lines up with the whole decode (${lineUp.differ} of ${lineUp.steps} loudness steps differ); chosen as a file, it stops cleanly part way, leaves no loudness behind when a read fails, and reads ${mb(blobTotal)} MB in ranges; a small file that cannot be read in stretches is decoded whole.`);
 }finally{
   await browser?.close();server.kill();
   await rm(temp,{recursive:true,force:true});
