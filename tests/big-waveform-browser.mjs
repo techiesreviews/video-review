@@ -2,7 +2,8 @@
 // moved behind 3 GB of padding (a sparse file, so it takes no disk space). It never opens a real review.
 // It checks that the waveform builds with no "use a smaller file" message, fills in from left to right, reads only
 // small parts of the file, that a Delete on the part already in uses the sound while one past it follows the word
-// times, and that the sound read in stretches lines up with the whole file's decode.
+// times, and that the sound read in stretches lines up with the whole file's decode. Opened as a chosen file, as online,
+// a build stopped part way leaves nothing behind, and a 3 GB fragmented MP4 says what to do instead.
 // Run: node tests/big-waveform-browser.mjs (needs Playwright and ffmpeg).
 import {chromium} from 'playwright';
 import {spawn,spawnSync} from 'node:child_process';
@@ -28,6 +29,14 @@ const file=await open(big,'w');
 // Windows keeps a file sparse only when told to; without it the padding would be 3 GB of real zeros on the disk.
 if(process.platform==='win32')assert.equal(spawnSync('fsutil',['sparse','setflag',big],{windowsHide:true}).status,0,'the big copy is marked sparse');
 try{await file.write(bytes,0,moovAt,0);await file.write(free,0,16,moovAt);await file.write(bytes,moovAt,bytes.length-moovAt,moovAt+PAD);}finally{await file.close();}
+// A fragmented copy as a recorder writes it (its frames listed in each fragment, not in the index), 3 GB as well: the
+// padding goes at its end, after the last fragment.
+const fragmented=join(temp,'fragmented.mp4');
+const remuxed=spawnSync('ffmpeg',['-v','error','-y','-i',small,'-c','copy','-movflags','frag_keyframe+empty_moov',fragmented],{windowsHide:true,encoding:'utf8'});
+assert.equal(remuxed.status,0,remuxed.stderr);
+const fragmentedBytes=(await readFile(fragmented)).length,tail=await open(fragmented,'r+');
+if(process.platform==='win32')assert.equal(spawnSync('fsutil',['sparse','setflag',fragmented],{windowsHide:true}).status,0,'the fragmented copy is marked sparse');
+try{await tail.write(free,0,16,fragmentedBytes);await tail.truncate(fragmentedBytes+PAD);}finally{await tail.close();}
 // A word over each loud stretch, a little inside its sound (0 to 950 ms of every 1.5 s), so the pauses either side are
 // within the cut's search and a cut from the sound differs from one from the word times.
 const words=[];for(let i=0;i<46;i++)words.push({id:'W'+i,text:'word'+i,startMs:i*1500+60,endMs:i*1500+890});
@@ -204,8 +213,12 @@ try{
   await page.waitForFunction(()=>window.heldPauses?.length>0);
   assert.match(await page.locator('#waveformStatus').innerText(),/^Building waveform… \d+%$/,'the chosen file builds a stretch at a time');
   await play(1);
+  const decodesBefore=await page.evaluate(()=>window.decodeRates.length);
   await page.evaluate(()=>window.releasePauses());
-  await page.waitForFunction(()=>!window.heldPauses?.length);
+  // The stopped build gets its turn (the pause it was held in, then a few more tasks) and must do nothing with it.
+  await page.waitForTimeout(300);
+  assert.equal(await page.evaluate(()=>window.decodeRates.length),decodesBefore,'the stopped build decodes no further stretch');
+  assert.equal(await page.locator('#buildWaveform').isVisible(),true,'Build waveform is still offered');
   assert.equal(await page.locator('#waveformStatus').innerText(),'','a stopped build says nothing');
   assert.equal(await page.locator('#buildWaveform').isEnabled(),true,'and Build waveform can start again');
   assert.equal(await barAt(9400),false,'its bars are gone with the video they came from');
@@ -221,6 +234,13 @@ try{
   assert.ok(blobReads.length>3&&blobReads.every(read=>read.range&&read.status===206&&read.bytes<=4*1024*1024),`the chosen file is read in small ranges: ${JSON.stringify(blobReads.slice(0,3))}`);
   assert.ok(blobTotal<20*1024*1024,`${(blobTotal/1024/1024).toFixed(1)} MB of the chosen file read in all`);
   const allStatuses=await page.evaluate(()=>window.statuses);
+  // A 3 GB file whose sound cannot be read in stretches (here a fragmented MP4) says why and what to do instead.
+  await picker.setInputFiles(fragmented);
+  await page.evaluate(()=>window.blobs.push(URL.createObjectURL(document.querySelector('input[type=file][hidden]').files[0])));
+  await play(2);
+  await page.locator('#buildWaveform').click();
+  await page.waitForFunction(()=>!document.querySelector('#buildWaveform').disabled&&document.querySelector('#waveformStatus').textContent);
+  assert.match(await page.locator('#waveformStatus').innerText(),/fragmented.*Make a review copy of this video to build its waveform\./,'a file it cannot read says what to do');
   assert.ok(!allStatuses.some(text=>/smaller|large/i.test(text)),`no "file too large" message: ${JSON.stringify([...new Set(allStatuses)])}`);
   assert.deepEqual(errors,[],'no page errors');
   console.log(`PASS: a 3 GB review copy builds its waveform in ${seen.length} stretches (${seen.join(', ')}%), reads ${(total/1024/1024).toFixed(1)} MB of it, cuts on the part that is in, and lines up with the whole decode (${lineUp.differ} of ${lineUp.steps} loudness steps differ); chosen as a file, it stops cleanly part way and reads ${(blobTotal/1024/1024).toFixed(1)} MB in ranges.`);
