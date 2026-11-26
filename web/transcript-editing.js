@@ -63,12 +63,20 @@ export function createTranscriptEditing({saveTranscript,request,updateRequest,ca
   const indexOf=id=>transcript.words.findIndex(w=>w.id===id);
 
   /** The video's loudness (an envelope from cut-boundary.js, or a promise of one) for finding where word cuts go. from:
-   *  the media file a waveform decode read it from; none for the server's, which is fetched for each file version. */
+   *  the media file a waveform decode read it from; none for the server's, which is fetched for each file version.
+   *  A decode that comes in while the server still measures stands in for it (standsFor) until the server's
+   *  measurement arrives, which then takes its place again; a server with nothing to give leaves the decode. */
   function setLoudness(videoId,value,{from=null}={}){
     if(!value)return void loudness.delete(videoId);
-    const entry={env:null,promise:null,waited:false,from};loudness.set(videoId,entry);
+    const before=loudness.get(videoId);
+    const standsFor=from&&before?(before.from?before.standsFor:before.env?null:before):null;
+    const entry={env:null,promise:null,waited:false,from,standsFor};loudness.set(videoId,entry);
     if(typeof value.then!=='function'){entry.env=value;return;}
-    entry.promise=Promise.resolve(value).then(env=>{entry.env=env||null;return entry.env;},()=>null);
+    entry.promise=Promise.resolve(value).then(env=>{
+      entry.env=env||null;
+      if(entry.env&&loudness.get(videoId)?.standsFor===entry)loudness.set(videoId,entry);
+      return entry.env;
+    },()=>null);
   }
   /** The open video's loudness now, or after a short wait while it is still being measured; null without it. Only the
    *  first edit waits: once a wait ran out, later edits cut on the word times until the measurement is in. */

@@ -2,6 +2,8 @@
 // The loudness here is drawn by hand: speech at -20 dB, silence at -80 dB, so each test says exactly what the audio holds.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import * as boundary from '../web/cut-boundary.js';
 import {HOP_MS,envelope,envelopeFromBytes,envelopeFromSamples,cleanCut} from '../web/cut-boundary.js';
 import {removalBounds} from '../web/cut-core.js';
 import {wordSelection} from '../web/transcript-core.js';
@@ -107,4 +109,28 @@ test('a short word at the edge of a cut, run into its neighbour, is cut too: the
   const others=[word('i','is',500,1000),word('a','a',1010,1080),word('t','test',1500,2300),word('n','next',2800,3400)];
   const second=cleanCut(others,1,2,first,{fps:30,durationMs:4000});
   assert.ok(second.startMs>=980&&second.startMs<=1020,`"a test" starts where "a" starts, not in the pause after it: ${second.startMs}`);
+});
+
+test('online loudness is decoded at the server\'s rate, which keeps a word\'s last soft sound out of the cut (TOOLS-473)',()=>{
+  // "this next ... end": "this" ends in an "s", a 60 ms burst of 5–7 kHz noise (950–1010), then 50 ms of pause before
+  // "next". Deleting "next" must start the cut after the "s". A decode at 8 kHz holds nothing above 4 kHz, so there the
+  // "s" is silence, the pause looks 110 ms long, and the cut starts inside the "s".
+  assert.equal(boundary.LOUDNESS_RATE,16000,'the waveform decodes at the rate loudness.py measures at');
+  const serverRate=Number(/^RATE = (\d+)$/m.exec(readFileSync(new URL('../loudness.py',import.meta.url),'utf8'))[1]);
+  assert.equal(boundary.LOUDNESS_RATE,serverRate,'the same rate as loudness.py');
+  const tone=[[500,950],[1060,1500],[1610,2400]],hiss=[5000,5500,6000,6500,7000];
+  /** The clip at a sample rate: what a correct decode at that rate holds, so nothing at or above half the rate. */
+  function decoded(rate){
+    const samples=new Float32Array(3*rate);
+    for(let i=0;i<samples.length;i++){
+      const ms=i*1000/rate,t=i/rate;
+      if(tone.some(([a,b])=>ms>=a&&ms<b))samples[i]=0.5*Math.sin(2*Math.PI*440*t);
+      else if(ms>=950&&ms<1010)for(const f of hiss)if(f<rate/2)samples[i]+=0.01*Math.sin(2*Math.PI*f*t+f);
+    }
+    return samples;
+  }
+  const words=[word('a','this',500,1000),word('b','next',1060,1500),word('c','end',1610,2400)];
+  const cutAt=rate=>cleanCut(words,1,1,envelopeFromSamples([decoded(rate)],rate),{fps:30,durationMs:3000});
+  assert.ok(cutAt(boundary.LOUDNESS_RATE).startMs>=1010,`at the server's rate the "s" stays: ${cutAt(boundary.LOUDNESS_RATE).startMs}`);
+  assert.ok(cutAt(8000).startMs<1010,`at 8 kHz the cut would clip the "s": ${cutAt(8000).startMs}`);
 });

@@ -1,10 +1,13 @@
 // Where a word cut starts and ends, found in the audio itself (TOOLS-463). Transcript word times are a starting guess;
 // the cut moves to the real silence (or the quietest moment) around the words, keeps the natural pause, then snaps to
 // the quietest frame line. The loudness comes once per video: from the local server (loudness.py), or, online, from
-// the waveform the browser already decoded.
+// the waveform the browser already decoded (at the server's rate, LOUDNESS_RATE).
 
 export const HOP_MS=5;            // loudness measured every 5 ms, over a 10 ms window
 const WINDOW_MS=10;
+// The sample rate the loudness is measured at, the server's (loudness.py RATE). The waveform decodes at it too: at a
+// lower rate the soft high sounds that end words ("s", "f", "th", mostly above 4 kHz) are gone, and a cut clips them.
+export const LOUDNESS_RATE=16000;
 // Further out, the short silence inside a word ("sam-p-le") starts to pass for the pause between words.
 const SEARCH_BEFORE_MS=100;       // look this far outside the words for their silence
 const SEARCH_INSIDE_MS=80;        // and at most this far inside them (transcripts are often early or late)
@@ -29,7 +32,9 @@ export function envelopeFromBytes(bytes){
   return envelope(db);
 }
 
-/** Loudness from decoded samples (one array per channel), as the server measures it. */
+/** Loudness from decoded samples (one array per channel), in the server's steps and window. Decoded at LOUDNESS_RATE
+ *  it measures as the server does but for one thing: channels are averaged by energy, where the server first mixes them
+ *  to one channel. With the same sound on every channel (one microphone) the two are the same. */
 export function envelopeFromSamples(channels,sampleRate){
   const hop=Math.round(sampleRate*HOP_MS/1000),win=Math.round(sampleRate*WINDOW_MS/1000);
   const length=channels[0]?.length||0,db=new Float32Array(Math.ceil(length/hop));

@@ -34,7 +34,29 @@ try{
     const comments=async()=>JSON.parse(await readFile(join(temp,'comments.json'),'utf8')).comments;
     const word=i=>page.locator('.transcript-word').nth(i);
     const deleted=()=>page.locator('.transcript-word.removed-word').evaluateAll(nodes=>nodes.map(n=>n.textContent));
+    // Notes the sample rate of each audio decode, to see what Build waveform measures the loudness at.
+    await page.addInitScript(()=>{const Native=window.OfflineAudioContext;window.decodeRates=[];window.OfflineAudioContext=class extends Native{constructor(...args){super(...args);window.decodeRates.push(this.sampleRate);}};});
     await page.goto(base);await page.waitForSelector('.transcript-word');
+
+    // A selected word never looks like the playing word, in the reading view (the default) or with the video shown, and
+    // the playing word inside a selection looks different from both (TOOLS-473).
+    const looks=await page.evaluate(()=>{
+      const reading=document.body.classList.contains('transcript-only'),out={};
+      const [playing,selected,both]=[...document.querySelectorAll('.transcript-word')].slice(12,15);
+      const look=node=>{const s=getComputedStyle(node);return `${s.backgroundColor} / ${s.color} / ${s.boxShadow}`;};
+      playing.classList.add('spoken');selected.classList.add('selected');both.classList.add('spoken','selected');
+      for(const view of [true,false]){document.body.classList.toggle('transcript-only',view);out[view?'reading':'video']=[playing,selected,both].map(look);}
+      playing.classList.remove('spoken');selected.classList.remove('selected');both.classList.remove('spoken','selected');
+      document.body.classList.toggle('transcript-only',reading);out.default=reading;return out;
+    });
+    assert.equal(looks.default,true,`${name}: the reading view is the default.`);
+    for(const view of ['reading','video'])assert.equal(new Set(looks[view]).size,3,`${name}: in the ${view} view the playing, selected, and playing-and-selected words each look different: ${JSON.stringify(looks[view])}`);
+
+    // Build waveform decodes the audio at the rate the server measures loudness at, so cut edges online match it.
+    await page.locator('#buildWaveform').click();
+    await page.waitForFunction(()=>document.querySelector('#buildWaveform').hidden||!document.querySelector('#buildWaveform').disabled);
+    assert.equal(await page.locator('#waveformStatus').innerText(),'',`${name}: the waveform builds.`);
+    assert.deepEqual(await page.evaluate(()=>window.decodeRates),[16000],`${name}: one decode, at 16 kHz.`);
 
     // Delete one word with the bar's button: it is struck through, saved, and the next word is selected.
     await word(2).click();

@@ -1,6 +1,7 @@
 import {audioPeaks,waveformWindow,zoomWaveformWindow,adjustBoundary} from './waveform-core.js';
 import {clock} from './time-format.js';
 import {removedRanges} from './cut-core.js';
+import {LOUDNESS_RATE} from './cut-boundary.js';
 const $=s=>document.querySelector(s);
 const stamp=ms=>clock(ms,{places:3,hours:false});
 export function createWaveform({media,seek,pause,onRange,onAudition,onSamples=()=>{}}){
@@ -71,7 +72,8 @@ export function createWaveform({media,seek,pause,onRange,onAudition,onSamples=()
       if(data.byteLength>512*1024*1024)throw Error('Use a smaller review MP4 to build this waveform in the browser.');
       status('Building waveform locally…');
       const Offline=window.OfflineAudioContext||window.webkitOfflineAudioContext;if(!Offline)throw Error('This browser cannot decode a local waveform. Try Chrome or Edge.');
-      const audio=await new Offline(1,1,8000).decodeAudioData(data);if(token!==generation)return;
+      // One decode, at the rate the loudness is measured at, gives both the bars and the cut edges' loudness.
+      const audio=await new Offline(1,1,LOUDNESS_RATE).decodeAudioData(data);if(token!==generation)return;
       if(Math.abs(audio.duration*1000-duration)>Math.max(300,duration*.001))throw Error('Audio duration does not match this review copy.');
       const channels=Array.from({length:audio.numberOfChannels},(_,i)=>audio.getChannelData(i)),result=audioPeaks(channels,audio.sampleRate);
       onSamples(channels,audio.sampleRate);
