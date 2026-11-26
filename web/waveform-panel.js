@@ -141,8 +141,8 @@ export function createWaveform({media,seek,pause,onRange,onAudition,onLoudness=(
       try{file=await rangeReader(url,request.signal);if(file)track=soundTrack(await readIndex(file.read,file.size));}
       catch(error){
         if(!(error instanceof NotReadable))throw error;
-        // Too big to decode whole as well: say why, and what to do instead.
-        if(file?.size>WHOLE_LIMIT)throw new NotReadable(`${error.message} Make a review copy of this video to build its waveform.`);
+        // Too big to decode whole as well: say why, and what to do instead (unless it has no sound to show).
+        if(file?.size>WHOLE_LIMIT)throw error.noSound?error:new NotReadable(`${error.message} Make a review copy of this video to build its waveform.`);
       }
       if(token!==generation)return;
       if(track)await stretched(url,file,track,token,Offline);else await whole(url,request.signal,token,Offline);

@@ -82,7 +82,7 @@ test('a file that is not an MP4, one with no index (still recording, or fragment
   await assert.rejects(readIndex(short.read,short.size),e=>e instanceof NotReadable&&/not a complete MP4/.test(e.message));
 });
 
-test('a fragmented MP4 as recorders write it (an index of empty tables, the frames in fragments) and a damaged index are refused, so the whole file is decoded instead',async()=>{
+test('a fragmented MP4 as recorders write it (an index of empty tables, the frames in fragments) and a damaged index are refused, so the whole file is decoded instead (or, over 512 MB, a review copy is asked for)',async()=>{
   // OBS, a browser's MediaRecorder and ffmpeg's frag_keyframe write a moov with mvex and no frames in its tables.
   const ftyp=box('ftyp',text('isom'),u32(0)),moov=movie({frames:[],chunks:[],more:[box('mvex',full('trex',0,new Uint8Array(20)))]});
   const moof=box('moof',new Uint8Array(8)),mdat=box('mdat',new Uint8Array(32));
@@ -170,6 +170,10 @@ test('AAC settings: plain AAC, HE-AAC named by its core, a MOV\'s wave box; MP3 
   const mov=soundTrack(movie({frames:[10],chunks:[[0,1]],entry:mp4a(LC_48K_STEREO,{version:1,wave:true})}));
   assert.equal(mov.config.frequency,3);
   assert.throws(()=>soundTrack(movie({frames:[10],chunks:[[0,1]],entry:mp4a(LC_48K_STEREO,{objectType:0x6B})})),e=>e instanceof NotReadable&&/not AAC/.test(e.message));
+  // AAC marked the MPEG-2 way (Main, LC, SSR) carries the same settings and decodes the same.
+  for(const objectType of [0x66,0x67,0x68])assert.equal(soundTrack(movie({frames:[10],chunks:[[0,1]],entry:mp4a(LC_48K_STEREO,{objectType})})).config.frequency,3,`object type ${objectType.toString(16)}`);
+  // A video with no sound, or none listed, says so, and is marked so that no other file is suggested instead.
+  assert.throws(()=>soundTrack(movie({frames:[],chunks:[]})),e=>e instanceof NotReadable&&e.noSound===true);
   assert.throws(()=>soundTrack(movie({frames:[10],chunks:[[0,1]],entry:box('Opus',new Uint8Array(28))})),e=>e instanceof NotReadable&&/not AAC/.test(e.message));
 });
 

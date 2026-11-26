@@ -37,6 +37,13 @@ assert.equal(remuxed.status,0,remuxed.stderr);
 const fragmentedBytes=(await readFile(fragmented)).length,tail=await open(fragmented,'r+');
 if(process.platform==='win32')assert.equal(spawnSync('fsutil',['sparse','setflag',fragmented],{windowsHide:true}).status,0,'the fragmented copy is marked sparse');
 try{await tail.write(free,0,16,fragmentedBytes);await tail.truncate(fragmentedBytes+PAD);}finally{await tail.close();}
+// And a 3 GB copy with no sound at all, as a long screen recording can be.
+const silent=join(temp,'silent.mp4');
+const stripped=spawnSync('ffmpeg',['-v','error','-y','-i',small,'-c','copy','-an',silent],{windowsHide:true,encoding:'utf8'});
+assert.equal(stripped.status,0,stripped.stderr);
+const silentBytes=(await readFile(silent)).length,silentTail=await open(silent,'r+');
+if(process.platform==='win32')assert.equal(spawnSync('fsutil',['sparse','setflag',silent],{windowsHide:true}).status,0,'the silent copy is marked sparse');
+try{await silentTail.write(free,0,16,silentBytes);await silentTail.truncate(silentBytes+PAD);}finally{await silentTail.close();}
 // A word over each loud stretch, a little inside its sound (0 to 950 ms of every 1.5 s), so the pauses either side are
 // within the cut's search and a cut from the sound differs from one from the word times.
 const words=[];for(let i=0;i<46;i++)words.push({id:'W'+i,text:'word'+i,startMs:i*1500+60,endMs:i*1500+890});
@@ -241,6 +248,13 @@ try{
   await page.locator('#buildWaveform').click();
   await page.waitForFunction(()=>!document.querySelector('#buildWaveform').disabled&&document.querySelector('#waveformStatus').textContent);
   assert.match(await page.locator('#waveformStatus').innerText(),/fragmented.*Make a review copy of this video to build its waveform\./,'a file it cannot read says what to do');
+  // One with no sound says only that: a review copy of it would have no sound either.
+  await picker.setInputFiles(silent);
+  await page.evaluate(()=>window.blobs.push(URL.createObjectURL(document.querySelector('input[type=file][hidden]').files[0])));
+  await play(3);
+  await page.locator('#buildWaveform').click();
+  await page.waitForFunction(()=>!document.querySelector('#buildWaveform').disabled&&document.querySelector('#waveformStatus').textContent);
+  assert.equal(await page.locator('#waveformStatus').innerText(),'This video has no sound track.','a video with no sound says so, and nothing more');
   assert.ok(!allStatuses.some(text=>/smaller|large/i.test(text)),`no "file too large" message: ${JSON.stringify([...new Set(allStatuses)])}`);
   assert.deepEqual(errors,[],'no page errors');
   console.log(`PASS: a 3 GB review copy builds its waveform in ${seen.length} stretches (${seen.join(', ')}%), reads ${(total/1024/1024).toFixed(1)} MB of it, cuts on the part that is in, and lines up with the whole decode (${lineUp.differ} of ${lineUp.steps} loudness steps differ); chosen as a file, it stops cleanly part way and reads ${(blobTotal/1024/1024).toFixed(1)} MB in ranges.`);
