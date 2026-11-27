@@ -38,7 +38,14 @@ file wins.
 
 ## After a merge
 
-- None: there are no preview deploys.
+- No preview deploys.
+- **Keep LexTop current.** Lex records and edits on LexTop (Windows), whose checkout `D:\Projects\video-review`
+  stays on `dev`. T3 pulls it by itself (the LexTop project has auto pull on). After a change lands on `dev`
+  that Lex will use there, a lead checks that LexTop has it (T3 environment `LexTop`). If LexTop was offline,
+  the pull stopped, or auto pull is off, a helper on LexTop runs `git pull --ff-only origin dev`, and only when
+  `git status` shows no changed tracked files (its private untracked notes are fine). Anything in the way (local changes, its own commits, a running server)
+  is reported to the lead, never stashed, reset or overwritten. Notes only one machine needs (tool paths,
+  the current Resolve project) go in `CLAUDE.local.md`, which git ignores.
 
 ## Release
 
